@@ -73,9 +73,10 @@
     { "id": "calm",    "intensity": 0.2,  "tension": 0.1,  "bars": [8, 16], "tags": ["calm"],             "next": { "calm": 0.6, "drift": 1.5, "wonder": 1, "tension": 0.5 }, "color": "#4fd1ff" },
     { "id": "wonder",  "intensity": 0.32, "tension": 0.05, "bars": [8],     "tags": ["wonder", "calm"],   "tracks": { "drums": 0.3 }, "next": { "calm": 1, "drift": 1 }, "color": "#b18cff" },
     { "id": "drift",   "intensity": 0.45, "tension": 0.2,  "bars": [8, 16], "tags": ["drift"],            "next": { "drift": 0.6, "calm": 0.8, "build": 1, "wonder": 0.6, "tension": 0.6 }, "color": "#6ff0a8" },
-    { "id": "tension", "intensity": 0.45, "tension": 0.8,  "bars": [8],     "tags": ["tension"],          "next": { "tension": 0.5, "build": 1, "release": 1 }, "color": "#ff8a5c" },
-    { "id": "build",   "intensity": 0.65, "tension": 0.55, "bars": [4],     "tags": ["build"],            "tracks": { "drums": 1 }, "next": { "peak": 2.5, "tension": 0.3 }, "color": "#ffc857" },
-    { "id": "peak",    "intensity": 0.85, "tension": 0.35, "bars": [8, 16], "tags": ["peak"],             "next": { "peak": 0.5, "release": 1.2, "drift": 0.6 }, "color": "#ff6b9a" },
+    { "id": "tension", "intensity": 0.45, "tension": 0.8,  "bars": [8],     "tags": ["tension"],          "next": { "tension": 0.5, "build": 1, "danger": 0.6, "release": 1 }, "color": "#ff8a5c" },
+    { "id": "build",   "intensity": 0.65, "tension": 0.55, "bars": [4],     "tags": ["build"],            "tracks": { "drums": 1 }, "next": { "peak": 2.5, "danger": 1, "tension": 0.3 }, "color": "#ffc857" },
+    { "id": "danger",  "intensity": 0.78, "tension": 0.7,  "bars": [8],     "tags": ["tension", "peak"],  "tracks": { "drums": 1 }, "next": { "danger": 0.5, "peak": 0.8, "tension": 0.6, "release": 0.6 }, "color": "#ff4f6d" },
+    { "id": "peak",    "intensity": 0.85, "tension": 0.35, "bars": [8, 16], "tags": ["peak"],             "next": { "peak": 0.5, "danger": 0.5, "release": 1.2, "drift": 0.6 }, "color": "#ff6b9a" },
     { "id": "release", "intensity": 0.3,  "tension": 0.15, "bars": [4, 8],  "tags": ["release", "calm"],  "tracks": { "drums": 0, "lead": 0.3 }, "next": { "calm": 1, "drift": 0.8, "wonder": 0.6 }, "color": "#8fb8ff" }
   ],
 

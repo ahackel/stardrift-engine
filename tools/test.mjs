@@ -149,7 +149,7 @@ for (const file of readdirSync(new URL('../songs/', import.meta.url)).filter((f)
     e.setMood(mood);
     run(e, 40, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'log' && ev.text.startsWith('♪')) themed.push(ev.text); });
     const d = e.distToTarget(e.section);
-    if (d > 0.35) far.push(`${mood}→${e.section.id} (${d.toFixed(2)})`);
+    if (d > 0.3) far.push(`${mood}→${e.section.id} (${d.toFixed(2)})`);
   }
   ok(!far.length, `${file}: every mood reaches a nearby section within 40 s${far.length ? ` — ${far.join(', ')}` : ''}`);
   ok(!sg.theme || themed.length > 1, `${file}: the theme comes back (${themed.length}×)`);
