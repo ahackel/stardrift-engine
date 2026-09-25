@@ -67,14 +67,14 @@ A mood change never cuts: the current section ends at a bar line within `within`
 | `src/engine/theory.js` | scales, chords, song normalisation |
 | `src/engine/rng.js` | seeded RNG (mulberry32) |
 | `src/worklet.js` / `src/player.js` | AudioWorklet host / main-thread API for web games |
-| `src/editor/*` | editor UI (live lanes, mood pads, block grid editor, instruments, structure, JSON) |
+| `src/editor/*` | editor UI (session grid, detail panel with block and track editors, mood pads, structure, JSON) |
 | `songs/deep-space.json` | default song |
 
 ## Instruments
 
 Each track names an instrument (`"instrument": "lead"`); instruments live in `song.instruments`. Types: `pulse` (NES square, `duty`, `pwm`), `triangle` (NES 4-bit triangle), `wave` (32-step 4-bit wavetable: `soft sine saw organ hollow` or your own array of 32 values 0–15) and `drums`. All melodic types share `env {a d s r}`, `unison`/`detune`, `vibrato {depth rate delay}`, `glide`, `arp`, `cutoff`/`resonance`, `cutoffIntensity`/`cutoffTension` (the filter follows the mood) and `gain`.
 
-The editor's **Instruments** tab edits all of this live: pick a track's instrument (also from the dropdown under each lane name), set octave/volume/pan/sends, shape sounds with sliders, draw wavetables, tweak drum hits, and audition with ▶ even while the song is paused (`player.preview(inst, events)`). Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
+In the editor, the **session** shows one row per track: instrument, mute/solo, volume and the track's blocks as chips (the playing one glows, 🔒 holds a block on its track). Clicking a chip opens the block editor below; clicking a track name opens its sound and track settings: octave, pan, sends, when the track may play, sliders for the sound, drawable wavetables, drum hits, and ▶ previews that work even while the song is paused (`player.preview(inst, events)`). Structure, Song JSON and Help open in the same panel from the top bar. Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
 
 ## Pattern language
 
