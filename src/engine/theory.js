@@ -1,0 +1,142 @@
+// Music theory helpers: scales, diatonic chords, song preparation.
+
+export const SCALES = {
+  major: [0, 2, 4, 5, 7, 9, 11],
+  ionian: [0, 2, 4, 5, 7, 9, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  phrygian: [0, 1, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  aeolian: [0, 2, 3, 5, 7, 8, 10],
+  locrian: [0, 1, 3, 5, 6, 8, 10],
+  harmonicMinor: [0, 2, 3, 5, 7, 8, 11],
+};
+
+// Chord shapes as scale-degree offsets from the chord root (diatonic stacking).
+export const SHAPES = {
+  triad: [0, 2, 4],
+  sus2: [0, 1, 4],
+  sus4: [0, 3, 4],
+  power: [0, 4],
+  '7': [0, 2, 4, 6],
+  add9: [0, 2, 4, 8],
+  six: [0, 2, 4, 5],
+};
+
+export const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const NOTE_INDEX = { C: 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, F: 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11 };
+const ROMAN = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii'];
+
+export function parseKey(k) {
+  if (typeof k === 'number') return ((k % 12) + 12) % 12;
+  return NOTE_INDEX[String(k || 'C').trim().toUpperCase()] ?? 0;
+}
+
+// Scale degree (any integer, may be negative / beyond one octave) -> semitones from tonic.
+export function degSemis(scale, deg) {
+  const n = scale.length;
+  const o = Math.floor(deg / n);
+  return scale[deg - o * n] + 12 * o;
+}
+
+// Keep chord roots near the tonic: in a 7-note scale V, VI, VII sit *below* the tonic.
+export function foldDegree(deg, n) {
+  let r = ((deg % n) + n) % n;
+  if (r > n / 2) r -= n;
+  return r;
+}
+
+// "i:8 IV(sus2):4 VII" -> [{degree, shape, shapeName, beats}]  (roman numerals or 1-based numbers)
+export function parseChords(str) {
+  return String(str || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((tok) => {
+      const m = /^([ivIV]+|\d+)(?:\((\w+)\))?(?::(\d+(?:\.\d+)?))?$/.exec(tok);
+      if (!m) return null;
+      const degree = /^\d+$/.test(m[1]) ? +m[1] - 1 : ROMAN.indexOf(m[1].toLowerCase());
+      if (degree < 0) return null;
+      const shapeName = SHAPES[m[2]] ? m[2] : 'triad';
+      return { degree, shapeName, shape: SHAPES[shapeName], beats: m[3] ? Math.max(0.25, +m[3]) : 4 };
+    })
+    .filter(Boolean);
+}
+
+export function chordLabel(keyRoot, scale, chord) {
+  if (!chord) return '–';
+  const r = degSemis(scale, chord.degree);
+  const name = NOTE_NAMES[(((keyRoot + r) % 12) + 12) % 12];
+  const iv = chord.shape.map((o) => degSemis(scale, chord.degree + o) - r);
+  const third = iv[1], fifth = iv[2];
+  let q = third === 3 ? (fifth === 6 ? 'dim' : 'm') : fifth === 8 ? 'aug' : '';
+  switch (chord.shapeName) {
+    case 'sus2': case 'sus4': return name + chord.shapeName;
+    case 'power': return name + '5';
+    case '7': return name + (q === 'dim' ? 'm7b5' : q + (iv[3] === 11 ? 'maj7' : '7'));
+    case 'add9': return name + q + 'add9';
+    case 'six': return name + q + '6';
+    default: return name + q;
+  }
+}
+
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+// Normalises a raw song JSON into the runtime structure the engine uses.
+// The raw JSON is never mutated, so the editor can keep editing it.
+export function prepareSong(raw) {
+  const s = {
+    raw,
+    name: raw.name || 'Untitled',
+    bpm: Math.max(30, Math.min(300, +raw.bpm || 90)),
+    spb: Math.max(1, raw.stepsPerBeat || 4),
+    bpb: Math.max(1, raw.beatsPerBar || 4),
+    swing: clamp01(raw.swing || 0) * 0.5,
+    keyRoot: parseKey(raw.key),
+    scaleName: SCALES[raw.scale] ? raw.scale : 'minor',
+    variation: raw.variation ?? 0.3,
+    blockChange: raw.blockChange ?? 0.15,
+    fillChance: raw.fillChance ?? 0.5,
+    layerChurn: raw.layerChurn ?? 0.1,
+    progStickiness: raw.progStickiness ?? 1.5,
+    moodGlide: raw.moodGlide ?? 8,
+    transitBars: raw.transitBars ?? 2,
+    master: { gain: 0.9, ...(raw.master || {}) },
+    fx: {
+      echo: { beats: 0.75, feedback: 0.4, damp: 0.35, level: 0.5, ...(raw.fx?.echo || {}) },
+      reverb: { size: 0.86, damp: 0.4, level: 0.4, ...(raw.fx?.reverb || {}) },
+      echoToReverb: raw.fx?.echoToReverb ?? 0.3,
+    },
+    instruments: raw.instruments || {},
+    moods: raw.moods || {},
+  };
+  s.scale = SCALES[s.scaleName];
+  s.stepsPerBar = s.spb * s.bpb;
+
+  s.tracks = (raw.tracks || []).map((t) => ({ ...t, inst: s.instruments[t.instrument] || { type: 'pulse' } }));
+  s.trackMap = Object.fromEntries(s.tracks.map((t) => [t.id, t]));
+
+  s.progressions = (raw.progressions || []).map((p) => {
+    const chordList = parseChords(p.chords);
+    const scaleName = SCALES[p.scale] ? p.scale : s.scaleName;
+    return { ...p, chordList, scaleName, scale: SCALES[scaleName], totalBeats: chordList.reduce((a, c) => a + c.beats, 0) };
+  }).filter((p) => p.chordList.length);
+  s.progMap = Object.fromEntries(s.progressions.map((p) => [p.id, p]));
+
+  s.sections = (raw.sections || []).map((x) => ({
+    ...x,
+    bars: Array.isArray(x.bars) ? x.bars : [x.bars || 8],
+    intensity: x.intensity ?? 0.5,
+    tension: x.tension ?? 0.3,
+    tags: x.tags || [],
+  }));
+  if (!s.sections.length) s.sections.push({ id: 'default', bars: [8], intensity: 0.5, tension: 0.3, tags: [] });
+  s.sectionMap = Object.fromEntries(s.sections.map((x) => [x.id, x]));
+
+  s.blocks = (raw.blocks || []).filter((b) => b && b.id && b.track);
+  s.blockMap = Object.fromEntries(s.blocks.map((b) => [b.id, b]));
+  s.blocksByTrack = {};
+  for (const b of s.blocks) (s.blocksByTrack[b.track] ||= []).push(b);
+  return s;
+}

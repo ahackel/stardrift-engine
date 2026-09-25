@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background: #070913; color: #dfe4ff; font: 14px/1.5 ui-monospace, Menlo, monospace; margin: 0; padding: 24px 16px; }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 18px; color: #5ef1ff; }
+  button { font: inherit; color: #fff; background: #1c3a4c; border: 1px solid #2c7c92; border-radius: 7px; padding: 10px 14px; margin: 4px 6px 4px 0; cursor: pointer; }
+  pre { background: #0d1126; border: 1px solid #262d52; border-radius: 8px; padding: 12px; white-space: pre-wrap; min-height: 200px; }
+  .ok { color: #6ff0a8; } .bad { color: #ff5ea8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Stardrift audio diagnostics</h1>
+  <p>Press the buttons in order. Each plays about 1 second of sound. Then copy the log below.</p>
+  <button id="t1">1 · plain beep (no worklet)</button>
+  <button id="t2">2 · beep via minimal AudioWorklet</button>
+  <button id="t3">3 · Stardrift engine (3 s)</button>
+  <pre id="log"></pre>
+</main>
+<script type="module">
+const out = document.getElementById('log');
+const log = (msg, cls) => { const s = document.createElement('span'); if (cls) s.className = cls; s.textContent = msg + '\n'; out.append(s); };
+log(navigator.userAgent);
+
+async function probe(name, build) {
+  const ctx = new AudioContext();
+  ctx.onerror = (e) => log(`  ctx.onerror: ${e.message || e.type}`, 'bad');
+  const resumed = ctx.resume().then(() => 'ok', (e) => `REJECTED ${e.name}: ${e.message}`);
+  log(`${name}: sampleRate ${ctx.sampleRate}, state ${ctx.state}, baseLatency ${ctx.baseLatency?.toFixed?.(4)}`);
+  try { await build(ctx); } catch (e) { log(`  build failed: ${e.name}: ${e.message}`, 'bad'); }
+  log(`  resume(): ${await resumed}`);
+  const t0 = ctx.currentTime;
+  await new Promise((r) => setTimeout(r, 1200));
+  const t1 = ctx.currentTime;
+  const ok = t1 - t0 > 0.8;
+  log(`  state ${ctx.state}, clock ${t0.toFixed(3)} → ${t1.toFixed(3)}  ${ok ? 'CLOCK RUNS ✓' : 'CLOCK STUCK ✗'}`, ok ? 'ok' : 'bad');
+  await ctx.close();
+}
+
+document.getElementById('t1').onclick = () => probe('1 plain', async (ctx) => {
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  g.gain.value = 0.1; o.frequency.value = 440;
+  o.connect(g).connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 1);
+});
+
+const WORKLET = `registerProcessor('beep', class extends AudioWorkletProcessor {
+  constructor() { super(); this.p = 0; }
+  process(i, o) { const ch = o[0]; for (let n = 0; n < ch[0].length; n++) { const v = Math.sin(this.p) * 0.1; this.p += 2 * Math.PI * 660 / sampleRate; for (const c of ch) c[n] = v; } return true; }
+});`;
+document.getElementById('t2').onclick = () => probe('2 worklet', async (ctx) => {
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' })));
+  const n = new AudioWorkletNode(ctx, 'beep', { numberOfInputs: 0, outputChannelCount: [2] });
+  n.onprocessorerror = () => log('  processorerror', 'bad');
+  n.connect(ctx.destination);
+  setTimeout(() => n.disconnect(), 1000);
+});
+
+document.getElementById('t3').onclick = () => probe('3 stardrift', async (ctx) => {
+  await ctx.audioWorklet.addModule('src/worklet.js');
+  const n = new AudioWorkletNode(ctx, 'stardrift', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+  n.onprocessorerror = () => log('  processorerror', 'bad');
+  let steps = 0;
+  n.port.onmessage = (e) => { for (const ev of e.data) { if (ev.type === 'step') steps++; if (ev.type === 'error') log('  engine error: ' + ev.text, 'bad'); } };
+  const song = await (await fetch('songs/deep-space.json')).json();
+  n.port.postMessage({ type: 'load', song, seed: 1, restart: true });
+  n.connect(ctx.destination);
+  setTimeout(() => log(`  engine steps received: ${steps}`, steps > 5 ? 'ok' : 'bad'), 1150);
+});
+</script>
+</body>
+</html>

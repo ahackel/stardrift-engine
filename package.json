@@ -1,0 +1,11 @@
+{
+  "name": "stardrift",
+  "version": "0.1.0",
+  "description": "Procedural, block-based chiptune music engine for (space) games",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "python3 -m http.server 8321",
+    "render": "node tools/render.mjs"
+  }
+}
