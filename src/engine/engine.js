@@ -334,7 +334,7 @@ export class Engine {
   // ---------------------------------------------------------------- conductor
   onBar() {
     if (this.section) this.sectionBar++;
-    if (this.section && !this.section.breath) this.barsSinceBreath++;
+    if (this.section && !this.section.breath) this.barsSinceBreath = this.isThin() ? 0 : this.barsSinceBreath + 1;
     if (!this.section || this.sectionBar >= this.sectionBars) {
       const next = this.forced || this.nextSection || (this.section ? this.chooseNext() : this.song.sectionMap[this.song.raw.startSection] || this.song.sections[0]);
       this.forced = null;
@@ -614,10 +614,27 @@ export class Engine {
     return this.intensity < 0.7 && (t.influence <= 0.5 || t.intensity < 0.5);
   }
 
+  // a track a breather keeps: breath.keep, else the ambient tracks (those that play from intensity 0)
+  breathes(tr) {
+    const keep = this.song.breath?.keep;
+    return keep ? keep.includes(tr.id) : (tr.layer?.min ?? 0) <= 0;
+  }
+
+  // Already about as sparse as a breather (no drums, at most one track beyond those a breather keeps)?
+  // Then it counts as one, so a breakdown isn't followed by a breather.
+  isThin() {
+    let extra = 0;
+    for (const tr of this.song.tracks) {
+      if (!this.tracks[tr.id]?.active || this.breathes(tr)) continue;
+      if (tr.inst.type === 'drums' || ++extra > 1) return false;
+    }
+    return true;
+  }
+
   makeBreath(resume) {
     const s = this.song, cur = this.section;
     const tracks = {};
-    for (const tr of s.tracks) tracks[tr.id] = s.breath.keep ? (s.breath.keep.includes(tr.id) ? 1 : 0) : (tr.layer?.min ?? 0) <= 0 ? 1 : 0;
+    for (const tr of s.tracks) tracks[tr.id] = this.breathes(tr) ? 1 : 0;
     this.log(`breather, then ${resume.id}`);
     return {
       id: 'breather', breath: true, bars: s.breath.bars || [4, 8], tags: cur.tags, tracks,

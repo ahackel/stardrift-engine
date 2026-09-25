@@ -1,5 +1,5 @@
 // node tools/test.mjs — engine sanity checks (determinism, mood routing, hot reload, audio health, stingers, theme)
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree } from '../src/engine/theory.js';
 
@@ -133,6 +133,34 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   run(e, 600, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'log' && ev.text.startsWith('♪')) forms.add(ev.text.split(' ')[2]); });
   ok(forms.size >= 4, `the theme comes back in different forms (${[...forms]})`);
   ok(onBeat > 10 && fits === onBeat, `theme notes on the beat are chord tones (${fits}/${onBeat})`);
+}
+
+// 9. Every song in songs/: healthy audio, each mood reached, each stinger plays, the theme comes back
+for (const file of readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json'))) {
+  const sg = JSON.parse(readFileSync(new URL(`../songs/${file}`, import.meta.url), 'utf8'));
+  const e = new Engine(SR, sg, 3);
+  const h = run(e, 90);
+  const themed = [];
+  const ids = new Set(sg.blocks.map((b) => b.id));
+  const orphans = sg.blocks.filter((b) => !sg.tracks.some((t) => t.id === b.track)).map((b) => b.id);
+  ok(h.bad === 0 && h.peak > 0.1 && h.peak < 1 && !orphans.length && ids.size === sg.blocks.length, `${file}: healthy (peak ${h.peak.toFixed(2)}), blocks valid`);
+  const far = [];
+  for (const [mood, m] of Object.entries(sg.moods || {})) {
+    e.setMood(mood);
+    run(e, 40, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'log' && ev.text.startsWith('♪')) themed.push(ev.text); });
+    const d = e.distToTarget(e.section);
+    if (d > 0.35) far.push(`${mood}→${e.section.id} (${d.toFixed(2)})`);
+  }
+  ok(!far.length, `${file}: every mood reaches a nearby section within 40 s${far.length ? ` — ${far.join(', ')}` : ''}`);
+  ok(!sg.theme || themed.length > 1, `${file}: the theme comes back (${themed.length}×)`);
+  const silent = (sg.stingers || []).filter((x) => {
+    e.drainEvents();
+    e.sting(x.id);
+    let notes = 0;
+    run(e, x.beats * 60 / sg.bpm + 1, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') notes++; });
+    return !notes;
+  }).map((x) => x.id);
+  ok(!silent.length, `${file}: every stinger plays (${(sg.stingers || []).length})${silent.length ? ` — silent: ${silent}` : ''}`);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
