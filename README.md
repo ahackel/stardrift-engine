@@ -6,7 +6,7 @@ A procedural, block-based chiptune music engine for (space) games: atmospheric a
 - **Unity**: the engine is written so it can be ported 1:1 to C# (see *Porting to Unity*).
 
 ```bash
-npm run dev        # → http://localhost:8321  (any static server works; AudioWorklet needs http://, not file://)
+npm run dev        # → http://localhost:8321  (no-cache static server; AudioWorklet needs http://, not file://)
 npm run render     # offline render + conductor log (node tools/render.mjs song secs seed out.wav --mood 30:tension)
 node tools/test.mjs
 ```
@@ -74,7 +74,7 @@ A mood change never cuts: the current section ends at a bar line within `within`
 
 Each track names an instrument (`"instrument": "lead"`); instruments live in `song.instruments`. Types: `pulse` (NES square, `duty`, `pwm`), `triangle` (NES 4-bit triangle), `wave` (32-step 4-bit wavetable: `soft sine saw organ hollow` or your own array of 32 values 0–15) and `drums`. All melodic types share `env {a d s r}`, `unison`/`detune`, `vibrato {depth rate delay}`, `glide`, `arp`, `cutoff`/`resonance`, `cutoffIntensity`/`cutoffTension` (the filter follows the mood) and `gain`.
 
-In the editor, the **session** shows one row per track: instrument, mute/solo, volume and the track's blocks as chips (the playing one glows, 🔒 holds a block on its track). Clicking a chip opens the block editor below; clicking a track name opens its sound and track settings: octave, pan, sends, when the track may play, sliders for the sound, drawable wavetables, drum hits, and ▶ previews that work even while the song is paused (`player.preview(inst, events)`). Structure, Song JSON and Help open in the same panel from the top bar. Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
+In the editor, the **session** shows one row per track: instrument, mute/solo, volume and the track's blocks as chips (the playing one glows, 🔒 holds a block on its track). Clicking a chip opens the block editor below; clicking a track name opens its sound and track settings: octave, pan, sends, when the track may play, sliders for the sound, drawable wavetables, drum hits, and ▶ previews that work even while the song is paused (`player.preview(inst, events)`). Structure, Song JSON and Help open in the same panel from the top bar. The top row of the session holds the **chord progressions**: click one to edit it as a strip of chords with a palette of the chords that fit the scale (click to hear and add, select a chord to change its length, colour or position), and 🔒 hold it to hear it in the song from the next bar line (`player.lockProgression(id)`). Click the song name in the top bar for key, scale and tempo. Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
 
 ## Pattern language
 

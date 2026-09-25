@@ -115,6 +115,7 @@ export class StardriftPlayer {
   setMood(mood, options) { this.send({ type: 'mood', mood, options }); }
   setParams(params) { this.send({ type: 'params', params }); }
   lockBlock(track, block) { this.send({ type: 'lock', track, block: block || null }); }
+  lockProgression(id) { this.send({ type: 'lockProg', id: id || null }); } // null = back to automatic
   setMute(track, on) { this.send({ type: 'mute', track, on }); }
   setSolo(track, on) { this.send({ type: 'solo', track, on }); }
   forceSection(id) { this.send({ type: 'section', id }); }

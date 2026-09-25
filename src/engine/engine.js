@@ -24,6 +24,7 @@ export class Engine {
     this.target = { intensity: 0.3, tension: 0.2, influence: 0 };
     this.moodName = 'auto';
     this.locks = {};
+    this.progLock = null;
     this.events = [];
     this.synth = new Synth(sampleRate);
     this.reset(song, seed);
@@ -104,6 +105,12 @@ export class Engine {
     this.log(`forced → ${id} (next bar line)`);
   }
 
+  // Hold one chord progression (editor audition / game override). It takes over at the next bar line.
+  lockProgression(id) {
+    this.progLock = id && this.song.progMap[id] ? id : null;
+    this.emitState();
+  }
+
   lock(trackId, blockId) {
     if (blockId) this.locks[trackId] = blockId;
     else delete this.locks[trackId];
@@ -155,7 +162,14 @@ export class Engine {
   // ---------------------------------------------------------------- sequencer
   tick() {
     const s = this.song;
-    if (this.step % s.stepsPerBar === 0) this.onBar();
+    if (this.step % s.stepsPerBar === 0) {
+      this.onBar();
+      if (this.progLock && this.prog?.id !== this.progLock && s.progMap[this.progLock]) {
+        this.prog = s.progMap[this.progLock];
+        this.progStart = this.step;
+        this.emitState();
+      }
+    }
 
     const chord = this.chordAt(this.step);
     const scaleName = this.prog ? this.prog.scaleName : s.scaleName;
@@ -199,7 +213,8 @@ export class Engine {
         ts.sounding = null;
       }
     }
-    this.emit({ type: 'step', step: this.step, bar: this.sectionBar, bars: this.sectionBars, spbar: s.stepsPerBar, pos });
+    const progBeat = this.prog ? (((this.step - this.progStart) / s.spb) % this.prog.totalBeats) : 0;
+    this.emit({ type: 'step', step: this.step, bar: this.sectionBar, bars: this.sectionBars, spbar: s.stepsPerBar, pos, progBeat });
     this.step++;
   }
 
@@ -468,6 +483,7 @@ export class Engine {
   pickProgression() {
     const s = this.song;
     if (!s.progressions.length) return null;
+    if (this.progLock && s.progMap[this.progLock]) return s.progMap[this.progLock];
     const tags = this.section.tags, T = this.goal.tension;
     const w = s.progressions.map((p) => {
       let x = p.weight ?? 1;
@@ -508,6 +524,7 @@ export class Engine {
       ts.steps = parseTokens(ts.tokens);
     }
     for (const [id, b] of Object.entries(this.locks)) if (!s.blockMap[b]) delete this.locks[id];
+    if (this.progLock && !s.progMap[this.progLock]) this.progLock = null;
     this.emitState();
   }
 
@@ -531,6 +548,7 @@ export class Engine {
       sectionBars: this.sectionBars,
       next: this.nextSection && this.nextSection.id,
       prog: this.prog && this.prog.id,
+      progLocked: this.progLock,
       chords: this.prog ? this.prog.chordList.map((c) => chordLabel(s.keyRoot, this.prog.scale, c)) : [],
       scale: this.prog ? this.prog.scaleName : s.scaleName,
       intensity: this.intensity,
