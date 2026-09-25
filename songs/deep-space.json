@@ -37,7 +37,7 @@
     "arp":   { "type": "pulse", "duty": 0.125, "env": { "a": 0.002, "d": 0.18, "s": 0.2, "r": 0.15 }, "cutoff": 1800, "cutoffIntensity": 3500, "arp": 24 },
     "lead":  { "type": "pulse", "duty": 0.25, "pwm": { "depth": 0.12, "rate": 0.3 }, "env": { "a": 0.04, "d": 0.5, "s": 0.65, "r": 0.5 }, "vibrato": { "depth": 0.18, "rate": 5.2, "delay": 0.3 }, "glide": 0.05, "cutoff": 2200, "cutoffIntensity": 3000 },
     "stars": { "type": "pulse", "duty": 0.5, "env": { "a": 0.001, "d": 0.5, "s": 0, "r": 0.4 }, "cutoff": 4500 },
-    "kit":   { "type": "drums", "cutoff": 11000, "cutoffIntensity": 4000 }
+    "kit":   { "type": "drums", "kit": "clean", "cutoff": 12000, "cutoffIntensity": 4000 }
   },
 
   "tracks": [

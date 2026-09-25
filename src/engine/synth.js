@@ -1,6 +1,8 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable,
-// LFSR noise drums, per-track state-variable lowpass, ping-pong echo and a small Freeverb.
+// synthesized drum kits (drums.js), per-track state-variable lowpass, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
+
+import { DrumVoice, compileKit } from './drums.js';
 
 const TWO_PI = Math.PI * 2;
 const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
@@ -8,15 +10,6 @@ const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
 const TRI_TABLE = new Float32Array(32);
 for (let i = 0; i < 32; i++) TRI_TABLE[i] = (i < 16 ? 15 - i : i - 16) / 7.5 - 1;
 
-export const DRUMS = {
-  k: { tone: 1.0, f0: 170, f1: 45, sweep: 0.03, toneDecay: 0.12, noise: 0.25, rate: 9000, noiseDecay: 0.006, len: 0.6 },
-  s: { tone: 0.45, f0: 230, f1: 175, sweep: 0.02, toneDecay: 0.05, noise: 0.7, rate: 14000, noiseDecay: 0.07, len: 0.5 },
-  h: { noise: 0.32, rate: 30000, noiseDecay: 0.014, len: 0.15 },
-  o: { noise: 0.28, rate: 30000, noiseDecay: 0.09, len: 0.6 },
-  c: { noise: 0.3, rate: 18000, noiseDecay: 0.5, len: 3 },
-  t: { tone: 0.8, f0: 260, f1: 110, sweep: 0.06, toneDecay: 0.1, noise: 0.08, rate: 6000, noiseDecay: 0.015, len: 0.5 },
-  m: { noise: 0.22, rate: 11000, short: true, noiseDecay: 0.03, len: 0.2 },
-};
 
 function makeWave(spec) {
   const t = new Float32Array(32);
@@ -49,8 +42,6 @@ export function compileInst(def = {}, sr) {
   const U = Math.max(1, Math.min(4, def.unison | 0 || 1));
   const detuneMul = new Float64Array(U);
   for (let u = 0; u < U; u++) detuneMul[u] = Math.pow(2, (U === 1 ? 0 : (def.detune || 0) * (u / (U - 1) - 0.5)) / 1200);
-  const kit = {};
-  for (const k in DRUMS) kit[k] = { ...DRUMS[k], ...(def.kit?.[k] || {}) };
   return {
     type: def.type || 'pulse',
     sr, invSr: 1 / sr,
@@ -65,7 +56,7 @@ export function compileInst(def = {}, sr) {
     cutoff: def.cutoff ?? 16000, cutoffIntensity: def.cutoffIntensity || 0, cutoffTension: def.cutoffTension || 0,
     q: def.resonance ?? 0.707,
     gain: def.gain ?? 1,
-    kit,
+    kit: def.type === 'drums' ? compileKit(def, sr) : null,
   };
 }
 
@@ -143,42 +134,6 @@ class Voice {
   }
 }
 
-class DrumVoice {
-  constructor() { this.active = false; this.lfsr = 1; this.tonePh = 0; this.noisePh = 0; this.kind = ''; }
-  start(d, kind, vel, sr) {
-    this.d = d; this.kind = kind; this.vel = vel; this.t = 0; this.active = true;
-    this.toneEnv = d.tone || 0; this.noiseEnv = d.noise || 0;
-    this.toneCoef = Math.exp(-1 / ((d.toneDecay || 0.1) * sr));
-    this.noiseCoef = Math.exp(-1 / ((d.noiseDecay || 0.05) * sr));
-    this.tonePh = 0;
-  }
-  choke(sr) { this.noiseCoef = Math.exp(-1 / (0.008 * sr)); this.toneCoef = this.noiseCoef; }
-  render(sr, invSr) {
-    const d = this.d;
-    const t = (this.t += invSr);
-    let out = 0;
-    if (this.toneEnv > 1e-4) {
-      const f = d.f1 + (d.f0 - d.f1) * Math.exp(-t / d.sweep);
-      this.tonePh += f * invSr;
-      if (this.tonePh >= 1) this.tonePh -= 1;
-      out += TRI_TABLE[(this.tonePh * 32) | 0] * this.toneEnv;
-      this.toneEnv *= this.toneCoef;
-    }
-    if (this.noiseEnv > 1e-4) {
-      this.noisePh += d.rate * invSr;
-      while (this.noisePh >= 1) {
-        this.noisePh -= 1;
-        const bit = (this.lfsr ^ (this.lfsr >> (d.short ? 6 : 1))) & 1;
-        this.lfsr = (this.lfsr >> 1) | (bit << 14);
-      }
-      out += (this.lfsr & 1 ? 1 : -1) * this.noiseEnv;
-      this.noiseEnv *= this.noiseCoef;
-    }
-    if (t > d.len || (this.toneEnv <= 1e-4 && this.noiseEnv <= 1e-4)) this.active = false;
-    return out * this.vel;
-  }
-}
-
 class TrackBus {
   constructor(poly, isDrum) {
     this.isDrum = isDrum;
@@ -232,7 +187,7 @@ class TrackBus {
       if (h === 'h') for (const v of this.voices) if (v.active && v.kind === 'o') v.choke(this.sr);
       let v = this.voices.find((x) => !x.active);
       if (!v) { v = this.voices[this.rr]; this.rr = (this.rr + 1) % this.voices.length; }
-      v.start(d, h, vel, this.sr);
+      v.start(d, h, vel);
     }
   }
   allOff() {

@@ -193,7 +193,7 @@ export class Engine {
     if (tr.inst.type === 'drums') {
       const hits = [];
       for (const a of st.atoms) if (a.kind === 'hit') hits.push(a.value);
-      this.synth.drum(tr.id, hits, vel);
+      this.synth.drum(tr.id, hits, st.accent ? 1 : st.prob < 1 ? 0.5 : 0.78); // chance hits = ghost notes
       this.emit({ type: 'note', track: tr.id });
       return;
     }

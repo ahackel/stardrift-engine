@@ -61,7 +61,8 @@ A mood change never cuts: the current section ends at a bar line within `within`
 | Path | |
 |---|---|
 | `src/engine/engine.js` | conductor + sequencer (the brain) |
-| `src/engine/synth.js` | voices, drums, filters, echo, reverb |
+| `src/engine/synth.js` | voices, filters, echo, reverb |
+| `src/engine/drums.js` | drum kits: `clean` (default: sine bodies, filtered noise, 808-style metal) and `chip` (raw NES-style) — pick with `"kit"` on a drums instrument, override single hits with an object |
 | `src/engine/pattern.js` | pattern language, generators, mutations |
 | `src/engine/theory.js` | scales, chords, song normalisation |
 | `src/engine/rng.js` | seeded RNG (mulberry32) |
