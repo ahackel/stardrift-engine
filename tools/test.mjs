@@ -60,5 +60,33 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   ok(run(e, 10).bad === 0, 'engine keeps running after hot reload');
 }
 
+// 5. Breathers: the music thins out to the ambient tracks now and then, and comes back
+{
+  const e = new Engine(SR, { ...song, breath: { every: 16, bars: [4, 4] } }, 3);
+  let inBreath = null, after = null;
+  run(e, 240, () => {
+    for (const ev of e.drainEvents()) if (ev.type === 'state') {
+      const active = Object.entries(ev.tracks).filter(([, t]) => t.active).map(([id]) => id);
+      if (ev.section === 'breather') inBreath ||= active;
+      else if (inBreath && !after && ev.section) after = ev.section;
+    }
+  });
+  ok(inBreath && inBreath.every((id) => (song.tracks.find((t) => t.id === id).layer?.min ?? 0) <= 0), `breather keeps only ambient tracks (${inBreath})`);
+  ok(!!after, `music returns after a breather (→ ${after})`);
+}
+
+// 6. Lead-in: the chord change into a new section is prepared in the section's last beats
+{
+  const e = new Engine(SR, song, 5);
+  let changes = 0, prepared = 0, lastChordStep = -1;
+  run(e, 120, () => {
+    for (const ev of e.drainEvents()) {
+      if (ev.type === 'chord') lastChordStep = e.step;
+      if (ev.type === 'log' && ev.text.startsWith('▶') && e.section.bars && e.step > 0) { changes++; if (e.step - lastChordStep < e.song.stepsPerBar) prepared++; }
+    }
+  });
+  ok(changes > 3 && prepared >= changes / 2, `lead-in chords before section changes (${prepared}/${changes})`);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

@@ -2,7 +2,7 @@
 // It is a pure function of (song, seed, parameter calls) -> audio samples.
 
 import { Rng } from './rng.js';
-import { prepareSong, chordLabel, degSemis, foldDegree, SHAPES } from './theory.js';
+import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES } from './theory.js';
 import { expandTokens, parseTokens, generateTokens, mutateTokens, REST, HOLD } from './pattern.js';
 import { Synth } from './synth.js';
 
@@ -34,6 +34,7 @@ export class Engine {
   reset(song, seed) {
     if (seed !== undefined) this.seed = seed >>> 0;
     this.rng = new Rng(this.seed);
+    this.vrng = new Rng(this.seed ^ 0x9e3779b9); // velocity humanizing has its own stream: it never changes the arrangement
     this.step = 0;
     this.stepTimer = 0;
     this.section = null;
@@ -46,6 +47,10 @@ export class Engine {
     this.chord = DEFAULT_CHORD;
     this.liveChord = null;
     this.livePending = null;
+    this.leadIn = null; // {sec, start, chord}: the chord that leads into the next section
+    this.upcoming = null; // {sec, prog}: next section and its progression, picked one bar early
+    this.barsSinceBreath = 0;
+    this.breathAt = 0;
     this.chordKey = '';
     this.intensity = 0.2;
     this.tension = 0.1;
@@ -180,7 +185,8 @@ export class Engine {
       this.livePending = null;
       this.emitState();
     }
-    const chord = this.liveChord || this.chordAt(this.step);
+    const li = this.leadIn; // only while its section is still the one coming next (a mood change may have re-routed)
+    const chord = this.liveChord || (li && this.step >= li.start && this.nextSection === li.sec ? li.chord : this.chordAt(this.step));
     const scaleName = this.prog ? this.prog.scaleName : s.scaleName;
     const key = `${scaleName}:${chord.degree}:${chord.shapeName}`;
     const chordChanged = key !== this.chordKey;
@@ -227,12 +233,19 @@ export class Engine {
     this.step++;
   }
 
+  // Dynamics: bar downbeats a bit louder, off-16ths a bit softer, plus a small random spread (song.humanize).
+  velocity(base) {
+    const s = this.song, inBar = this.step % s.stepsPerBar, inBeat = this.step % s.spb;
+    const groove = inBar === 0 ? 1.12 : inBeat === 0 ? 1.04 : inBeat * 2 === s.spb ? 1 : 0.92;
+    return Math.min(1, base * groove * (1 + (this.vrng.next() * 2 - 1) * s.humanize));
+  }
+
   play(tr, ts, st, isFollow) {
-    const vel = st.accent ? 1 : 0.78;
+    const vel = this.velocity(st.accent ? 1 : 0.78);
     if (tr.inst.type === 'drums') {
       const hits = [];
       for (const a of st.atoms) if (a.kind === 'hit') hits.push(a.value);
-      this.synth.drum(tr.id, hits, st.accent ? 1 : st.prob < 1 ? 0.5 : 0.78); // chance hits = ghost notes
+      this.synth.drum(tr.id, hits, this.velocity(st.accent ? 1 : st.prob < 1 ? 0.5 : 0.78)); // chance hits = ghost notes
       this.emit({ type: 'note', track: tr.id });
       return;
     }
@@ -284,6 +297,7 @@ export class Engine {
   // ---------------------------------------------------------------- conductor
   onBar() {
     if (this.section) this.sectionBar++;
+    if (this.section && !this.section.breath) this.barsSinceBreath++;
     if (!this.section || this.sectionBar >= this.sectionBars) {
       const next = this.forced || this.nextSection || (this.section ? this.chooseNext() : this.song.sectionMap[this.song.raw.startSection] || this.song.sections[0]);
       this.forced = null;
@@ -327,8 +341,11 @@ export class Engine {
     if (first) { this.intensity = this.goal.intensity; this.tension = this.goal.tension; this.synth.setMood(this.intensity, this.tension); }
     else this.glideMood();
 
-    this.prog = this.pickProgression();
+    this.prog = this.upcoming?.sec === sec && this.upcoming.prog ? this.upcoming.prog : this.pickProgression();
     this.progStart = this.step;
+    this.upcoming = null;
+    this.leadIn = null;
+    if (sec.breath) { this.barsSinceBreath = 0; this.breathAt = 0; }
 
     for (const tr of s.tracks) this.setupTrack(tr);
 
@@ -442,13 +459,15 @@ export class Engine {
   // Last bar of a section: choose where to go, and dress the transition (fill / drop).
   prepareTransition() {
     const s = this.song, rng = this.rng;
-    const next = this.forced || this.nextSection || this.chooseNext();
+    let next = this.forced || this.nextSection || this.chooseNext();
+    if (!this.forced && this.shouldBreathe()) next = this.makeBreath(next);
     this.nextSection = next;
+    this.prepareLeadIn(next);
     const up = next.intensity - this.section.intensity;
     for (const tr of s.tracks) {
       const ts = this.tracks[tr.id];
       if (tr.inst.type !== 'drums' || !ts || !ts.active || this.locks[tr.id]) continue;
-      if (up < -0.25 && rng.chance(0.4)) {
+      if (next.breath || (up < -0.25 && rng.chance(0.4))) { // into a breather the drums always drop out
         ts.fill = { start: this.step, end: this.step + s.stepsPerBar, steps: parseTokens(expandTokens('', s.stepsPerBar)) };
         this.log('drop');
         continue;
@@ -467,6 +486,49 @@ export class Engine {
     }
     this.log(`next → ${next.id}`);
     this.emitState();
+  }
+
+  // Breathers: every so often (song.breath.every bars) the music thins out to its ambient tracks
+  // (those that play from intensity 0) for a few bars, then grows back. Only while things are calm.
+  shouldBreathe() {
+    const b = this.song.breath;
+    if (!b || !(b.every > 0) || this.section.breath) return false;
+    if (!this.breathAt) this.breathAt = Math.round(b.every * this.rng.range(0.75, 1.25));
+    if (this.barsSinceBreath < this.breathAt) return false;
+    const t = this.target;
+    return this.intensity < 0.7 && (t.influence <= 0.5 || t.intensity < 0.5);
+  }
+
+  makeBreath(resume) {
+    const s = this.song, cur = this.section;
+    const tracks = {};
+    for (const tr of s.tracks) tracks[tr.id] = s.breath.keep ? (s.breath.keep.includes(tr.id) ? 1 : 0) : (tr.layer?.min ?? 0) <= 0 ? 1 : 0;
+    this.log(`breather, then ${resume.id}`);
+    return {
+      id: 'breather', breath: true, bars: s.breath.bars || [4, 8], tags: cur.tags, tracks,
+      intensity: Math.min(0.12, cur.intensity), tension: cur.tension * 0.5,
+      next: { ...(resume.next || {}), [resume.id]: 4 },
+    };
+  }
+
+  // Pick the next section's progression now, and let the last beats of this section lead into its first chord:
+  // V of it when that is a major chord (G → C), otherwise the major chord a step below (C → Dm in D dorian).
+  prepareLeadIn(next) {
+    const s = this.song;
+    const prog = this.pickProgression(next);
+    this.upcoming = { sec: next, prog };
+    this.leadIn = null;
+    const beats = s.leadIn;
+    if (!beats || !prog || next.breath || this.section.breath || this.progLock || this.liveChord) return;
+    const scale = this.scaleNow(), t = prog.chordList[0].degree;
+    let a = t + 4;
+    if (chordQuality(scale, a) !== 'maj' && chordQuality(scale, t - 1) === 'maj') a = t - 1;
+    a = ((a % scale.length) + scale.length) % scale.length;
+    const dominant7 = a === ((t + 4) % scale.length) && degSemis(scale, a + 6) - degSemis(scale, a) === 10;
+    const shapeName = dominant7 ? '7' : 'triad';
+    const start = this.step - (this.step % s.stepsPerBar) + s.stepsPerBar - Math.round(beats * s.spb);
+    if (start <= this.step || this.chordAt(start).degree === a) return;
+    this.leadIn = { sec: next, start, chord: { degree: a, shapeName, shape: SHAPES[shapeName], beats } };
   }
 
   chooseNext() {
@@ -491,15 +553,17 @@ export class Engine {
     if (this.distToTarget(this.section) < 0.2 && this.target.influence > 0) return;
     const end = this.sectionBar + 1 + Math.max(0, within | 0);
     if (end < this.sectionBars) this.sectionBars = end;
-    if (this.sectionBar === this.sectionBars - 1) this.nextSection = this.chooseNext();
+    if (this.sectionBar === this.sectionBars - 1) { this.nextSection = this.chooseNext(); this.prepareLeadIn(this.nextSection); }
     this.emitState();
   }
 
-  pickProgression() {
+  pickProgression(sec = this.section) {
     const s = this.song;
     if (!s.progressions.length) return null;
     if (this.progLock && s.progMap[this.progLock]) return s.progMap[this.progLock];
-    const tags = this.section.tags, T = this.goal.tension;
+    const tags = sec.tags;
+    // tension the section will aim for (startSection sets goal the same way, minus the jitter)
+    const T = sec === this.section ? this.goal.tension : clamp01(sec.tension + (this.target.tension - sec.tension) * this.target.influence * 0.5);
     const w = s.progressions.map((p) => {
       let x = p.weight ?? 1;
       let ov = 0;
@@ -517,8 +581,10 @@ export class Engine {
     const s = this.song;
     const sec = s.sectionMap[this.section.id];
     if (sec) this.section = sec;
-    else { this.section = { ...this.section, tags: this.section.tags || [] }; this.sectionBars = this.sectionBar + 1; }
-    if (this.nextSection) this.nextSection = s.sectionMap[this.nextSection.id] || null;
+    else if (!this.section.breath) { this.section = { ...this.section, tags: this.section.tags || [] }; this.sectionBars = this.sectionBar + 1; }
+    if (this.nextSection && !this.nextSection.breath) this.nextSection = s.sectionMap[this.nextSection.id] || null;
+    this.upcoming = null; // progressions may have changed; startSection picks again
+    this.leadIn = null;
     if (this.prog) this.prog = s.progMap[this.prog.id] || this.pickProgression();
     this.chordKey = '';
     for (const id of Object.keys(this.tracks)) {

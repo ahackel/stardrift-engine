@@ -132,6 +132,9 @@ export function prepareSong(raw) {
     layerChurn: raw.layerChurn ?? 0.1,
     progStickiness: raw.progStickiness ?? 1.5,
     moodGlide: raw.moodGlide ?? 8,
+    humanize: clamp01(raw.humanize ?? 0.1), // random velocity spread
+    leadIn: raw.leadIn ?? 2, // beats of lead-in chord before a new section (0 = off)
+    breath: raw.breath || null, // { every: bars, bars: [min, max], keep?: [trackIds] }
     transitBars: raw.transitBars ?? 2,
     master: { gain: 0.9, ...(raw.master || {}) },
     fx: {

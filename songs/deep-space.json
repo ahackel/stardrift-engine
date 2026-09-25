@@ -14,6 +14,9 @@
   "progStickiness": 1.5,
   "moodGlide": 8,
   "transitBars": 2,
+  "humanize": 0.1,
+  "leadIn": 2,
+  "breath": { "every": 64, "bars": [4, 8] },
   "startSection": "intro",
   "master": { "gain": 1.1 },
   "fx": {
