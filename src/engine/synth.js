@@ -200,6 +200,10 @@ class TrackBus {
   allOff() {
     for (const v of this.voices) { if (this.isDrum) v.active = false; else { v.stage = IDLE; v.level = 0; v.gate = false; } }
   }
+  idle() {
+    for (const v of this.voices) if (this.isDrum ? v.active : v.stage !== IDLE) return false;
+    return true;
+  }
   render() {
     let x = 0;
     const p = this.p;
@@ -370,7 +374,8 @@ export class Synth {
         else if (ev.hit) pv.drum([ev.hit], ev.vel);
         else pv.noteOn(ev.notes, ev.vel);
       }
-      this.pvT++;
+      // once the preview has played out, drop its bus so it costs nothing (the echo/reverb tails live on the master)
+      if ((++this.pvT & 4095) === 0 && this.pvI === this.pvQ.length && pv.idle()) this.pv = null;
       const x = pv.render();
       l += x; r += x; e += x * pv.echo; v += x * pv.rev;
     }

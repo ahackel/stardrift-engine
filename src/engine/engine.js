@@ -113,6 +113,7 @@ export class Engine {
     this.livePending = degree === null || degree === undefined
       ? { off: true }
       : { degree: degree | 0, shapeName: SHAPES[shapeName] ? shapeName : 'triad', shape: SHAPES[shapeName] || SHAPES.triad, beats: 4 };
+    this.emitState();
   }
 
   // Hold one chord progression (editor audition / game override). It takes over at the next bar line.
@@ -172,14 +173,7 @@ export class Engine {
   // ---------------------------------------------------------------- sequencer
   tick() {
     const s = this.song;
-    if (this.step % s.stepsPerBar === 0) {
-      this.onBar();
-      if (this.progLock && this.prog?.id !== this.progLock && s.progMap[this.progLock]) {
-        this.prog = s.progMap[this.progLock];
-        this.progStart = this.step;
-        this.emitState();
-      }
-    }
+    if (this.step % s.stepsPerBar === 0) this.onBar();
 
     if (this.livePending && this.step % s.spb === 0) {
       this.liveChord = this.livePending.off ? null : this.livePending;
@@ -299,6 +293,12 @@ export class Engine {
       this.midSectionBar();
     }
     if (this.sectionBar === this.sectionBars - 1) this.prepareTransition();
+    // a held progression takes over at the next bar line (a new section already picked it)
+    if (this.progLock && this.prog?.id !== this.progLock) {
+      this.prog = this.song.progMap[this.progLock];
+      this.progStart = this.step;
+      this.emitState();
+    }
   }
 
   // intensity/tension approach the section goal gradually -> smooth brightness & block choices
@@ -565,6 +565,7 @@ export class Engine {
       prog: this.prog && this.prog.id,
       progLocked: this.progLock,
       live: this.liveChord && { degree: this.liveChord.degree, shape: this.liveChord.shapeName },
+      livePending: this.livePending ? (this.livePending.off ? -1 : this.livePending.degree) : null, // -1 = release pending
       chords: this.prog ? this.prog.chordList.map((c) => chordLabel(s.keyRoot, this.prog.scale, c)) : [],
       scale: this.prog ? this.prog.scaleName : s.scaleName,
       intensity: this.intensity,

@@ -11,7 +11,6 @@ export class StardriftPlayer {
   constructor() {
     this.ctx = null;
     this.node = null;
-    this.analyser = null;
     this.listeners = {};
     this.song = null;
     this.seed = 1;
@@ -31,10 +30,8 @@ export class StardriftPlayer {
       throw err;
     }
     this.node = new AudioWorkletNode(this.ctx, 'stardrift', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 2048;
     this.gain = this.ctx.createGain();
-    this.node.connect(this.gain).connect(this.analyser).connect(this.ctx.destination);
+    this.node.connect(this.gain).connect(this.ctx.destination);
     this.ctx.onstatechange = () => this.emit('transport', { type: 'transport', playing: this.playing });
     this.node.onprocessorerror = (e) => this.emit('error', { type: 'error', text: `audio processor crashed: ${e.message || e}` });
     this.node.port.onmessage = (e) => {
@@ -108,7 +105,7 @@ export class StardriftPlayer {
 
   dispose() {
     try { this.ctx?.close(); } catch { /* already closed */ }
-    this.ctx = this.node = this.analyser = this.gain = null;
+    this.ctx = this.node = this.gain = null;
     this.emit('disposed', { type: 'disposed' });
   }
 

@@ -78,24 +78,41 @@ export function noteName(keyRoot, scale, deg) {
   return LETTERS[li] + (acc > 0 ? '#' : acc < 0 ? 'b' : '');
 }
 
+// Quality of the diatonic triad on a scale degree: maj / min / dim / aug
+export function chordQuality(scale, deg) {
+  const r = degSemis(scale, deg), third = degSemis(scale, deg + 2) - r, fifth = degSemis(scale, deg + 4) - r;
+  if (third === 3) return fifth === 6 ? 'dim' : 'min';
+  return fifth === 8 ? 'aug' : 'maj';
+}
+
+// Roman numeral of a scale degree, upper case for major; display adds ° / + for dim / aug.
+export function romanNumeral(scale, deg, display = false) {
+  const q = chordQuality(scale, deg), n = ROMAN[((deg % 7) + 7) % 7];
+  const base = q === 'maj' || q === 'aug' ? n.toUpperCase() : n;
+  return display ? base + (q === 'dim' ? '°' : q === 'aug' ? '+' : '') : base;
+}
+
+// [{degree, shapeName, beats}] -> "i:8 IV(sus2):4" (the inverse of parseChords)
+export function formatChords(scale, list) {
+  return list.map((c) => `${romanNumeral(scale, c.degree)}${c.shapeName !== 'triad' ? `(${c.shapeName})` : ''}:${c.beats}`).join(' ');
+}
+
+// chord = {degree, shapeName}
 export function chordLabel(keyRoot, scale, chord) {
   if (!chord) return '–';
-  const r = degSemis(scale, chord.degree);
-  const name = noteName(keyRoot, scale, chord.degree);
-  const iv = chord.shape.map((o) => degSemis(scale, chord.degree + o) - r);
-  const third = iv[1], fifth = iv[2];
-  let q = third === 3 ? (fifth === 6 ? 'dim' : 'm') : fifth === 8 ? 'aug' : '';
+  const d = chord.degree, name = noteName(keyRoot, scale, d);
+  const q = { maj: '', min: 'm', dim: 'dim', aug: 'aug' }[chordQuality(scale, d)];
   switch (chord.shapeName) {
     case 'sus2': case 'sus4': return name + chord.shapeName;
     case 'power': return name + '5';
-    case '7': return name + (q === 'dim' ? 'm7b5' : q + (iv[3] === 11 ? 'maj7' : '7'));
+    case '7': return name + (q === 'dim' ? 'm7b5' : q + (degSemis(scale, d + 6) - degSemis(scale, d) === 11 ? 'maj7' : '7'));
     case 'add9': return name + q + 'add9';
     case 'six': return name + q + '6';
     default: return name + q;
   }
 }
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+export const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 // Normalises a raw song JSON into the runtime structure the engine uses.
 // The raw JSON is never mutated, so the editor can keep editing it.
