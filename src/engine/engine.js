@@ -44,6 +44,8 @@ export class Engine {
     this.prog = null;
     this.progStart = 0;
     this.chord = DEFAULT_CHORD;
+    this.liveChord = null;
+    this.livePending = null;
     this.chordKey = '';
     this.intensity = 0.2;
     this.tension = 0.1;
@@ -103,6 +105,14 @@ export class Engine {
       if (this.sectionBar >= this.sectionBars - 1) this.nextSection = sec;
     }
     this.log(`forced → ${id} (next bar line)`);
+  }
+
+  // Live chord (jamming, or a game moment): replaces the progression's chord from the next beat until
+  // released with playChord(null). degree 0-6 in the current scale; shape: triad sus2 sus4 7 add9 six power.
+  playChord(degree, shapeName = 'triad') {
+    this.livePending = degree === null || degree === undefined
+      ? { off: true }
+      : { degree: degree | 0, shapeName: SHAPES[shapeName] ? shapeName : 'triad', shape: SHAPES[shapeName] || SHAPES.triad, beats: 4 };
   }
 
   // Hold one chord progression (editor audition / game override). It takes over at the next bar line.
@@ -171,7 +181,12 @@ export class Engine {
       }
     }
 
-    const chord = this.chordAt(this.step);
+    if (this.livePending && this.step % s.spb === 0) {
+      this.liveChord = this.livePending.off ? null : this.livePending;
+      this.livePending = null;
+      this.emitState();
+    }
+    const chord = this.liveChord || this.chordAt(this.step);
     const scaleName = this.prog ? this.prog.scaleName : s.scaleName;
     const key = `${scaleName}:${chord.degree}:${chord.shapeName}`;
     const chordChanged = key !== this.chordKey;
@@ -549,6 +564,7 @@ export class Engine {
       next: this.nextSection && this.nextSection.id,
       prog: this.prog && this.prog.id,
       progLocked: this.progLock,
+      live: this.liveChord && { degree: this.liveChord.degree, shape: this.liveChord.shapeName },
       chords: this.prog ? this.prog.chordList.map((c) => chordLabel(s.keyRoot, this.prog.scale, c)) : [],
       scale: this.prog ? this.prog.scaleName : s.scaleName,
       intensity: this.intensity,

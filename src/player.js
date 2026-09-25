@@ -116,6 +116,8 @@ export class StardriftPlayer {
   setParams(params) { this.send({ type: 'params', params }); }
   lockBlock(track, block) { this.send({ type: 'lock', track, block: block || null }); }
   lockProgression(id) { this.send({ type: 'lockProg', id: id || null }); } // null = back to automatic
+  // Play your own chord from the next beat: degree 0-6 of the current scale (null = back to the progression)
+  playChord(degree, shape = 'triad') { this.send({ type: 'chord', degree: degree ?? null, shape }); }
   setMute(track, on) { this.send({ type: 'mute', track, on }); }
   setSolo(track, on) { this.send({ type: 'solo', track, on }); }
   forceSection(id) { this.send({ type: 'section', id }); }

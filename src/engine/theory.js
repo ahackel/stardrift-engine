@@ -64,10 +64,24 @@ export function parseChords(str) {
     .filter(Boolean);
 }
 
+// Spell a scale degree so a 7-note scale uses every letter once (G# in D lydian, not Ab).
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const LETTER_PC = [0, 2, 4, 5, 7, 9, 11];
+export function noteName(keyRoot, scale, deg) {
+  const pc = (((keyRoot + degSemis(scale, deg)) % 12) + 12) % 12;
+  if (scale.length !== 7) return NOTE_NAMES[pc];
+  const li = (LETTERS.indexOf(NOTE_NAMES[keyRoot][0]) + (((deg % 7) + 7) % 7)) % 7;
+  let acc = pc - LETTER_PC[li];
+  if (acc > 6) acc -= 12;
+  if (acc < -6) acc += 12;
+  if (Math.abs(acc) > 1) return NOTE_NAMES[pc]; // avoid double sharps/flats
+  return LETTERS[li] + (acc > 0 ? '#' : acc < 0 ? 'b' : '');
+}
+
 export function chordLabel(keyRoot, scale, chord) {
   if (!chord) return '–';
   const r = degSemis(scale, chord.degree);
-  const name = NOTE_NAMES[(((keyRoot + r) % 12) + 12) % 12];
+  const name = noteName(keyRoot, scale, chord.degree);
   const iv = chord.shape.map((o) => degSemis(scale, chord.degree + o) - r);
   const third = iv[1], fifth = iv[2];
   let q = third === 3 ? (fifth === 6 ? 'dim' : 'm') : fifth === 8 ? 'aug' : '';
