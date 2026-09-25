@@ -5,6 +5,7 @@
 //   click  – a very short noise transient (beater attack)
 //   drive  – soft saturation for punch
 // All times are exponential time constants in seconds, frequencies in Hz.
+// Simple per-hit knobs on top of that (all multipliers, default 1): pitch, decay, level.
 
 const TWO_PI = Math.PI * 2;
 const TRI4 = new Float32Array(32);
@@ -49,6 +50,7 @@ function filterSpec(type, freq, q, sr) {
 }
 
 // instrument def: { type: 'drums', kit: 'clean' | 'chip' | { s: {...override}, ... }, preset: 'clean' }
+// e.g. { type: 'drums', preset: 'clean', kit: { s: { pitch: 1.1, decay: 0.8 }, h: { level: 0.7 } } }
 export function compileKit(def, sr) {
   const presetName = typeof def.kit === 'string' ? def.kit : def.preset || 'clean';
   const preset = KITS[presetName] || KITS.clean;
@@ -56,25 +58,27 @@ export function compileKit(def, sr) {
   const out = {};
   for (const name of new Set([...Object.keys(preset), ...Object.keys(over)])) {
     const h = { ...(preset[name] || {}), ...(over[name] || {}) };
+    const pitch = h.pitch ?? 1, dec = h.decay ?? 1;
     out[name] = {
-      len: h.len ?? 1,
+      level: h.level ?? 1,
+      len: (h.len ?? 1) * Math.max(1, dec),
       drive: h.drive && h.drive > 1 ? h.drive : 0,
       driveNorm: h.drive && h.drive > 1 ? 1 / Math.tanh(h.drive) : 1,
       click: h.click || 0,
       clickCoef: coef(0.0015, sr),
       tones: (h.tones || []).slice(0, 2).map((c) => ({
-        amp: c.amp ?? 1, f0: c.f0 ?? 150, f1: c.f1 ?? c.f0 ?? 150,
-        sweepCoef: coef(c.sweep ?? 0.03, sr), decayCoef: coef(c.decay ?? 0.1, sr), tri4: c.wave === 'tri4',
+        amp: c.amp ?? 1, f0: (c.f0 ?? 150) * pitch, f1: (c.f1 ?? c.f0 ?? 150) * pitch,
+        sweepCoef: coef(c.sweep ?? 0.03, sr), decayCoef: coef((c.decay ?? 0.1) * dec, sr), tri4: c.wave === 'tri4',
       })),
       noise: h.noise ? {
-        amp: h.noise.amp ?? 0.5, decayCoef: coef(h.noise.decay ?? 0.05, sr), attack: h.noise.attack || 0,
-        lfsr: h.noise.source === 'lfsr', rate: h.noise.rate || 10000, short: !!h.noise.short,
-        filter: filterSpec(h.noise.filter, h.noise.freq, h.noise.q, sr),
+        amp: h.noise.amp ?? 0.5, decayCoef: coef((h.noise.decay ?? 0.05) * dec, sr), attack: h.noise.attack || 0,
+        lfsr: h.noise.source === 'lfsr', rate: (h.noise.rate || 10000) * pitch, short: !!h.noise.short,
+        filter: filterSpec(h.noise.filter, (h.noise.freq || 1000) * pitch, h.noise.q, sr),
       } : null,
       metal: h.metal ? {
-        amp: h.metal.amp ?? 0.5, decayCoef: coef(h.metal.decay ?? 0.05, sr),
-        inc: METAL_HZ.map((f) => (f * (h.metal.tune || 1)) / sr),
-        filter: filterSpec(h.metal.filter || 'hp', h.metal.freq || 7000, h.metal.q, sr),
+        amp: h.metal.amp ?? 0.5, decayCoef: coef((h.metal.decay ?? 0.05) * dec, sr),
+        inc: METAL_HZ.map((f) => (f * (h.metal.tune || 1) * pitch) / sr),
+        filter: filterSpec(h.metal.filter || 'hp', (h.metal.freq || 7000) * pitch, h.metal.q, sr),
       } : null,
     };
   }
@@ -186,6 +190,6 @@ export class DrumVoice {
 
     if (h.drive) out = Math.tanh(out * h.drive) * h.driveNorm;
     if (!alive || this.t > h.len) this.active = false;
-    return out * this.vel;
+    return out * this.vel * h.level;
   }
 }

@@ -62,13 +62,19 @@ A mood change never cuts: the current section ends at a bar line within `within`
 |---|---|
 | `src/engine/engine.js` | conductor + sequencer (the brain) |
 | `src/engine/synth.js` | voices, filters, echo, reverb |
-| `src/engine/drums.js` | drum kits: `clean` (default: sine bodies, filtered noise, 808-style metal) and `chip` (raw NES-style) — pick with `"kit"` on a drums instrument, override single hits with an object |
+| `src/engine/drums.js` | drum kits: `clean` (default: sine bodies, filtered noise, 808-style metal) and `chip` (raw NES-style) — pick with `"kit"` on a drums instrument, override single hits with an object, e.g. `"preset": "clean", "kit": { "s": { "pitch": 1.1, "decay": 0.8, "level": 0.9 } }` |
 | `src/engine/pattern.js` | pattern language, generators, mutations |
 | `src/engine/theory.js` | scales, chords, song normalisation |
 | `src/engine/rng.js` | seeded RNG (mulberry32) |
 | `src/worklet.js` / `src/player.js` | AudioWorklet host / main-thread API for web games |
-| `src/editor/*` | editor UI (live lanes, mood pads, block grid editor, structure, JSON) |
+| `src/editor/*` | editor UI (live lanes, mood pads, block grid editor, instruments, structure, JSON) |
 | `songs/deep-space.json` | default song |
+
+## Instruments
+
+Each track names an instrument (`"instrument": "lead"`); instruments live in `song.instruments`. Types: `pulse` (NES square, `duty`, `pwm`), `triangle` (NES 4-bit triangle), `wave` (32-step 4-bit wavetable: `soft sine saw organ hollow` or your own array of 32 values 0–15) and `drums`. All melodic types share `env {a d s r}`, `unison`/`detune`, `vibrato {depth rate delay}`, `glide`, `arp`, `cutoff`/`resonance`, `cutoffIntensity`/`cutoffTension` (the filter follows the mood) and `gain`.
+
+The editor's **Instruments** tab edits all of this live: pick a track's instrument (also from the dropdown under each lane name), set octave/volume/pan/sends, shape sounds with sliders, draw wavetables, tweak drum hits, and audition with ▶ even while the song is paused (`player.preview(inst, events)`). Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
 
 ## Pattern language
 

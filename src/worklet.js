@@ -5,6 +5,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.engine = null;
+    this.hold = false;
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
@@ -13,8 +14,10 @@ class StardriftProcessor extends AudioWorkletProcessor {
       if (m.type === 'load') {
         if (!this.engine || m.restart) this.engine = new Engine(sampleRate, m.song, m.seed ?? 1);
         else this.engine.setSong(m.song);
+        this.engine.setHold(this.hold);
         return;
       }
+      if (m.type === 'hold') { this.hold = !!m.on; this.engine?.setHold(this.hold); return; }
       const e = this.engine;
       if (!e) return;
       switch (m.type) {
@@ -25,6 +28,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'solo': e.setSolo(m.track, m.on); break;
         case 'section': e.forceSection(m.id); break;
         case 'state': e.emitState(); break;
+        case 'preview': e.preview(m.inst, m.events, m.options); break;
       }
     } catch (err) {
       this.port.postMessage([{ type: 'error', text: String(err && err.message || err) }]);

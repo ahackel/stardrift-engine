@@ -122,9 +122,24 @@ export class Engine {
   setMute(id, on) { this.synth.setMute(id, on); }
   setSolo(id, on) { this.synth.setSolo(id, on); }
 
+  // hold = the sequencer stands still and song voices fade out, but previews still sound (editor)
+  setHold(on) {
+    on = !!on;
+    if (on && !this.hold) this.synth.releaseAll();
+    this.hold = on;
+  }
+
+  preview(inst, events, opts) { this.synth.preview(inst, events, opts); }
+
   process(outL, outR, n) {
     const syn = this.synth;
     for (let i = 0; i < n; i++) {
+      if (this.hold) {
+        syn.renderSample();
+        outL[i] = syn.outL;
+        outR[i] = syn.outR;
+        continue;
+      }
       if (this.stepTimer <= 0) {
         this.tick();
         const sw = this.song.swing;

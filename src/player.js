@@ -15,6 +15,7 @@ export class StardriftPlayer {
     this.listeners = {};
     this.song = null;
     this.seed = 1;
+    this.holding = false; // editor preview while "paused": the song stands still, previews sound
   }
 
   async init() {
@@ -39,6 +40,7 @@ export class StardriftPlayer {
     this.node.port.onmessage = (e) => {
       for (const ev of e.data) this.emit(ev.type, ev);
     };
+    this.send({ type: 'hold', on: this.holding });
     if (this.song) this.send({ type: 'load', song: this.song, seed: this.seed, restart: true });
   }
 
@@ -70,6 +72,7 @@ export class StardriftPlayer {
   // so throw it away and let the next user gesture build a fresh one.
   async play() {
     if (!this.ctx) return;
+    this.setHold(false);
     try {
       await this.ctx.resume();
     } catch (err) {
@@ -78,8 +81,30 @@ export class StardriftPlayer {
       throw err;
     }
   }
-  async pause() { await this.ctx?.suspend(); }
-  get playing() { return this.ctx?.state === 'running'; }
+  async pause() { this.setHold(false); await this.ctx?.suspend(); }
+  get playing() { return this.ctx?.state === 'running' && !this.holding; }
+
+  setHold(on) {
+    clearTimeout(this.holdTimer);
+    if (this.holding === !!on) return;
+    this.holding = !!on;
+    this.send({ type: 'hold', on: this.holding });
+    this.emit('transport', { type: 'transport', playing: this.playing });
+  }
+
+  // Audition an instrument definition (editor). While the song is paused only the preview sounds.
+  //   events: [{ t: seconds, notes: [midi], dur }] or [{ t, hit: 's' }]   options: { poly, volume }
+  async preview(inst, events, options) {
+    if (!this.ctx) return;
+    if (!this.playing) {
+      this.setHold(true);
+      await this.ctx.resume().catch(() => {});
+      const end = Math.max(0, ...events.map((e) => (e.t || 0) + (e.dur || 0)));
+      const tail = (inst.env?.r ?? 0.2) + 2.5; // release + echo/reverb
+      this.holdTimer = setTimeout(() => { if (this.holding) this.ctx?.suspend(); }, (end + tail) * 1000);
+    }
+    this.send({ type: 'preview', inst, events, options });
+  }
 
   dispose() {
     try { this.ctx?.close(); } catch { /* already closed */ }
