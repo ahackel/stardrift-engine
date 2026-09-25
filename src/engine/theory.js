@@ -168,6 +168,20 @@ export function prepareSong(raw) {
   if (!s.sections.length) s.sections.push({ id: 'default', bars: [8], intensity: 0.5, tension: 0.3, tags: [] });
   s.sectionMap = Object.fromEntries(s.sections.map((x) => [x.id, x]));
 
+  // the song theme: one melody in key degrees that theme blocks restate in varied forms
+  s.theme = raw.theme?.pattern ? { pattern: raw.theme.pattern, beats: Math.max(1, +raw.theme.beats || 8) } : null;
+
+  // stingers: short phrases for game events; each part borrows a track for the stinger's length
+  s.stingers = (raw.stingers || []).filter((x) => x && x.id).map((x) => ({
+    ...x,
+    beats: Math.max(0.25, +x.beats || 2),
+    at: x.at || 'beat',
+    duck: clamp01(x.duck ?? 0.4),
+    parts: (x.parts || []).filter((p) => p && s.trackMap[p.track]),
+    chordList: parseChords(x.chords),
+  }));
+  s.stingMap = Object.fromEntries(s.stingers.map((x) => [x.id, x]));
+
   s.blocks = (raw.blocks || []).filter((b) => b && b.id && b.track);
   s.blockMap = Object.fromEntries(s.blocks.map((b) => [b.id, b]));
   s.blocksByTrack = {};

@@ -295,6 +295,7 @@ export class Synth {
     this.mutes = {}; this.solos = {};
     this.mood = [0.2, 0.1];
     this.pv = null; this.pvQ = []; this.pvI = 0; this.pvT = 0;
+    this.duck = null;
   }
   configure(song) {
     const next = {};
@@ -325,9 +326,14 @@ export class Synth {
   }
   setMute(id, on) { this.mutes[id] = !!on; this.updateGains(); }
   setSolo(id, on) { this.solos[id] = !!on; this.updateGains(); }
+  // stinger: every track except `keep` (ids) gets quieter by `amount`; null ends the ducking
+  setDuck(keep, amount = 0) { this.duck = keep && amount > 0 ? { keep, amount } : null; this.updateGains(); }
   updateGains() {
-    const anySolo = Object.keys(this.tracks).some((id) => this.solos[id]);
-    for (const id in this.tracks) this.tracks[id].gTarget = anySolo ? (this.solos[id] ? 1 : 0) : this.mutes[id] ? 0 : 1;
+    const anySolo = Object.keys(this.tracks).some((id) => this.solos[id]), d = this.duck;
+    for (const id in this.tracks) {
+      const g = anySolo ? (this.solos[id] ? 1 : 0) : this.mutes[id] ? 0 : 1;
+      this.tracks[id].gTarget = d && !d.keep.includes(id) ? g * (1 - d.amount) : g;
+    }
   }
   noteOn(id, midis, vel) { this.tracks[id]?.noteOn(midis, vel); }
   release(id) { this.tracks[id]?.release(); }

@@ -6,6 +6,7 @@
 //   music.play();
 //   music.setMood('relaxed');                 // or 'tension', 'danger', 'wonder', 'auto', {intensity, tension}
 //   music.setParams({ intensity: 0.8 });      // fine-grained continuous control
+//   music.sting('discovery');                 // a short phrase for a game event, in key and on the beat
 //
 export class StardriftPlayer {
   constructor() {
@@ -93,14 +94,17 @@ export class StardriftPlayer {
   //   events: [{ t: seconds, notes: [midi], dur }] or [{ t, hit: 's' }]   options: { poly, volume }
   async preview(inst, events, options) {
     if (!this.ctx) return;
-    if (!this.playing) {
-      this.setHold(true);
-      await this.ctx.resume().catch(() => {});
-      const end = Math.max(0, ...events.map((e) => (e.t || 0) + (e.dur || 0)));
-      const tail = (inst.env?.r ?? 0.2) + 2.5; // release + echo/reverb
-      this.holdTimer = setTimeout(() => { if (this.holding) this.ctx?.suspend(); }, (end + tail) * 1000);
-    }
+    const end = Math.max(0, ...events.map((e) => (e.t || 0) + (e.dur || 0)));
+    await this.audition(end + (inst.env?.r ?? 0.2) + 2.5); // + release + echo/reverb
     this.send({ type: 'preview', inst, events, options });
+  }
+
+  // While the song is paused, let the audio run for `seconds` (the song stands still) so a preview can sound.
+  async audition(seconds) {
+    if (!this.ctx || this.playing) return;
+    this.setHold(true);
+    await this.ctx.resume().catch(() => {});
+    this.holdTimer = setTimeout(() => { if (this.holding) this.ctx?.suspend(); }, seconds * 1000);
   }
 
   dispose() {
@@ -115,6 +119,8 @@ export class StardriftPlayer {
   lockProgression(id) { this.send({ type: 'lockProg', id: id || null }); } // null = back to automatic
   // Play your own chord from the next beat: degree 0-6 of the current scale (null = back to the progression)
   playChord(degree, shape = 'triad') { this.send({ type: 'chord', degree: degree ?? null, shape }); }
+  // Stinger for a game event (song.stingers), from the next beat or options.at: 'step' | 'beat' | 'half' | 'bar'
+  sting(id, options) { this.send({ type: 'sting', id, options }); }
   setMute(track, on) { this.send({ type: 'mute', track, on }); }
   setSolo(track, on) { this.send({ type: 'solo', track, on }); }
   forceSection(id) { this.send({ type: 'section', id }); }

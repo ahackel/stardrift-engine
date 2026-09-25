@@ -1,14 +1,15 @@
-// Offline render: node tools/render.mjs [song.json] [seconds] [seed] [out.wav] [--mood t:name ...]
+// Offline render: node tools/render.mjs [song.json] [seconds] [seed] [out.wav] [--mood t:name ...] [--sting t:id ...]
 // Renders the engine without a browser (useful for tests, and to bake loops for other engines).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { encodeWav } from '../src/wav.js';
 
 const args = process.argv.slice(2);
-const moods = [];
+const cues = []; // timed setMood / sting calls
 const pos = [];
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--mood') { const [t, m] = args[++i].split(':'); moods.push({ t: +t, m }); }
+  if (args[i] === '--mood') { const [t, m] = args[++i].split(':'); cues.push({ t: +t, m }); }
+  else if (args[i] === '--sting') { const [t, id] = args[++i].split(':'); cues.push({ t: +t, sting: id }); }
   else pos.push(args[i]);
 }
 const [songPath = 'songs/deep-space.json', secs = '120', seed = '1', out = ''] = pos;
@@ -22,9 +23,9 @@ const BLOCK = 128;
 const t0 = performance.now();
 let peak = 0, sumSq = 0, nan = 0;
 const log = [];
-moods.sort((a, b) => a.t - b.t);
+cues.sort((a, b) => a.t - b.t);
 for (let i = 0; i < n; i += BLOCK) {
-  while (moods.length && moods[0].t * SR <= i) engine.setMood(moods.shift().m);
+  while (cues.length && cues[0].t * SR <= i) { const x = cues.shift(); if (x.sting) engine.sting(x.sting); else engine.setMood(x.m); }
   const len = Math.min(BLOCK, n - i);
   engine.process(L.subarray(i, i + len), R.subarray(i, i + len), len);
   for (const e of engine.drainEvents()) if (e.type === 'log') log.push(`${(i / SR).toFixed(1).padStart(6)}s  ${e.text}`);

@@ -3,7 +3,7 @@
 
 import { Rng } from './rng.js';
 import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES } from './theory.js';
-import { expandTokens, parseTokens, generateTokens, mutateTokens, REST, HOLD } from './pattern.js';
+import { expandTokens, parseTokens, generateTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD } from './pattern.js';
 import { Synth } from './synth.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -51,6 +51,8 @@ export class Engine {
     this.upcoming = null; // {sec, prog}: next section and its progression, picked one bar early
     this.barsSinceBreath = 0;
     this.breathAt = 0;
+    this.curSting = null; // {id, pos, len, parts: {trackId: {mode, steps}}, chords}
+    this.nextSting = null; // {def, q}: starts on the next step divisible by q
     this.chordKey = '';
     this.intensity = 0.2;
     this.tension = 0.1;
@@ -58,6 +60,7 @@ export class Engine {
     this.tracks = {};
     this.history = {};
     this.synth.allOff();
+    this.synth.setDuck(null);
     this.setSong(song || this.song.raw);
   }
 
@@ -142,6 +145,18 @@ export class Engine {
     this.emitState();
   }
 
+  // Stinger: a short phrase for a game event ("discovery", "alert"), played over the music from the next
+  // step / beat / half bar / bar (options.at, else the stinger's own `at`). Its parts borrow tracks for a moment
+  // and are written like blocks, so a stinger is always in key and in time. While held (editor), it plays at once.
+  sting(id, { at } = {}) {
+    const s = this.song, def = s.stingMap[id];
+    if (!def) return false;
+    if (this.nextSting?.def === def) return true; // already waiting for its beat
+    const q = { step: 1, beat: s.spb, half: Math.max(1, (s.stepsPerBar / 2) | 0), bar: s.stepsPerBar }[at || def.at] || s.spb;
+    this.nextSting = { def, q };
+    return true;
+  }
+
   setMute(id, on) { this.synth.setMute(id, on); }
   setSolo(id, on) { this.synth.setSolo(id, on); }
 
@@ -158,6 +173,10 @@ export class Engine {
     const syn = this.synth;
     for (let i = 0; i < n; i++) {
       if (this.hold) {
+        if (this.curSting || this.nextSting) { // a stinger still sounds while the song stands still
+          if (this.stepTimer <= 0) { this.heldTick(); this.stepTimer += this.stepLen; }
+          this.stepTimer -= 1;
+        }
         syn.renderSample();
         outL[i] = syn.outL;
         outR[i] = syn.outR;
@@ -180,24 +199,20 @@ export class Engine {
     const s = this.song;
     if (this.step % s.stepsPerBar === 0) this.onBar();
 
+    this.updateSting(false);
     if (this.livePending && this.step % s.spb === 0) {
       this.liveChord = this.livePending.off ? null : this.livePending;
       this.livePending = null;
       this.emitState();
     }
     const li = this.leadIn; // only while its section is still the one coming next (a mood change may have re-routed)
-    const chord = this.liveChord || (li && this.step >= li.start && this.nextSection === li.sec ? li.chord : this.chordAt(this.step));
-    const scaleName = this.prog ? this.prog.scaleName : s.scaleName;
-    const key = `${scaleName}:${chord.degree}:${chord.shapeName}`;
-    const chordChanged = key !== this.chordKey;
-    if (chordChanged) {
-      this.chord = chord;
-      this.chordKey = key;
-      this.emit({ type: 'chord', label: chordLabel(s.keyRoot, this.scaleNow(), chord), scale: scaleName });
-    }
+    const chordChanged = this.setChord(this.stingChord() || this.liveChord
+      || (li && this.step >= li.start && this.nextSection === li.sec ? li.chord : this.chordAt(this.step)));
 
-    const pos = {};
+    const pos = {}, sg = this.curSting;
     for (const tr of s.tracks) {
+      const part = sg && sg.parts[tr.id];
+      if (part) { this.playStep(tr, this.trackState(tr), part.steps[sg.pos], part, chordChanged); continue; }
       const ts = this.tracks[tr.id];
       if (!ts || !ts.active || !ts.steps) continue;
       let steps = ts.steps, p, fill = false;
@@ -215,22 +230,38 @@ export class Engine {
         }
       }
       pos[tr.id] = fill ? -1 - p : p;
-      const st = steps[p];
-      if (!st) continue;
-      if (st.t === REST) {
-        if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; }
-      } else if (st.t === HOLD) {
-        if (chordChanged && ts.sounding && tr.follow) this.play(tr, ts, ts.sounding, true);
-      } else if (st.prob >= 1 || this.rng.next() < st.prob) {
-        this.play(tr, ts, st, false);
-      } else if (ts.sounding) {
-        this.synth.release(tr.id);
-        ts.sounding = null;
-      }
+      this.playStep(tr, ts, steps[p], ts.block, chordChanged);
     }
+    if (sg) sg.pos++;
     const progBeat = this.prog ? (((this.step - this.progStart) / s.spb) % this.prog.totalBeats) : 0;
     this.emit({ type: 'step', step: this.step, bar: this.sectionBar, bars: this.sectionBars, spbar: s.stepsPerBar, pos, progBeat });
     this.step++;
+  }
+
+  // src = the block (or stinger part) the step comes from: it decides how numbers map to notes
+  playStep(tr, ts, st, src, chordChanged) {
+    if (!st) return;
+    if (st.t === REST) {
+      if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; }
+    } else if (st.t === HOLD) {
+      if (chordChanged && ts.sounding && tr.follow) this.play(tr, ts, ts.sounding, true, src);
+    } else if (st.prob >= 1 || this.rng.next() < st.prob) {
+      this.play(tr, ts, st, false, src);
+    } else if (ts.sounding) {
+      this.synth.release(tr.id);
+      ts.sounding = null;
+    }
+  }
+
+  // returns whether the chord changed
+  setChord(chord) {
+    const scaleName = this.prog ? this.prog.scaleName : this.song.scaleName;
+    const key = `${scaleName}:${chord.degree}:${chord.shapeName}`;
+    if (key === this.chordKey) return false;
+    this.chord = chord;
+    this.chordKey = key;
+    this.emit({ type: 'chord', label: chordLabel(this.song.keyRoot, this.scaleNow(), chord), scale: scaleName });
+    return true;
   }
 
   // Dynamics: bar downbeats a bit louder, off-16ths a bit softer, plus a small random spread (song.humanize).
@@ -240,7 +271,7 @@ export class Engine {
     return Math.min(1, base * groove * (1 + (this.vrng.next() * 2 - 1) * s.humanize));
   }
 
-  play(tr, ts, st, isFollow) {
+  play(tr, ts, st, isFollow, src) {
     const vel = this.velocity(st.accent ? 1 : 0.78);
     if (tr.inst.type === 'drums') {
       const hits = [];
@@ -249,7 +280,7 @@ export class Engine {
       this.emit({ type: 'note', track: tr.id });
       return;
     }
-    const midis = this.resolve(tr, ts.block, st.atoms);
+    const midis = this.resolve(tr, src, st.atoms);
     if (!midis.length) return;
     this.synth.noteOn(tr.id, midis, vel);
     ts.sounding = st;
@@ -262,8 +293,11 @@ export class Engine {
     const s = this.song, scale = this.scaleNow(), L = scale.length;
     const chord = this.chord, shape = chord.shape, S = shape.length;
     const base = 12 * ((tr.octave ?? 4) + 1) + s.keyRoot;
-    const mode = (block && block.mode) || tr.mode || 'chord';
+    const mode = block?.theme ? 'key' : (block && block.mode) || tr.mode || 'chord';
     const root = foldDegree(chord.degree, L);
+    // fit: notes on a beat move to the nearest chord tone, so a melody in key degrees suits any chord
+    const tones = mode !== 'chord' && (block?.fit ?? !!block?.theme) && this.step % s.spb === 0
+      ? shape.map((o) => (((root + o) % L) + L) % L) : null;
     const out = [];
     for (const a of atoms) {
       let degs;
@@ -273,7 +307,10 @@ export class Engine {
         if (mode === 'chord') {
           const o = Math.floor(n / S);
           degs = [root + shape[n - o * S] + o * L];
-        } else degs = [mode === 'scale' ? root + n : n];
+        } else {
+          const d = mode === 'scale' ? root + n : n;
+          degs = [tones ? nearestTone(d, tones, L) : d];
+        }
       } else continue;
       for (const d of degs) {
         const m = base + degSemis(scale, d) + 12 * a.oct + a.semi;
@@ -370,7 +407,7 @@ export class Engine {
       if (b) this.startBlock(tr, ts, b);
       else active = false;
     }
-    if (!active && ts.sounding) { this.synth.release(tr.id); ts.sounding = null; }
+    if (!active && ts.sounding && !this.curSting?.parts[tr.id]) { this.synth.release(tr.id); ts.sounding = null; } // a stinger's note plays on
     ts.active = active;
   }
 
@@ -391,7 +428,7 @@ export class Engine {
     ts.start = this.step;
     ts.loop = 0;
     const len = this.blockLen(b);
-    ts.base = b.gen ? generateTokens(b.gen, this.rng, len, b.mode || tr.mode) : expandTokens(b.pattern, len);
+    ts.base = b.gen ? generateTokens(b.gen, this.rng, len, b.mode || tr.mode) : b.theme ? this.themeFor(tr, b, len) : expandTokens(b.pattern, len);
     ts.tokens = ts.base;
     ts.steps = parseTokens(ts.tokens);
     const h = (this.history[tr.id] ||= []);
@@ -423,10 +460,23 @@ export class Engine {
     ts.loop++;
     const b = ts.block;
     if (b.gen && this.rng.chance(b.gen.regen ?? 0.3)) ts.base = generateTokens(b.gen, this.rng, ts.base.length, b.mode || tr.mode);
+    else if (b.theme && this.rng.chance(0.5)) ts.base = this.themeFor(tr, b, ts.base.length);
     const v = this.section.variation ?? this.song.variation;
     ts.tokens = (b.mutate ?? 1) > 0 && this.rng.chance(v) ? mutateTokens(ts.base, this.rng, tr.inst.type === 'drums', b.mutate ?? 1) : ts.base;
     ts.steps = parseTokens(ts.tokens);
     this.emit({ type: 'tokens', track: tr.id, tokens: ts.tokens });
+  }
+
+  // Theme blocks play the song theme in one of their forms (b.theme = true or a list of forms), picked anew
+  // when the block starts and, half the time, when it loops.
+  themeFor(tr, b, len) {
+    const th = this.song.theme;
+    if (!th) return fitLength([], len);
+    const forms = Array.isArray(b.theme) ? b.theme.filter((f) => THEME_FORMS.includes(f)) : [];
+    const form = this.rng.pick(forms.length ? forms : THEME_FORMS);
+    this.log(`♪ theme ${form} on ${tr.id}`);
+    this.trackState(tr).theme = `${th.beats}:${th.pattern}`; // a theme edit re-plays it (refresh)
+    return fitLength(themeTokens(expandTokens(th.pattern, Math.round(th.beats * this.song.spb)), form, this.rng), len);
   }
 
   midSectionBar() {
@@ -486,6 +536,71 @@ export class Engine {
     }
     this.log(`next → ${next.id}`);
     this.emitState();
+  }
+
+  // ---------------------------------------------------------------- stingers
+  // start a pending stinger on its beat (held: at once), end a finished one
+  updateSting(held) {
+    if (this.curSting && this.curSting.pos >= this.curSting.len) this.endSting(held);
+    const p = this.nextSting;
+    if (!p || !(held || this.step % p.q === 0)) return;
+    this.nextSting = null;
+    if (this.curSting) this.endSting(held);
+    const s = this.song, def = p.def, len = Math.max(1, Math.round(def.beats * s.spb));
+    const parts = {};
+    for (const pt of def.parts) parts[pt.track] = { mode: pt.mode, steps: parseTokens(expandTokens(pt.pattern, len)) };
+    this.curSting = { id: def.id, pos: 0, len, parts, chords: def.chordList.length ? def.chordList : null };
+    this.synth.setDuck(Object.keys(parts), def.duck);
+    this.log(`✦ ${def.id}`);
+    this.emit({ type: 'sting', id: def.id, on: true });
+  }
+
+  endSting(held) {
+    const sg = this.curSting;
+    this.curSting = null;
+    this.synth.setDuck(null);
+    for (const id in sg.parts) {
+      const tr = this.song.trackMap[id], ts = this.tracks[id];
+      if (!tr || !ts) continue;
+      if (ts.sounding) { this.synth.release(id); ts.sounding = null; }
+      if (!held && ts.active && ts.steps && !ts.fill) this.resumeBlock(tr, ts);
+    }
+    this.emit({ type: 'sting', id: sg.id, on: false });
+  }
+
+  // A track the stinger borrowed picks its block up again: a note held across the stinger's end sounds again.
+  resumeBlock(tr, ts) {
+    const n = ts.steps.length, p = (((this.step - ts.start) % n) + n) % n;
+    if (ts.steps[p].t !== HOLD) return;
+    for (let i = 1; i < n; i++) {
+      const st = ts.steps[(p - i + n) % n];
+      if (st.t === REST) return;
+      if (st.t !== HOLD) { this.play(tr, ts, st, true, ts.block); return; }
+    }
+  }
+
+  stingChord() {
+    const sg = this.curSting;
+    if (!sg || !sg.chords) return null;
+    let beat = sg.pos / this.song.spb;
+    for (const c of sg.chords) {
+      if (beat < c.beats) return c;
+      beat -= c.beats;
+    }
+    return sg.chords[sg.chords.length - 1];
+  }
+
+  // held (editor audition): only the stinger's parts play, over the chord the song stopped on
+  heldTick() {
+    this.updateSting(true);
+    const sg = this.curSting;
+    if (!sg) return;
+    const c = this.stingChord(), changed = c ? this.setChord(c) : false;
+    for (const id in sg.parts) {
+      const tr = this.song.trackMap[id];
+      if (tr) this.playStep(tr, this.trackState(tr), sg.parts[id].steps[sg.pos], sg.parts[id], changed);
+    }
+    sg.pos++;
   }
 
   // Breathers: every so often (song.breath.every bars) the music thins out to its ambient tracks
@@ -599,12 +714,15 @@ export class Engine {
       }
       const len = this.blockLen(b);
       ts.block = b;
-      if (!b.gen) ts.base = expandTokens(b.pattern, len);
+      if (b.theme) { if (!ts.base || ts.base.length !== len || ts.theme !== (s.theme && `${s.theme.beats}:${s.theme.pattern}`)) ts.base = this.themeFor(tr, b, len); }
+      else if (!b.gen) ts.base = expandTokens(b.pattern, len);
       else if (!ts.base || ts.base.length !== len) ts.base = generateTokens(b.gen, this.rng, len, b.mode || tr.mode);
       ts.tokens = ts.base;
       ts.steps = parseTokens(ts.tokens);
     }
     for (const [id, b] of Object.entries(this.locks)) if (!s.blockMap[b]) delete this.locks[id];
+    if (this.nextSting) this.nextSting.def = s.stingMap[this.nextSting.def.id] || null;
+    if (!this.nextSting?.def) this.nextSting = null;
     if (this.progLock && !s.progMap[this.progLock]) this.progLock = null;
     this.emitState();
   }

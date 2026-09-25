@@ -26,6 +26,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'lock': e.lock(m.track, m.block); break;
         case 'lockProg': e.lockProgression(m.id); break;
         case 'chord': e.playChord(m.degree, m.shape); break;
+        case 'sting': e.sting(m.id, m.options); break;
         case 'mute': e.setMute(m.track, m.on); break;
         case 'solo': e.setSolo(m.track, m.on); break;
         case 'section': e.forceSection(m.id); break;

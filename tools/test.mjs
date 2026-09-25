@@ -1,13 +1,14 @@
-// node tools/test.mjs — engine sanity checks (determinism, mood routing, hot reload, audio health)
+// node tools/test.mjs — engine sanity checks (determinism, mood routing, hot reload, audio health, stingers, theme)
 import { readFileSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
+import { degSemis, foldDegree } from '../src/engine/theory.js';
 
 const song = JSON.parse(readFileSync(new URL('../songs/deep-space.json', import.meta.url), 'utf8'));
 const SR = 44100;
 let failed = 0;
 const ok = (cond, msg) => { console.log(`${cond ? '✓' : '✗'} ${msg}`); if (!cond) failed++; };
 
-function run(engine, secs, onBlock) {
+function run(engine, secs, onBlock) { // onBlock(seconds, engine) before each 128-sample block
   const L = new Float32Array(128), R = new Float32Array(128);
   let hash = 0, peak = 0, bad = 0;
   for (let i = 0, n = Math.round(secs * SR); i < n; i += 128) {
@@ -86,6 +87,52 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
     }
   });
   ok(changes > 3 && prepared >= changes / 2, `lead-in chords before section changes (${prepared}/${changes})`);
+}
+
+// 7. Stingers: start on the beat, borrow their tracks (with their own chord), duck the rest, then hand back
+{
+  const e = new Engine(SR, song, 9);
+  run(e, 20);
+  e.sting('jump');
+  let start = null, end = null, duck = null;
+  const notes = new Set();
+  run(e, 6, (t, en) => {
+    for (const ev of en.drainEvents()) {
+      if (ev.type === 'sting') { if (ev.on) { start = en.step; duck = en.synth.tracks.pad.gTarget; } else end = en.step; }
+      if (ev.type === 'note' && start !== null && end === null) notes.add(ev.track);
+    }
+  });
+  const len = 4 * e.song.spb;
+  ok(start !== null && (start - 1) % e.song.spb < 2 && end - start >= len - 2 && end - start <= len + 2, `stinger starts on a beat and lasts its length (${start}…${end})`);
+  ok(notes.has('arp') && notes.has('drums') && duck < 1, `stinger plays its parts and ducks the rest (pad ×${duck})`);
+  ok(e.curSting === null && e.synth.duck === null, 'stinger ends and the music comes back up');
+  const held = new Engine(SR, song, 2);
+  held.setHold(true);
+  held.sting('reward');
+  let heard = 0;
+  run(held, 1, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') heard++; });
+  ok(heard === 4 && held.step === 0, `a stinger sounds while the song is held (${heard} notes)`);
+}
+
+// 8. Theme: theme blocks restate the song theme in varied forms, notes on the beat fit the chord
+{
+  const e = new Engine(SR, song, 4);
+  const forms = new Set();
+  let onBeat = 0, fits = 0;
+  const noteOn = e.synth.noteOn.bind(e.synth);
+  e.synth.noteOn = (id, midis, vel) => {
+    const ts = e.tracks[id];
+    if (ts?.block?.theme && !e.curSting && e.step % e.song.spb === 0) {
+      const sc = e.scaleNow(), root = foldDegree(e.chord.degree, sc.length);
+      const pcs = e.chord.shape.map((o) => (((e.song.keyRoot + degSemis(sc, root + o)) % 12) + 12) % 12);
+      onBeat++;
+      if (pcs.includes(midis[0] % 12)) fits++;
+    }
+    noteOn(id, midis, vel);
+  };
+  run(e, 600, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'log' && ev.text.startsWith('♪')) forms.add(ev.text.split(' ')[2]); });
+  ok(forms.size >= 4, `the theme comes back in different forms (${[...forms]})`);
+  ok(onBeat > 10 && fits === onBeat, `theme notes on the beat are chord tones (${fits}/${onBeat})`);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

@@ -7,7 +7,7 @@ A procedural, block-based chiptune music engine for (space) games: atmospheric a
 
 ```bash
 npm run dev        # → http://localhost:8321  (no-cache static server; AudioWorklet needs http://, not file://)
-npm run render     # offline render + conductor log (node tools/render.mjs song secs seed out.wav --mood 30:tension)
+npm run render     # offline render + conductor log (node tools/render.mjs song secs seed out.wav --mood 30:tension --sting 45:discovery)
 node tools/test.mjs
 ```
 
@@ -25,7 +25,7 @@ Research (Sep 2026). Nothing covers *web editor + Unity runtime + block/mood bas
 | Strudel / Tidal | Pattern live-coding in the browser | Great pattern language, but AGPL, JS only, not a game runtime |
 | ZzFXM, webaudio-tinysynth | Tiny JS trackers / synths | Fixed songs, not adaptive |
 
-So Stardrift **borrows the proven ideas** instead of the code: horizontal re-sequencing plus vertical layering (FMOD/Elias), a weighted section graph (Markov-style), tracker-style patterns (MOD/ZzFXM), and NES/Game Boy voices. The whole engine is about 1,200 lines of dependency-free JS, so a C# port is realistic.
+So Stardrift **borrows the proven ideas** instead of the code: horizontal re-sequencing plus vertical layering (FMOD/Elias), a weighted section graph (Markov-style), tracker-style patterns (MOD/ZzFXM), and NES/Game Boy voices. The whole engine is about 1,800 lines of dependency-free JS, so a C# port is realistic.
 
 ## How it works
 
@@ -45,6 +45,13 @@ So Stardrift **borrows the proven ideas** instead of the code: horizontal re-seq
 - **Variation over time**: blocks mutate slightly when they loop, blocks are occasionally swapped mid-section, layers enter and leave every 4 bars, drum fills and drops mark transitions, and generators re-roll. Everything is seeded, so the same seed gives the same music.
 - **Phrasing**: the last beats of a section play a **lead-in chord** into the next section's first chord (its V when that is major, else the major chord a step below, e.g. C → Dm in D dorian; `leadIn`: beats, 0 = off). Notes get **dynamics**: bar downbeats a little louder, off-16ths softer, plus a small random spread (`humanize`, on its own RNG stream so it never changes the arrangement). `swing` delays every second 16th.
 - **Breathers** (`"breath": { "every": 64, "bars": [4, 8] }`): every ~64 bars, while things are calm, the drums drop out and the music thins to its ambient tracks (those whose `layer.min` is 0, or `breath.keep`) for a few bars, then grows back. Endless music needs room to breathe; a mood change ends a breather like any other section.
+- **The song theme** gives endless music an identity, like a melody you would hum after playing. `"theme": { "beats": 16, "pattern": "4 -*5 3 - 2 -*7 | …" }` is one melody in key degrees. Blocks with `"theme": true` (or a list of forms) play it instead of a pattern, in a form picked each time: `whole`, `head` (first half, then space), `sequence` (first half, then again a step or two higher or lower), `slow` (first half at half speed), `shift` (the whole theme moved up or down) or `answer` (space, then the first half, which forms a canon against a track playing the whole theme). Notes on the beat move to the nearest chord tone, so the theme fits every chord (`"fit": true` does the same for any key or scale block). In the default song the lead states it in calm and drift sections, the stars answer it, and it returns as an anthem at the peak.
+- **Stingers** let the music react to game events, not only to moods. `music.sting('discovery')` plays a short phrase from the next beat (`at`: `step`, `beat`, `half` or `bar`). Each part borrows a track for the stinger's length, even one that is resting, and is written like a block, so a stinger is always in key and in time. The stinger can bring its own chord (`"chords": "IV"`), ducks the other tracks (`duck`), and hands the tracks back to their blocks afterwards:
+  ```json
+  { "id": "discovery", "at": "beat", "beats": 4, "chords": "IV", "duck": 0.45, "parts": [
+    { "track": "arp", "pattern": "* -*15" }, { "track": "stars", "pattern": "0 1 2 3 4 -*11" } ] }
+  ```
+  The default song has `discovery`, `alert`, `jump` and `reward`.
 
 ### Runtime mood changes (always smooth)
 
@@ -54,6 +61,8 @@ music.setMood('tension', { within: 0 });  // start transitioning at the next bar
 music.setMood({ intensity: 0.7, tension: 0.9 });
 music.setMood('auto');                    // autonomous drift again
 music.setParams({ intensity, tension, influence, urgent }); // continuous control
+music.sting('alert');                     // a stinger for a game event, from the next beat
+music.sting('reward', { at: 'step' });    // … or right away
 ```
 
 A mood change never cuts: the current section ends at a bar line within `within` bars, with a drum fill (going up) or a wash/drop (going down). The conductor then walks the section graph toward the mood, and bridge sections are shortened to `transitBars`, e.g. calm → drift → build → peak in about 18 s. Pads crossfade on chord changes, and intensity, tension and filter cutoffs glide over several bars (`moodGlide`).
@@ -70,14 +79,14 @@ A mood change never cuts: the current section ends at a bar line within `within`
 | `src/engine/rng.js` | seeded RNG (mulberry32) |
 | `src/worklet.js` / `src/player.js` | AudioWorklet host / main-thread API for web games |
 | `src/wav.js` | WAV encoder (offline render and the editor's audio export) |
-| `src/editor/*` | editor UI (session grid, detail panel with block, progression, section, track and song editors, mood map, live chords, JSON); `render-worker.js` exports audio |
+| `src/editor/*` | editor UI (session grid, detail panel with block, progression, section, track, stinger and song editors, mood map, live chords, JSON); `render-worker.js` exports audio |
 | `songs/deep-space.json` | default song |
 
 ## Instruments
 
 Each track names an instrument (`"instrument": "lead"`); instruments live in `song.instruments`. Types: `pulse` (NES square, `duty`, `pwm`), `triangle` (NES 4-bit triangle), `wave` (32-step 4-bit wavetable: `soft sine saw organ hollow` or your own array of 32 values 0–15) and `drums`. All melodic types share `env {a d s r}`, `unison`/`detune`, `vibrato {depth rate delay}`, `glide`, `arp`, `cutoff`/`resonance`, `cutoffIntensity`/`cutoffTension` (the filter follows the mood) and `gain`.
 
-In the editor, the **session** shows one row per track: instrument, mute/solo, volume and the track's blocks as chips (the playing one glows, 🔒 holds a block on its track). Clicking a chip opens the block editor below; clicking a track name opens its sound and track settings: octave, pan, sends, when the track may play, sliders for the sound, drawable wavetables, drum hits, and ▶ previews that work even while the song is paused (`player.preview(inst, events)`). The left column is the **mood map**: every section as a dot at its intensity and tension, the music's live position gliding between them, and the target. Click or drag on it to steer (`setParams`), click a dot to edit that section (mood, length, tags, which sections may follow, which tracks play), or use the mood buttons below it. Under them, **Play chords** has one pad per chord of the current scale: keys 1–7 play your own chord from the next beat (with a colour: triad, sus2, sus4, 7th, add9), 0 or Esc hands back to the progression (`player.playChord(degree, shape)` / `playChord(null)`). While paused, the pads just let you hear the chord. Log, Song JSON and Help open in the same panel from the top bar. The top row of the session holds the **chord progressions**: click one to edit it as a strip of chords with a palette of the chords that fit the scale (click to hear and add, select a chord to change its length, colour or position), and 🔒 hold it to hear it in the song from the next bar line (`player.lockProgression(id)`). Click the song name in the top bar for key, scale, tempo, feel (swing, dynamics, lead-in chord), breathers and **Export audio** (a WAV rendered from the start with the current seed and mood). ↶ ↷ (⌘Z / ⇧⌘Z, Ctrl+Z / Ctrl+Y) undo and redo every edit, including a reset to the default song. Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
+In the editor, the **session** shows one row per track: instrument, mute/solo, volume and the track's blocks as chips (the playing one glows, 🔒 holds a block on its track). Clicking a chip opens the block editor below; clicking a track name opens its sound and track settings: octave, pan, sends, when the track may play, sliders for the sound, drawable wavetables, drum hits, and ▶ previews that work even while the song is paused (`player.preview(inst, events)`). The left column is the **mood map**: every section as a dot at its intensity and tension, the music's live position gliding between them, and the target. Click or drag on it to steer (`setParams`), click a dot to edit that section (mood, length, tags, which sections may follow, which tracks play), or use the mood buttons below it. The **stingers** (✦) under them play a stinger the way the game would, and open it for editing: when it starts, how long it is, its chord, how much the music ducks, and one pattern grid per part (＋ part, ✦ play). While the song is paused, only the stinger sounds. Under them, **Play chords** has one pad per chord of the current scale: keys 1–7 play your own chord from the next beat (with a colour: triad, sus2, sus4, 7th, add9), 0 or Esc hands back to the progression (`player.playChord(degree, shape)` / `playChord(null)`). While paused, the pads just let you hear the chord. Log, Song JSON and Help open in the same panel from the top bar. The top row of the session holds the **chord progressions**: click one to edit it as a strip of chords with a palette of the chords that fit the scale (click to hear and add, select a chord to change its length, colour or position), and 🔒 hold it to hear it in the song from the next bar line (`player.lockProgression(id)`). Click the song name in the top bar for the **theme** (a grid in key degrees, ▶ hear it), key, scale, tempo, feel (swing, dynamics, lead-in chord), breathers and **Export audio** (a WAV rendered from the start with the current seed and mood). ↶ ↷ (⌘Z / ⇧⌘Z, Ctrl+Z / Ctrl+Y) undo and redo every edit, including a reset to the default song. A block **plays** a pattern, a generator or the song theme (♪ on its chip; pick its forms in the block editor). Turning a theme block back into a pattern keeps the theme's notes, ready to vary by hand. Drum tracks can only switch to drum kits and melodic tracks only to melodic instruments, because their patterns differ.
 
 ## Pattern language
 

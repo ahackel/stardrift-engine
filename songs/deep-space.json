@@ -18,6 +18,7 @@
   "leadIn": 2,
   "breath": { "every": 64, "bars": [4, 8] },
   "startSection": "intro",
+  "theme": { "beats": 16, "pattern": "4 -*5 3 - 2 -*7 | . . . . 4 - 5 - 7 -*7 | 6 -*5 4 - 2 -*7 | 1 -*3 0 -*7 . . . ." },
   "master": { "gain": 1.1 },
   "fx": {
     "echo": { "beats": 0.75, "feedback": 0.42, "damp": 0.35, "level": 0.55 },
@@ -33,6 +34,21 @@
     "danger":    { "intensity": 0.75, "tension": 0.65 },
     "action":    { "intensity": 0.88, "tension": 0.35 }
   },
+
+  "stingers": [
+    { "id": "discovery", "at": "beat", "beats": 4, "chords": "IV", "duck": 0.45, "parts": [
+      { "track": "arp",   "pattern": "* -*15" },
+      { "track": "stars", "pattern": "0 1 2 3 4 -*11" } ] },
+    { "id": "alert", "at": "beat", "beats": 4, "duck": 0.5, "parts": [
+      { "track": "lead",  "mode": "scale", "pattern": "4! - 4b - 4! - 4b - 4! - 4b - 4! -*3" },
+      { "track": "bass",  "pattern": "0 . 0 . 0 . 0 . 0 . 0 . 0 . 0 ." },
+      { "track": "drums", "pattern": "k! . . . s . . . k! . k . s! . s s!" } ] },
+    { "id": "jump", "at": "beat", "beats": 4, "chords": "VII", "duck": 0.6, "parts": [
+      { "track": "arp",   "pattern": "0 1 2 3 4 5 6 7 8 -*7" },
+      { "track": "drums", "pattern": "t . t . t . t t s s s s c! .*3" } ] },
+    { "id": "reward", "at": "step", "beats": 1, "duck": 0, "parts": [
+      { "track": "stars", "pattern": "0 1 2 3!" } ] }
+  ],
 
   "instruments": {
     "pad":   { "type": "wave", "wave": "soft", "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 650, "cutoffIntensity": 2200, "cutoffTension": -200, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
@@ -102,11 +118,13 @@
     { "id": "lead_gen_calm",  "track": "lead", "beats": 8,  "tags": ["calm", "drift", "wonder"], "intensity": [0.25, 0.6], "mode": "scale", "gen": { "rhythm": "x -*5 . . x -*3 x -*3 .*16", "range": [0, 9], "leap": 2, "chordBias": 0.7, "regen": 0.35 } },
     { "id": "lead_gen_drift", "track": "lead", "beats": 8,  "tags": ["drift", "peak"], "intensity": [0.4, 0.85], "mode": "scale", "gen": { "rhythm": "x - - x - - x - x -*3 . . . . | x - - x - - x - x? -*7", "range": [-2, 9], "leap": 3, "chordBias": 0.6, "regen": 0.3 } },
     { "id": "lead_gen_peak",  "track": "lead", "beats": 4,  "tags": ["peak"], "intensity": [0.65, 1], "mode": "scale", "gen": { "rhythm": "x . x x . x . x x - x . x - - .", "range": [0, 11], "leap": 2, "chordBias": 0.5, "regen": 0.25 } },
-    { "id": "lead_motif",     "track": "lead", "beats": 16, "tags": ["drift", "wonder", "calm"], "intensity": [0.3, 0.8], "mode": "key", "pattern": "4 -*5 3 - 2 -*7 | . . . . 4 - 5 - 7 -*7 | 6 -*5 4 - 2 -*7 | 1 -*3 0 -*7 . . . ." },
+    { "id": "lead_theme",     "track": "lead", "beats": 16, "tags": ["drift", "wonder", "calm"], "intensity": [0.3, 0.8], "theme": true },
+    { "id": "lead_theme_peak", "track": "lead", "beats": 16, "tags": ["peak"], "intensity": [0.6, 1], "theme": ["whole", "sequence", "shift"] },
     { "id": "lead_tension",   "track": "lead", "beats": 16, "tags": ["tension"], "tension": [0.55, 1], "mode": "key", "pattern": "0 -*7 1 -*7 | 0 -*15 | .*16 | . . 1 -*5 0 -*7" },
     { "id": "lead_call",      "track": "lead", "beats": 8,  "tags": ["build", "peak"], "intensity": [0.5, 0.95], "mode": "key", "pattern": "7 - 6 - 4 - 6 - 7 -*7 | 9 - 8 - 7 - 4 - 6 -*7" },
 
     { "id": "stars_gen",      "track": "stars", "beats": 8, "tags": ["calm", "wonder", "intro", "release", "drift"], "intensity": [0, 0.6], "mode": "chord", "gen": { "rhythm": "x? .*5 x? .*9 x? .*7 x? .*7", "range": [0, 6], "leap": 3, "regen": 0.5 } },
+    { "id": "stars_theme",    "track": "stars", "beats": 16, "tags": ["calm", "wonder", "release"], "intensity": [0, 0.5], "theme": ["head", "slow", "answer"] },
     { "id": "stars_twinkle",  "track": "stars", "beats": 8, "tags": ["calm", "wonder", "intro"], "intensity": [0, 0.5], "pattern": "4 .*7 2 .*7 | 3 .*11 1 .*3" },
     { "id": "stars_tension",  "track": "stars", "beats": 8, "tags": ["tension"], "tension": [0.4, 1], "mode": "scale", "pattern": "1 .*11 0 .*3 | .*8 1? .*7" },
 
