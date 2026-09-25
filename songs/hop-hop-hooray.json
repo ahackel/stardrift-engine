@@ -55,7 +55,7 @@
     "stab":    { "type": "pulse", "duty": 0.25, "env": { "a": 0.002, "d": 0.09, "s": 0.2, "r": 0.04 }, "cutoff": 3000, "cutoffIntensity": 3000 },
     "tri":     { "type": "triangle", "env": { "a": 0.002, "d": 0.25, "s": 0.7, "r": 0.04 }, "cutoff": 4000 },
     "sparkle": { "type": "pulse", "duty": 0.125, "env": { "a": 0.001, "d": 0.25, "s": 0, "r": 0.2 }, "cutoff": 7000 },
-    "ocarina": { "type": "wave", "wave": "sine", "unison": 2, "detune": 6, "env": { "a": 0.25, "d": 1, "s": 0.75, "r": 0.8 }, "vibrato": { "depth": 0.1, "rate": 4.5, "delay": 0.4 }, "cutoff": 2500 },
+    "ocarina": { "type": "wave", "wave": "sine", "smooth": true, "unison": 2, "detune": 6, "env": { "a": 0.25, "d": 1, "s": 0.75, "r": 0.8 }, "vibrato": { "depth": 0.1, "rate": 4.5, "delay": 0.4 }, "cutoff": 2500 },
     "noise":   { "type": "drums", "kit": "chip", "cutoff": 12000 }
   },
 

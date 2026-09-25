@@ -138,8 +138,8 @@ export function prepareSong(raw) {
     transitBars: raw.transitBars ?? 2,
     master: { gain: 0.9, ...(raw.master || {}) },
     fx: {
-      echo: { beats: 0.75, feedback: 0.4, damp: 0.35, level: 0.5, ...(raw.fx?.echo || {}) },
-      reverb: { size: 0.86, damp: 0.4, level: 0.4, ...(raw.fx?.reverb || {}) },
+      echo: { beats: 0.75, feedback: 0.4, damp: 0.35, level: 0.5, lowcut: 150, ...(raw.fx?.echo || {}) },
+      reverb: { size: 0.86, damp: 0.4, level: 0.4, predelay: 0.02, lowcut: 200, ...(raw.fx?.reverb || {}) },
       echoToReverb: raw.fx?.echoToReverb ?? 0.3,
     },
     instruments: raw.instruments || {},

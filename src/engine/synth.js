@@ -3,6 +3,7 @@
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
+import { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTables, levelLimits, cachedTables } from './wavetable.js';
 
 const TWO_PI = Math.PI * 2;
 const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
@@ -33,12 +34,35 @@ export function waveSteps(spec) {
   return Array.from(t, (v) => Math.round((v / mx + 1) * 7.5));
 }
 
-function makeWave(spec) {
-  const t = new Float32Array(waveSteps(spec).map((v) => v / 7.5 - 1));
-  let mean = 0;
-  for (const v of t) mean += v / 32;
-  for (let i = 0; i < 32; i++) t[i] -= mean;
-  return t;
+// the 32 steps of a wave as -1..1 without DC
+function stepValues(spec) {
+  const t = waveSteps(spec).map((v) => v / 7.5 - 1);
+  const mean = t.reduce((a, v) => a + v, 0) / 32;
+  return t.map((v) => v - mean);
+}
+
+// Smooth (analog-style) versions of the presets: the functions the 4-bit steps are sampled from.
+const SMOOTH = {
+  sine: [1], organ: [1, 0.5, 0.3], hollow: [1, 0, 0.4], soft: [1, 0.35, 0.12],
+};
+
+// Band-limited tables for the triangle and wave voices. smooth: no 4-bit staircase (a clean saw, sine…).
+function waveTables(def) {
+  const smooth = !!def.smooth, tri = def.type === 'triangle';
+  const key = `${tri ? 'tri' : JSON.stringify(def.wave ?? 'soft')}:${smooth}`;
+  return cachedTables(key, () => {
+    if (tri) {
+      return smooth
+        ? buildTables(formulaHarmonics((k) => (k % 2 ? 8 / (Math.PI * Math.PI * k * k) : 0), null))
+        : buildTables(stairHarmonics(TRI_TABLE));
+    }
+    const spec = def.wave ?? 'soft';
+    if (!smooth) return buildTables(stairHarmonics(stepValues(spec)));
+    if (Array.isArray(spec)) return buildTables(sampledHarmonics(stepValues(spec)));
+    if (spec === 'saw') return buildTables(formulaHarmonics(null, (k) => 2 / (Math.PI * k)), 1);
+    const amps = SMOOTH[spec] || SMOOTH.soft;
+    return buildTables(formulaHarmonics(null, (k) => amps[k - 1] || 0), 1);
+  });
 }
 
 const TYPES = ['pulse', 'triangle', 'wave', 'drums'];
@@ -59,9 +83,12 @@ export function compileInst(def = {}, sr) {
     vibDepth: def.vibrato?.depth || 0, vibRate: def.vibrato?.rate || 5, vibDelay: def.vibrato?.delay || 0,
     glideCoef: def.glide ? Math.exp(-4.6 / (def.glide * sr)) : 0,
     arpPeriod: def.arp ? 1 / def.arp : 0,
-    table: def.type === 'wave' ? makeWave(def.wave || 'soft') : null,
+    mips: def.type === 'wave' || def.type === 'triangle' ? waveTables(def) : null,
+    mipLimits: levelLimits(sr),
     cutoff: def.cutoff ?? 16000, cutoffIntensity: def.cutoffIntensity || 0, cutoffTension: def.cutoffTension || 0,
     q: def.resonance ?? 0.707,
+    // filter envelope: each note opens the filter by `amount` octaves (scaled by velocity), closing over `decay` s
+    fenvAmt: def.filterEnv?.amount || 0, fenvCoef: Math.exp(-4.6 / (Math.max(0.005, def.filterEnv?.decay ?? 0.2) * sr)),
     gain: def.gain ?? 1,
     kit: def.type === 'drums' ? compileKit(def, sr) : null,
   };
@@ -78,6 +105,7 @@ class Voice {
     this.stage = IDLE; this.level = 0; this.gate = false;
     this.ph = new Float64Array(4); this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
     this.arp = null; this.arpIdx = 0; this.arpT = 0;
+    this.lvl = 0; // wavetable level for the current pitch
     for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
   }
   start(p, midi, vel, arp) {
@@ -116,8 +144,16 @@ class Voice {
     const f = 440 * Math.pow(2, (m - 69) / 12);
     const sr = p.sr;
     let out = 0;
-    let duty = p.duty;
-    if (p.pwmDepth) duty += p.pwmDepth * Math.sin(TWO_PI * p.pwmRate * this.age);
+    let duty = p.duty, tb = null;
+    if (p.mips) {
+      // the fullest table whose harmonics stay below Nyquist at this pitch
+      const lim = p.mipLimits, fmax = f * 1.03; // headroom for unison detune
+      let l = this.lvl;
+      while (l > 0 && fmax < lim[l - 1]) l--;
+      while (l < lim.length - 1 && fmax > lim[l]) l++;
+      this.lvl = l;
+      tb = p.mips[l];
+    } else if (p.pwmDepth) duty += p.pwmDepth * Math.sin(TWO_PI * p.pwmRate * this.age);
     duty = duty < 0.05 ? 0.05 : duty > 0.95 ? 0.95 : duty;
     for (let u = 0; u < p.U; u++) {
       const dt = (f * p.detuneMul[u]) / sr;
@@ -131,10 +167,9 @@ class Voice {
         if (t2 < 0) t2 += 1;
         v -= blep(t2, dt);
         out += v - (2 * duty - 1); // remove DC of narrow pulses
-      } else if (p.type === 'triangle') {
-        out += TRI_TABLE[(ph * 32) | 0];
       } else {
-        out += p.table[(ph * 32) | 0];
+        const x = ph * TABLE_SIZE, i = x | 0;
+        out += tb[i] + (tb[i + 1] - tb[i]) * (x - i);
       }
     }
     return out * p.uniNorm * lv * this.vel;
@@ -147,6 +182,7 @@ class TrackBus {
     this.voices = Array.from({ length: poly }, () => (isDrum ? new DrumVoice() : new Voice()));
     this.ic1 = 0; this.ic2 = 0; this.cut = 1000; this.cutTarget = 1000; this.coefTimer = 0;
     this.g = 0; this.gTarget = 1; this.rr = 0;
+    this.fenv = 0; // filter envelope level (1 at a note's start, decays)
   }
   set(tr, p, sr) {
     this.p = p; this.sr = sr;
@@ -155,19 +191,21 @@ class TrackBus {
     this.pl = Math.cos(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
     this.pr = Math.sin(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
+    this.pump = Math.max(0, Math.min(1, tr.pump || 0)); // sidechain: dips on every kick
     this.updateCoefs();
   }
   setMood(intensity, tension) {
     const p = this.p;
     this.cutTarget = Math.min(this.sr * 0.45, Math.max(40, p.cutoff + p.cutoffIntensity * intensity + p.cutoffTension * tension));
   }
-  updateCoefs() {
-    const g = Math.tan((Math.PI * Math.min(this.cut, this.sr * 0.45)) / this.sr);
+  updateCoefs(cut = this.cut) {
+    const g = Math.tan((Math.PI * Math.min(cut, this.sr * 0.45)) / this.sr);
     const k = 1 / Math.max(0.3, this.p.q);
     this.a1 = 1 / (1 + g * (g + k)); this.a2 = g * this.a1; this.a3 = g * this.a2;
   }
   noteOn(midis, vel) {
     const p = this.p, vs = this.voices;
+    if (p.fenvAmt) this.fenv = vel;
     if (vs.length === 1) {
       const arp = midis.length > 1 && p.arpPeriod ? midis.slice().sort((a, b) => a - b) : null;
       vs[0].start(p, arp ? arp[0] : midis[0], vel, arp);
@@ -183,8 +221,7 @@ class TrackBus {
       const s = (v.gate ? 10 : 0) + v.level - v.age * 0.001;
       if (s < score) { score = s; best = v; }
     }
-    best.stage = IDLE; best.level = 0;
-    return best;
+    return best; // restarts from its current level: no click
   }
   release() { if (!this.isDrum) for (const v of this.voices) if (v.gate) v.release(); }
   drum(hits, vel) {
@@ -210,12 +247,14 @@ class TrackBus {
     if (this.isDrum) { for (const v of this.voices) if (v.active) x += v.render(this.sr, p.invSr); }
     else for (const v of this.voices) if (v.stage !== IDLE) x += v.render(p);
 
+    if (this.fenv > 0) this.fenv *= p.fenvCoef;
     if (--this.coefTimer <= 0) {
-      this.coefTimer = 64;
-      if (Math.abs(this.cut - this.cutTarget) > 0.5) {
-        this.cut += (this.cutTarget - this.cut) * 0.006; // ~0.25 s glide
-        this.updateCoefs();
-      }
+      const env = this.fenv > 0.002;
+      this.coefTimer = env ? 16 : 64;
+      const glide = Math.abs(this.cut - this.cutTarget) > 0.5;
+      if (glide) this.cut += (this.cutTarget - this.cut) * (env ? 0.0015 : 0.006); // ~0.25 s glide
+      if (env) this.updateCoefs(this.cut * Math.pow(2, p.fenvAmt * this.fenv));
+      else if (glide || this.fenv > 0) { this.fenv = 0; this.updateCoefs(); }
     }
     const v3 = x - this.ic2;
     const v1 = this.a1 * this.ic1 + this.a2 * v3;
@@ -232,12 +271,15 @@ class Echo {
     this.sr = sr; this.max = Math.ceil(sr * 4);
     this.bl = new Float32Array(this.max); this.br = new Float32Array(this.max);
     this.i = 0; this.d = sr / 2; this.dTarget = this.d; this.fb = 0.4; this.k = 0.5; this.ll = 0; this.lr = 0;
+    this.hp = 0; this.hpK = 0;
   }
-  set(sec, fb, damp) {
+  set(sec, fb, damp, lowcut = 0) {
     this.dTarget = Math.max(1, Math.min(this.max - 2, Math.round(sec * this.sr)));
     this.fb = Math.min(0.95, fb); this.k = 1 - Math.min(0.95, damp);
+    this.hpK = lowcut > 0 ? 1 - Math.exp((-2 * Math.PI * lowcut) / this.sr) : 0; // keeps bass out of the repeats
   }
   process(x) {
+    if (this.hpK) { this.hp += (x - this.hp) * this.hpK; x -= this.hp; }
     if (this.d !== this.dTarget) this.d += this.d < this.dTarget ? 1 : -1; // tape-style glide, no clicks
     let j = this.i - this.d;
     if (j < 0) j += this.max;
@@ -251,17 +293,25 @@ class Echo {
   }
 }
 
+// Freeverb (8 combs + 4 allpasses per side) with a pre-delay and a low cut on its input:
+// the pre-delay keeps notes clear of their tail, the low cut keeps bass out of the tail (no mud).
 class Reverb {
   constructor(sr) {
     const s = sr / 44100;
-    const combs = [1116, 1188, 1277, 1356, 1422, 1491];
-    const aps = [556, 441, 341];
+    const combs = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+    const aps = [556, 441, 341, 225];
     const mk = (n) => ({ buf: new Float32Array(Math.max(8, Math.round(n * s))), i: 0, f: 0 });
     this.cl = combs.map(mk); this.cr = combs.map((n) => mk(n + 23));
     this.al = aps.map(mk); this.ar = aps.map((n) => mk(n + 23));
     this.fb = 0.86; this.damp = 0.4;
+    this.sr = sr; this.pre = new Float32Array(Math.ceil(sr * 0.2)); this.pi = 0; this.pd = 0;
+    this.hp = 0; this.hpK = 0;
   }
-  set(size, damp) { this.fb = Math.min(0.97, size); this.damp = Math.min(0.95, damp); }
+  set(size, damp, predelay = 0, lowcut = 0) {
+    this.fb = Math.min(0.97, size); this.damp = Math.min(0.95, damp);
+    this.pd = Math.max(0, Math.min(this.pre.length - 1, Math.round(predelay * this.sr)));
+    this.hpK = lowcut > 0 ? 1 - Math.exp((-2 * Math.PI * lowcut) / this.sr) : 0;
+  }
   run(combs, aps, x) {
     let o = 0;
     for (const c of combs) {
@@ -280,7 +330,16 @@ class Reverb {
     return o;
   }
   process(x) {
-    x *= 0.02;
+    if (this.hpK) { this.hp += (x - this.hp) * this.hpK; x -= this.hp; }
+    if (this.pd) {
+      const pre = this.pre, n = pre.length;
+      pre[this.pi] = x;
+      let j = this.pi - this.pd;
+      if (j < 0) j += n;
+      x = pre[j];
+      if (++this.pi >= n) this.pi = 0;
+    }
+    x *= 0.015;
     this.outL = this.run(this.cl, this.al, x);
     this.outR = this.run(this.cr, this.ar, x);
   }
@@ -296,6 +355,7 @@ export class Synth {
     this.mood = [0.2, 0.1];
     this.pv = null; this.pvQ = []; this.pvI = 0; this.pvT = 0;
     this.duck = null;
+    this.kick = 0; this.kickT = 0; this.kickRel = 0.999; // sidechain envelope: jumps on every kick, recovers
   }
   configure(song) {
     const next = {};
@@ -311,9 +371,10 @@ export class Synth {
     this.tracks = next;
     this.list = Object.values(next);
     const fx = song.fx;
-    this.echo.set((fx.echo.beats * 60) / song.bpm, fx.echo.feedback, fx.echo.damp);
+    this.echo.set((fx.echo.beats * 60) / song.bpm, fx.echo.feedback, fx.echo.damp, fx.echo.lowcut);
     this.echoLevel = fx.echo.level;
-    this.reverb.set(fx.reverb.size, fx.reverb.damp);
+    this.reverb.set(fx.reverb.size, fx.reverb.damp, fx.reverb.predelay, fx.reverb.lowcut);
+    this.kickRel = Math.exp(-1 / (0.3 * (60 / song.bpm) * this.sr)); // the pump recovers over ~a beat
     this.revLevel = fx.reverb.level;
     this.echoToRev = fx.echoToReverb;
     this.master = song.master.gain;
@@ -337,7 +398,10 @@ export class Synth {
   }
   noteOn(id, midis, vel) { this.tracks[id]?.noteOn(midis, vel); }
   release(id) { this.tracks[id]?.release(); }
-  drum(id, hits, vel) { this.tracks[id]?.drum(hits, vel); }
+  drum(id, hits, vel) {
+    this.tracks[id]?.drum(hits, vel);
+    if (hits.includes('k') && this.tracks[id]?.gTarget > 0) this.kickT = Math.max(this.kickT, vel);
+  }
   allOff() { for (const b of this.list) b.allOff(); }
   releaseAll() { for (const b of this.list) b.release(); }
 
@@ -368,8 +432,11 @@ export class Synth {
 
   renderSample() {
     let l = 0, r = 0, e = 0, v = 0;
+    this.kickT *= this.kickRel;
+    this.kick += (this.kickT - this.kick) * 0.04;
     for (const b of this.list) {
-      const x = b.render();
+      let x = b.render();
+      if (b.pump) x *= 1 - b.pump * this.kick;
       l += x * b.pl; r += x * b.pr; e += x * b.echo; v += x * b.rev;
     }
     const pv = this.pv;

@@ -51,10 +51,10 @@
   ],
 
   "instruments": {
-    "pad":   { "type": "wave", "wave": "soft", "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 650, "cutoffIntensity": 2200, "cutoffTension": -200, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
+    "pad":   { "type": "wave", "wave": "soft", "smooth": true, "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 650, "cutoffIntensity": 2200, "cutoffTension": -200, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
     "bass":  { "type": "triangle", "env": { "a": 0.005, "d": 0.4, "s": 0.85, "r": 0.12 }, "cutoff": 3000 },
-    "arp":   { "type": "pulse", "duty": 0.125, "env": { "a": 0.002, "d": 0.18, "s": 0.2, "r": 0.15 }, "cutoff": 1800, "cutoffIntensity": 3500, "arp": 24 },
-    "lead":  { "type": "pulse", "duty": 0.25, "pwm": { "depth": 0.12, "rate": 0.3 }, "env": { "a": 0.04, "d": 0.5, "s": 0.65, "r": 0.5 }, "vibrato": { "depth": 0.18, "rate": 5.2, "delay": 0.3 }, "glide": 0.05, "cutoff": 2200, "cutoffIntensity": 3000 },
+    "arp":   { "type": "pulse", "duty": 0.125, "env": { "a": 0.002, "d": 0.18, "s": 0.2, "r": 0.15 }, "cutoff": 1200, "cutoffIntensity": 3500, "filterEnv": { "amount": 2, "decay": 0.12 }, "arp": 24 },
+    "lead":  { "type": "pulse", "duty": 0.25, "pwm": { "depth": 0.12, "rate": 0.3 }, "env": { "a": 0.04, "d": 0.5, "s": 0.65, "r": 0.5 }, "vibrato": { "depth": 0.18, "rate": 5.2, "delay": 0.3 }, "glide": 0.05, "cutoff": 2200, "cutoffIntensity": 3000, "filterEnv": { "amount": 1, "decay": 0.3 } },
     "stars": { "type": "pulse", "duty": 0.5, "env": { "a": 0.001, "d": 0.5, "s": 0, "r": 0.4 }, "cutoff": 4500 },
     "kit":   { "type": "drums", "kit": "clean", "cutoff": 12000, "cutoffIntensity": 4000 }
   },
