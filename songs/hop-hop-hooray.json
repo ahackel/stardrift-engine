@@ -1,0 +1,144 @@
+{
+  "format": 1,
+  "name": "Hop Hop Hooray",
+  "bpm": 138,
+  "key": "C",
+  "scale": "major",
+  "stepsPerBeat": 4,
+  "beatsPerBar": 4,
+  "swing": 0.35,
+  "variation": 0.25,
+  "blockChange": 0.15,
+  "fillChance": 0.5,
+  "layerChurn": 0.1,
+  "progStickiness": 1.3,
+  "moodGlide": 6,
+  "transitBars": 2,
+  "humanize": 0.08,
+  "leadIn": 2,
+  "breath": { "every": 64, "bars": [4, 8] },
+  "startSection": "intro",
+  "theme": { "beats": 16, "pattern": "4 . 2 . 4 . 7 - - . 6 . 4 . . . | 5 . 3 . 5 . 8 - 7 . 6 . 7 - - - | 9 . 8 . 7 . 4 - 5 . 6 . 7 - 9 - | 8 . . 6 . . 4 4# 5 . 4 . 7 - - -" },
+  "master": { "gain": 1.15 },
+  "fx": {
+    "echo": { "beats": 0.5, "feedback": 0.25, "damp": 0.45, "level": 0.3 },
+    "reverb": { "size": 0.7, "damp": 0.5, "level": 0.25 },
+    "echoToReverb": 0.2
+  },
+
+  "moods": {
+    "relaxed":   { "intensity": 0.2,  "tension": 0.06 },
+    "wonder":    { "intensity": 0.32, "tension": 0.03 },
+    "exploring": { "intensity": 0.5,  "tension": 0.15 },
+    "tension":   { "intensity": 0.42, "tension": 0.78 },
+    "danger":    { "intensity": 0.76, "tension": 0.7 },
+    "action":    { "intensity": 0.9,  "tension": 0.3 }
+  },
+
+  "stingers": [
+    { "id": "discovery", "at": "step", "beats": 4, "chords": "IV:2 V(7):2", "duck": 0.5, "parts": [
+      { "track": "lead",    "pattern": "0 1 2 3 1 2 3 4 2 3 4 5 6 -*3" },
+      { "track": "twinkle", "pattern": ". . . . . . . . . . . . 6 -*3" } ] },
+    { "id": "alert", "at": "beat", "beats": 4, "duck": 0.5, "parts": [
+      { "track": "lead",  "mode": "key", "pattern": "7 7# 8 . 7 7# 8 . 7 7# 8 . 9! -*3" },
+      { "track": "bass",  "pattern": "0 . 0 . 0 . 0 . 0 . 0 . 0 . 0 ." },
+      { "track": "drums", "pattern": "k . s . k . s . k s k s s! s! s! s!" } ] },
+    { "id": "jump", "at": "beat", "beats": 4, "chords": "V", "duck": 0.6, "parts": [
+      { "track": "lead",  "mode": "key", "pattern": "0 2 4 7 9 11 14 -*9" },
+      { "track": "drums", "pattern": "t . t . t . t t s s s s c! .*3" } ] },
+    { "id": "reward", "at": "step", "beats": 1, "duck": 0, "parts": [
+      { "track": "twinkle", "mode": "key", "pattern": "6 9 - -" } ] }
+  ],
+
+  "instruments": {
+    "square":  { "type": "pulse", "duty": 0.5, "env": { "a": 0.002, "d": 0.12, "s": 0.55, "r": 0.04 }, "vibrato": { "depth": 0.08, "rate": 6, "delay": 0.2 }, "cutoff": 5000, "cutoffIntensity": 3000 },
+    "stab":    { "type": "pulse", "duty": 0.25, "env": { "a": 0.002, "d": 0.09, "s": 0.2, "r": 0.04 }, "cutoff": 3000, "cutoffIntensity": 3000 },
+    "tri":     { "type": "triangle", "env": { "a": 0.002, "d": 0.25, "s": 0.7, "r": 0.04 }, "cutoff": 4000 },
+    "sparkle": { "type": "pulse", "duty": 0.125, "env": { "a": 0.001, "d": 0.25, "s": 0, "r": 0.2 }, "cutoff": 7000 },
+    "ocarina": { "type": "wave", "wave": "sine", "unison": 2, "detune": 6, "env": { "a": 0.25, "d": 1, "s": 0.75, "r": 0.8 }, "vibrato": { "depth": 0.1, "rate": 4.5, "delay": 0.4 }, "cutoff": 2500 },
+    "noise":   { "type": "drums", "kit": "chip", "cutoff": 12000 }
+  },
+
+  "tracks": [
+    { "id": "pad",     "instrument": "ocarina", "octave": 4, "poly": 6, "volume": 0.12, "pan": -0.1, "echo": 0.1,  "reverb": 0.5,  "follow": true, "stickiness": 3,   "layer": { "min": 0,    "max": 0.55, "chance": 1 },    "color": "#a79bff" },
+    { "id": "bass",    "instrument": "tri",     "octave": 2,            "volume": 0.34, "pan": 0,    "echo": 0,    "reverb": 0.05, "follow": true, "stickiness": 2.5, "layer": { "min": 0.15, "max": 1,    "chance": 0.95 }, "color": "#4fd1ff" },
+    { "id": "stabs",   "instrument": "stab",    "octave": 4, "poly": 3, "volume": 0.12, "pan": -0.3, "echo": 0.15, "reverb": 0.2,                  "stickiness": 2,   "layer": { "min": 0.3,  "max": 1,    "chance": 0.8 },  "color": "#6ff0a8" },
+    { "id": "lead",    "instrument": "square",  "octave": 4,            "volume": 0.2,  "pan": 0.15, "echo": 0.2,  "reverb": 0.25,                 "stickiness": 1.5, "layer": { "min": 0.3,  "max": 1,    "chance": 0.75 }, "color": "#ffc857" },
+    { "id": "twinkle", "instrument": "sparkle", "octave": 5,            "volume": 0.09, "pan": 0.4,  "echo": 0.5,  "reverb": 0.45,                                    "layer": { "min": 0,    "max": 0.65, "chance": 0.85 }, "color": "#fff0a0" },
+    { "id": "drums",   "instrument": "noise",                           "volume": 0.5,  "pan": 0,    "echo": 0.03, "reverb": 0.1,                  "stickiness": 2,   "layer": { "min": 0.28, "max": 1,    "chance": 0.9 },  "color": "#ff6b9a" }
+  ],
+
+  "sections": [
+    { "id": "intro",       "intensity": 0.2,  "tension": 0.05, "bars": [4],     "tags": ["intro", "calm"],   "tracks": { "pad": 1, "twinkle": 1, "bass": 0.5, "stabs": 0, "lead": 0, "drums": 0 }, "next": { "meadow": 1, "overworld": 0.5 }, "color": "#7a8cff" },
+    { "id": "meadow",      "intensity": 0.22, "tension": 0.08, "bars": [8, 16], "tags": ["calm"],            "next": { "meadow": 0.5, "overworld": 1.5, "bonus": 0.8, "underground": 0.4 }, "color": "#6ff0a8" },
+    { "id": "bonus",       "intensity": 0.32, "tension": 0.03, "bars": [8],     "tags": ["wonder", "calm"],  "tracks": { "drums": 0.3 }, "next": { "meadow": 1, "overworld": 1 }, "color": "#b18cff" },
+    { "id": "overworld",   "intensity": 0.5,  "tension": 0.15, "bars": [8, 16], "tags": ["drift"],           "next": { "overworld": 0.6, "meadow": 0.6, "run": 1, "bonus": 0.5, "underground": 0.6 }, "color": "#4fd1ff" },
+    { "id": "underground", "intensity": 0.42, "tension": 0.78, "bars": [8],     "tags": ["tension"],         "next": { "underground": 0.5, "run": 0.8, "castle": 0.6, "flagpole": 0.8 }, "color": "#ff8a5c" },
+    { "id": "castle",      "intensity": 0.78, "tension": 0.72, "bars": [8],     "tags": ["tension", "peak", "castle"], "tracks": { "drums": 1 }, "next": { "castle": 0.5, "star": 0.6, "underground": 0.5, "flagpole": 0.8 }, "color": "#ff4f6d" },
+    { "id": "run",         "intensity": 0.66, "tension": 0.5,  "bars": [4],     "tags": ["build"],           "tracks": { "drums": 1 }, "next": { "star": 2.5, "castle": 0.8 }, "color": "#ffc857" },
+    { "id": "star",        "intensity": 0.9,  "tension": 0.3,  "bars": [8, 16], "tags": ["peak"],            "next": { "star": 0.5, "flagpole": 1.2, "overworld": 0.6, "castle": 0.4 }, "color": "#ff6b9a" },
+    { "id": "flagpole",    "intensity": 0.3,  "tension": 0.1,  "bars": [4],     "tags": ["release"],         "tracks": { "drums": 0 }, "next": { "meadow": 1, "overworld": 1, "bonus": 0.5 }, "color": "#8fb8ff" }
+  ],
+
+  "progressions": [
+    { "id": "stroll",   "tags": ["calm", "drift"], "tension": [0, 0.4], "chords": "I:4 vi:4 ii:4 V(7):4" },
+    { "id": "picnic",   "tags": ["calm", "intro"], "tension": [0, 0.4], "chords": "I:8 IV:8" },
+    { "id": "hop",      "tags": ["drift"], "tension": [0, 0.5], "chords": "I:4 IV:4 I:4 V(7):4" },
+    { "id": "sidestep", "tags": ["drift", "peak"], "tension": [0, 0.6], "chords": "IV:4 V:4 iii:4 vi:4 ii:4 V(7):4 I:8" },
+    { "id": "bonus",    "tags": ["wonder"], "weight": 3, "scale": "lydian", "tension": [0, 0.3], "chords": "I(add9):8 II:8" },
+    { "id": "fanfare",  "tags": ["release", "peak"], "scale": "minor", "tension": [0, 0.5], "chords": "VI:4 VII:4 i(power):8" },
+    { "id": "starman",  "tags": ["peak"], "scale": "mixolydian", "tension": [0, 0.6], "chords": "I:4 VII:4 I:4 VII:4" },
+    { "id": "climb",    "tags": ["build"], "tension": [0, 0.9], "chords": "ii:4 iii:4 IV:4 V(7):4" },
+    { "id": "sewer",    "tags": ["tension"], "scale": "phrygian", "tension": [0.5, 1], "chords": "i:4 II:4 i:8" },
+    { "id": "creep",    "tags": ["tension"], "scale": "harmonicMinor", "tension": [0.4, 1], "chords": "i:4 VI:4 V(7):8" },
+    { "id": "castle",   "tags": ["castle"], "scale": "harmonicMinor", "tension": [0.5, 1], "chords": "i:4 VI:4 iv:4 vii(7):4" }
+  ],
+
+  "blocks": [
+    { "id": "bass_hold",     "track": "bass", "beats": 4, "tags": ["intro", "release"], "intensity": [0, 0.4], "pattern": "0 -*15" },
+    { "id": "bass_oompah",   "track": "bass", "beats": 4, "tags": ["calm", "drift", "wonder"], "intensity": [0, 0.7], "pattern": "0 . . . 2, . . . 0 . . . 2, . . ." },
+    { "id": "bass_bounce",   "track": "bass", "beats": 4, "tags": ["drift", "peak"], "intensity": [0.4, 1], "pattern": "0 . 2 . 3 . 2 . 0 . 2 . 3 . 2 ." },
+    { "id": "bass_walk",     "track": "bass", "beats": 4, "tags": ["drift", "calm"], "intensity": [0.3, 0.8], "mode": "scale", "pattern": "0 . . 1 2 . . 3 4 . . 3 2 . 1 ." },
+    { "id": "bass_calypso",  "track": "bass", "beats": 4, "tags": ["drift", "peak"], "intensity": [0.45, 1], "pattern": "0 . . 0 . . 2, . 0 . . 0 . . 2, ." },
+    { "id": "bass_octaves",  "track": "bass", "beats": 4, "tags": ["peak", "build"], "intensity": [0.6, 1], "pattern": "0 . 3 . 0 . 3 . 0 . 3 . 0 . 3 ." },
+    { "id": "bass_sneak",    "track": "bass", "beats": 4, "tags": ["tension"], "tension": [0.5, 1], "pattern": "0 . 3 . -1 . 2 . .*8" },
+    { "id": "bass_castle",   "track": "bass", "beats": 4, "tags": ["tension", "peak"], "intensity": [0.6, 1], "tension": [0.5, 1], "pattern": "0 0 0 0 1 1 1 1 2 2 2 2 1 1 1 1" },
+
+    { "id": "stabs_offbeat", "track": "stabs", "beats": 4, "tags": ["calm", "drift"], "intensity": [0.25, 0.8], "pattern": ". . * . . . * . . . * . . . * ." },
+    { "id": "stabs_calypso", "track": "stabs", "beats": 4, "tags": ["drift", "peak"], "intensity": [0.4, 1], "pattern": "* . . * . . * . . . * . * . . ." },
+    { "id": "stabs_star",    "track": "stabs", "beats": 4, "tags": ["peak"], "intensity": [0.7, 1], "pattern": "* . * . * . * . * . * . * . * ." },
+    { "id": "stabs_build",   "track": "stabs", "beats": 4, "tags": ["build"], "pattern": "* . * . * . * . * * * * * * * *" },
+    { "id": "stabs_tension", "track": "stabs", "beats": 4, "tags": ["tension"], "tension": [0.5, 1], "pattern": ". . . . * . . . . . . . * . . ." },
+
+    { "id": "lead_theme",      "track": "lead", "beats": 16, "tags": ["calm", "drift", "wonder"], "intensity": [0.3, 0.85], "theme": true },
+    { "id": "lead_theme_star", "track": "lead", "beats": 16, "tags": ["peak"], "intensity": [0.6, 1], "theme": ["whole", "sequence", "shift"] },
+    { "id": "lead_gen_hop",    "track": "lead", "beats": 8, "tags": ["drift", "calm"], "intensity": [0.3, 0.8], "mode": "scale", "gen": { "rhythm": "x . x x . x . . x . x . x x - .", "range": [0, 9], "leap": 2, "chordBias": 0.7, "regen": 0.35 } },
+    { "id": "lead_gen_star",   "track": "lead", "beats": 4, "tags": ["peak"], "intensity": [0.65, 1], "mode": "scale", "gen": { "rhythm": "x x . x x . x x x . x . x x x .", "range": [2, 11], "leap": 3, "chordBias": 0.6, "regen": 0.3 } },
+    { "id": "lead_creep",      "track": "lead", "beats": 4, "tags": ["tension"], "tension": [0.5, 1], "mode": "scale", "pattern": "0 . 0# . 1 . . . 0 . 0# . 1 . . ." },
+    { "id": "lead_castle",     "track": "lead", "beats": 4, "tags": ["tension", "peak"], "intensity": [0.6, 1], "tension": [0.5, 1], "mode": "scale", "pattern": "4 3# 4 3# 4 3# 4 3# 2 1# 2 1# 2 1# 2 1#" },
+    { "id": "lead_climb",      "track": "lead", "beats": 4, "tags": ["build"], "pattern": "0 1 2 3 1 2 3 4 2 3 4 5 3 4 5 6" },
+    { "id": "lead_fanfare",    "track": "lead", "beats": 4, "tags": ["release"], "pattern": "0 . 1 . 2 . 3 -*9" },
+
+    { "id": "twinkle_gen",     "track": "twinkle", "beats": 8, "tags": ["intro", "calm", "wonder", "release", "drift"], "intensity": [0, 0.6], "mode": "chord", "gen": { "rhythm": "x? .*7 x? .*3 x? . . . | .*4 x? .*11", "range": [2, 7], "leap": 2, "regen": 0.5 } },
+    { "id": "twinkle_theme",   "track": "twinkle", "beats": 16, "tags": ["calm", "wonder", "release"], "intensity": [0, 0.55], "theme": ["head", "slow", "answer"] },
+    { "id": "twinkle_coins",   "track": "twinkle", "beats": 8, "tags": ["wonder", "calm"], "intensity": [0, 0.5], "pattern": "2 4 - - .*12 | .*8 3 5 - - .*4" },
+    { "id": "twinkle_drip",    "track": "twinkle", "beats": 8, "tags": ["tension"], "tension": [0.4, 1], "mode": "scale", "pattern": "4 .*10 3 .*4 | .*16" },
+
+    { "id": "pad_hold",        "track": "pad", "beats": 16, "tags": ["intro", "calm", "wonder", "release", "drift"], "pattern": "* -*63" },
+    { "id": "pad_bonus",       "track": "pad", "beats": 16, "tags": ["wonder"], "mode": "scale", "pattern": "0+4+9 -*63" },
+    { "id": "pad_under",       "track": "pad", "beats": 16, "tags": ["tension"], "tension": [0.5, 1], "mode": "scale", "pattern": "0+1+4 -*63" },
+
+    { "id": "dr_skip",         "track": "drums", "beats": 4, "tags": ["calm", "drift", "wonder"], "intensity": [0.25, 0.6], "pattern": "k . h . s . h . k . h k s . h ." },
+    { "id": "dr_bounce",       "track": "drums", "beats": 4, "tags": ["drift", "peak"], "intensity": [0.45, 0.9], "pattern": "k . h h s . h . k h . h s . h h" },
+    { "id": "dr_calypso",      "track": "drums", "beats": 4, "tags": ["drift"], "intensity": [0.4, 0.8], "pattern": "k . . k s . . k . . k . s . h ." },
+    { "id": "dr_star",         "track": "drums", "beats": 4, "tags": ["peak"], "intensity": [0.7, 1], "pattern": "k h s h k h s h k h s h k h s o" },
+    { "id": "dr_under",        "track": "drums", "beats": 4, "tags": ["tension"], "intensity": [0.2, 0.7], "tension": [0.5, 1], "pattern": "k . . . m . . . k . . . m . m ." },
+    { "id": "dr_castle",       "track": "drums", "beats": 4, "tags": ["tension", "peak"], "intensity": [0.6, 1], "tension": [0.5, 1], "pattern": "k . k . s . k . k k . k s . s s" },
+    { "id": "dr_build",        "track": "drums", "beats": 8, "tags": ["build"], "pattern": "k . h . k . h . k . h . k . h . | k . s . k . s . s s s s s s s! s!" },
+
+    { "id": "fill_roll",       "track": "drums", "beats": 2, "tags": ["fill", "build", "peak", "drift"], "pattern": "s s s s s! s s! s!" },
+    { "id": "fill_toms",       "track": "drums", "beats": 4, "tags": ["fill", "drift", "peak"], "pattern": "t . t . t t t t s . s . s! s! s! s!" },
+    { "id": "fill_splash",     "track": "drums", "beats": 4, "tags": ["fill", "calm", "release", "wonder", "tension"], "pattern": "c .*15" },
+    { "id": "fill_bump",       "track": "drums", "beats": 4, "tags": ["fill", "calm", "drift"], "pattern": "k . . . . . . . s . . . s! . s! ." }
+  ]
+}

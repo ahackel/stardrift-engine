@@ -309,7 +309,7 @@ export class Engine {
           degs = [root + shape[n - o * S] + o * L];
         } else {
           const d = mode === 'scale' ? root + n : n;
-          degs = [tones ? nearestTone(d, tones, L) : d];
+          degs = [tones && !a.semi ? nearestTone(d, tones, L) : d]; // chromatic notes (# b) stay as written
         }
       } else continue;
       for (const d of degs) {
