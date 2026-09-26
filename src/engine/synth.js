@@ -1,5 +1,6 @@
-// Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable,
-// synthesized drum kits (drums.js), per-track state-variable lowpass, ping-pong echo and a small Freeverb.
+// Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
+// (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), per-track drive (distortion) and
+// state-variable lowpass, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -65,12 +66,14 @@ function waveTables(def) {
   });
 }
 
-const TYPES = ['pulse', 'triangle', 'wave', 'drums'];
+const TYPES = ['pulse', 'triangle', 'wave', 'string', 'drums'];
+const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
 
 export function compileInst(def = {}, sr) {
   const env = def.env || {};
   const a = Math.max(0.001, env.a ?? 0.01), d = Math.max(0.001, env.d ?? 0.2), r = Math.max(0.001, env.r ?? 0.2);
-  const U = Math.max(1, Math.min(4, def.unison | 0 || 1));
+  const U = def.type === 'string' ? 1 : Math.max(1, Math.min(4, def.unison | 0 || 1));
+  const driveG = def.drive > 0 ? 1 + Math.min(1, def.drive) * 24 : 0;
   const detuneMul = new Float64Array(U);
   for (let u = 0; u < U; u++) detuneMul[u] = Math.pow(2, (U === 1 ? 0 : (def.detune || 0) * (u / (U - 1) - 0.5)) / 1200);
   return {
@@ -90,6 +93,12 @@ export function compileInst(def = {}, sr) {
     // filter envelope: each note opens the filter by `amount` octaves (scaled by velocity), closing over `decay` s
     fenvAmt: def.filterEnv?.amount || 0, fenvCoef: Math.exp(-4.6 / (Math.max(0.005, def.filterEnv?.decay ?? 0.2) * sr)),
     gain: def.gain ?? 1,
+    // drive: soft clipping of the track's voices before its filter (the filter then acts as the amp's cabinet);
+    // scaled so a normal-level note keeps its level while louder ones (chords) saturate
+    driveG, driveNorm: driveG ? 0.5 / Math.tanh(driveG * 0.5) : 1,
+    noise: Math.max(0, Math.min(1, def.noise || 0)), // breath: white noise under the tone, following its envelope
+    // string: T60 decay in seconds and brightness 0..1 (how much of the high end the loop keeps and the pluck has)
+    sDecay: Math.max(0.05, def.string?.decay ?? 2), sBright: Math.max(0, Math.min(1, def.string?.bright ?? 0.5)),
     kit: def.type === 'drums' ? compileKit(def, sr) : null,
   };
 }
@@ -106,6 +115,7 @@ class Voice {
     this.ph = new Float64Array(4); this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
     this.arp = null; this.arpIdx = 0; this.arpT = 0;
     this.lvl = 0; // wavetable level for the current pitch
+    this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string voices: loop buffer, write index
     for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
   }
   start(p, midi, vel, arp) {
@@ -114,6 +124,29 @@ class Voice {
     if (!legato) this.cur = midi;
     this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
     this.arp = arp; this.arpIdx = 0; this.arpT = 0;
+    if (p.type === 'string' && !legato) this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12));
+  }
+  // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass
+  pluck(p, f) {
+    const kb = (this.kb ||= new Float32Array(STRING_BUF)), mask = STRING_BUF - 1;
+    const n = Math.min(STRING_BUF - 4, Math.ceil(p.sr / f) + 2), c = 0.15 + 0.85 * p.sBright * (0.5 + 0.5 * this.vel);
+    let lp = 0, mean = 0;
+    for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
+    mean /= n;
+    for (let i = 1; i <= n; i++) kb[(this.kw - i) & mask] -= mean; // no DC in the loop
+    this.kPrev = 0;
+    this.kLoss = Math.exp(-6.9 / (p.sDecay * f)); // -60 dB after sDecay seconds
+  }
+  // one sample of the string at frequency f (glide and vibrato change the loop length)
+  string(p, f) {
+    const kb = this.kb, mask = STRING_BUF - 1, b = p.sBright;
+    const d = Math.min(STRING_BUF - 4, p.sr / f - 0.5 * (1 - b)); // the loop filter adds half a sample of delay
+    const r = this.kw - d, i = Math.floor(r), fr = r - i;
+    const y = kb[i & mask] + (kb[(i + 1) & mask] - kb[i & mask]) * fr;
+    kb[this.kw & mask] = this.kLoss * (b * y + (1 - b) * 0.5 * (y + this.kPrev));
+    this.kPrev = y;
+    this.kw = (this.kw + 1) | 0;
+    return y;
   }
   release() { if (this.stage !== IDLE) this.stage = REL; this.gate = false; }
   render(p) {
@@ -144,6 +177,10 @@ class Voice {
     const f = 440 * Math.pow(2, (m - 69) / 12);
     const sr = p.sr;
     let out = 0;
+    if (p.type === 'string') {
+      if (!this.kb) this.pluck(p, f); // the sound became a string while this voice was sounding
+      return (this.string(p, f) + (p.noise ? p.noise * (Math.random() * 2 - 1) : 0)) * lv * this.vel * 3.5;
+    }
     let duty = p.duty, tb = null;
     if (p.mips) {
       // the fullest table whose harmonics stay below Nyquist at this pitch
@@ -172,6 +209,7 @@ class Voice {
         out += tb[i] + (tb[i + 1] - tb[i]) * (x - i);
       }
     }
+    if (p.noise) out = out * (1 - 0.5 * p.noise) + p.noise * (Math.random() * 2 - 1) * p.U;
     return out * p.uniNorm * lv * this.vel;
   }
 }
@@ -246,6 +284,7 @@ class TrackBus {
     const p = this.p;
     if (this.isDrum) { for (const v of this.voices) if (v.active) x += v.render(this.sr, p.invSr); }
     else for (const v of this.voices) if (v.stage !== IDLE) x += v.render(p);
+    if (p.driveG) x = Math.tanh(x * p.driveG) * p.driveNorm;
 
     if (this.fenv > 0) this.fenv *= p.fenvCoef;
     if (--this.coefTimer <= 0) {

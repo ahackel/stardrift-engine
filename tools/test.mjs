@@ -141,6 +141,15 @@ const readJson = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url
 const lib = readJson('../library/instruments.json');
 const toCheck = readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json')).map((f) => [f, readJson(`../songs/${f}`)]);
 toCheck.push(['starter song', starterSong(readJson('../library/starter-song.json'), lib, { name: 'test', key: 'E', scale: 'dorian', bpm: 110 })]);
+// quick start: a song made up in every style (compose.js)
+const { composeSong } = await import('../src/engine/compose.js');
+const { Rng: SeedRng } = await import('../src/engine/rng.js');
+const composeData = { styles: readJson('../library/styles.json'), lib, template: readJson('../library/starter-song.json') };
+for (const st of composeData.styles.styles) toCheck.push([`style ${st.id}`, composeSong(st, composeData, new SeedRng(11))]);
+{
+  const st = composeData.styles.styles[0], a = composeSong(st, composeData, new SeedRng(5)), b = composeSong(st, composeData, new SeedRng(5));
+  ok(JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(composeSong(st, composeData, new SeedRng(6))), 'made-up songs: same seed, same song');
+}
 for (const [file, sg] of toCheck) {
   const e = new Engine(SR, sg, 3);
   const h = run(e, 90);

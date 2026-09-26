@@ -27,6 +27,29 @@ export const KITS = {
     t: { tones: [{ amp: 0.65, f0: 190, f1: 105, sweep: 0.07, decay: 0.14 }], noise: { amp: 0.1, decay: 0.02, filter: 'bp', freq: 1200, q: 0.8 }, click: 0.1, drive: 1.3, len: 0.8 },
     m: { metal: { amp: 0.9, decay: 0.035, filter: 'bp', freq: 3200, q: 1.5, tune: 1.6 }, len: 0.25 },
   },
+  // Orchestral percussion: timpani (k low, t lower), concert snare, shaker, suspended and crash cymbals, woodblock.
+  orchestra: {
+    k: { tones: [{ amp: 0.85, f0: 112, f1: 100, sweep: 0.08, decay: 0.7 }, { amp: 0.3, f0: 168, f1: 152, sweep: 0.08, decay: 0.45 }], noise: { amp: 0.08, decay: 0.02, filter: 'lp', freq: 1500 }, click: 0.1, len: 2.5 },
+    s: { tones: [{ amp: 0.22, f0: 240, f1: 205, sweep: 0.01, decay: 0.04 }], noise: { amp: 0.7, decay: 0.15, filter: 'bp', freq: 3600, q: 0.5 }, click: 0.08, len: 0.8 },
+    h: { noise: { amp: 0.22, decay: 0.035, attack: 0.008, filter: 'bp', freq: 6500, q: 0.8 }, len: 0.2 },
+    o: { metal: { amp: 0.2, decay: 0.7, filter: 'hp', freq: 5000 }, noise: { amp: 0.28, decay: 0.6, attack: 0.04, filter: 'hp', freq: 4000 }, len: 2.5 },
+    c: { metal: { amp: 0.35, decay: 1.4, filter: 'hp', freq: 3500 }, noise: { amp: 0.4, decay: 1.5, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
+    t: { tones: [{ amp: 0.9, f0: 74, f1: 66, sweep: 0.1, decay: 0.8 }, { amp: 0.25, f0: 111, f1: 100, sweep: 0.1, decay: 0.5 }], noise: { amp: 0.12, decay: 0.04, filter: 'lp', freq: 900 }, len: 2.5 },
+    m: { tones: [{ amp: 0.5, f0: 1250, f1: 1180, sweep: 0.004, decay: 0.03 }], click: 0.2, len: 0.15 },
+  },
+  // Rock kit: punchy driven kick, fat snare, bright hats, ride bell on m.
+  rock: {
+    k: { tones: [{ amp: 0.9, f0: 125, f1: 50, sweep: 0.025, decay: 0.18 }], noise: { amp: 0.1, decay: 0.008, filter: 'lp', freq: 5000 }, click: 0.45, drive: 2.2, len: 0.7 },
+    s: {
+      tones: [{ amp: 0.5, f0: 200, f1: 180, sweep: 0.015, decay: 0.07 }, { amp: 0.25, f0: 320, f1: 300, sweep: 0.01, decay: 0.05 }],
+      noise: { amp: 0.95, decay: 0.16, filter: 'bp', freq: 2200, q: 0.45 }, click: 0.15, drive: 1.8, len: 0.8,
+    },
+    h: { metal: { amp: 0.7, decay: 0.04, filter: 'hp', freq: 7000 }, noise: { amp: 0.35, decay: 0.03, filter: 'hp', freq: 8000 }, len: 0.3 },
+    o: { metal: { amp: 0.6, decay: 0.35, filter: 'hp', freq: 6500 }, noise: { amp: 0.3, decay: 0.3, filter: 'hp', freq: 8000 }, len: 1.5 },
+    c: { metal: { amp: 0.4, decay: 1.3, filter: 'hp', freq: 4000 }, noise: { amp: 0.45, decay: 1.4, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
+    t: { tones: [{ amp: 0.8, f0: 150, f1: 90, sweep: 0.06, decay: 0.22 }], noise: { amp: 0.12, decay: 0.03, filter: 'bp', freq: 1000, q: 0.8 }, click: 0.15, drive: 1.6, len: 1 },
+    m: { metal: { amp: 0.6, decay: 0.5, filter: 'bp', freq: 3000, q: 1.2, tune: 1.3 }, len: 1.2 },
+  },
   // The original raw NES-style kit: quantized triangle bodies + unfiltered LFSR noise.
   chip: {
     k: { tones: [{ amp: 1, f0: 170, f1: 45, sweep: 0.03, decay: 0.12, wave: 'tri4' }], noise: { amp: 0.25, decay: 0.006, source: 'lfsr', rate: 9000 }, len: 0.6 },
