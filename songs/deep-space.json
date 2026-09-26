@@ -61,23 +61,23 @@
 
   "tracks": [
     { "id": "pad",   "instrument": "pad",   "octave": 3, "poly": 10, "volume": 0.15, "pan": 0,    "echo": 0.05, "reverb": 0.7,  "follow": true, "stickiness": 3,   "layer": { "min": 0,    "max": 1,    "chance": 1 },    "color": "#a79bff" },
-    { "id": "bass",  "instrument": "bass",  "octave": 2,               "volume": 0.3,  "pan": 0,    "echo": 0,    "reverb": 0.08, "follow": true, "stickiness": 3,   "layer": { "min": 0.15, "max": 1,    "chance": 0.95 }, "color": "#4fd1ff" },
+    { "id": "bass",  "instrument": "bass",  "octave": 2,               "volume": 0.3,  "pan": 0,    "echo": 0,    "reverb": 0.08, "follow": true, "stickiness": 3,   "layer": { "min": 0.15, "max": 1,    "chance": 0.95 }, "color": "#5b8cff" },
     { "id": "arp",   "instrument": "arp",   "octave": 4,               "volume": 0.2,  "pan": -0.4, "echo": 0.45, "reverb": 0.3,                   "stickiness": 2,   "layer": { "min": 0.22, "max": 1,    "chance": 0.8 },  "color": "#6ff0a8" },
-    { "id": "lead",  "instrument": "lead",  "octave": 4,               "volume": 0.2,  "pan": 0.3,  "echo": 0.4,  "reverb": 0.45,                  "stickiness": 1.5, "layer": { "min": 0.3,  "max": 1,    "chance": 0.7 },  "color": "#ffc857" },
-    { "id": "stars", "instrument": "stars", "octave": 5,               "volume": 0.1,  "pan": 0.5,  "echo": 0.75, "reverb": 0.6,                                      "layer": { "min": 0,    "max": 0.55, "chance": 0.85 }, "color": "#fff0a0" },
+    { "id": "lead",  "instrument": "lead",  "octave": 4,               "volume": 0.2,  "pan": 0.3,  "echo": 0.4,  "reverb": 0.45,                  "stickiness": 1.5, "layer": { "min": 0.3,  "max": 1,    "chance": 0.7 },  "color": "#ff8a5c" },
+    { "id": "stars", "instrument": "stars", "octave": 5,               "volume": 0.1,  "pan": 0.5,  "echo": 0.75, "reverb": 0.6,                                      "layer": { "min": 0,    "max": 0.55, "chance": 0.85 }, "color": "#c3ef6b" },
     { "id": "drums", "instrument": "kit",                              "volume": 0.55, "pan": 0,    "echo": 0.06, "reverb": 0.12,                  "stickiness": 2,   "layer": { "min": 0.35, "max": 1,    "chance": 0.9 },  "color": "#ff6b9a" }
   ],
 
   "sections": [
-    { "id": "intro",   "intensity": 0.15, "tension": 0.05, "bars": [4],     "tags": ["intro", "calm"],    "tracks": { "pad": 1, "stars": 1, "bass": 0.5, "arp": 0, "lead": 0, "drums": 0 }, "next": { "calm": 1 }, "color": "#7a8cff" },
-    { "id": "calm",    "intensity": 0.2,  "tension": 0.1,  "bars": [8, 16], "tags": ["calm"],             "next": { "calm": 0.6, "drift": 1.5, "wonder": 1, "tension": 0.5 }, "color": "#4fd1ff" },
-    { "id": "wonder",  "intensity": 0.32, "tension": 0.05, "bars": [8],     "tags": ["wonder", "calm"],   "tracks": { "drums": 0.3 }, "next": { "calm": 1, "drift": 1 }, "color": "#b18cff" },
-    { "id": "drift",   "intensity": 0.45, "tension": 0.2,  "bars": [8, 16], "tags": ["drift"],            "next": { "drift": 0.6, "calm": 0.8, "build": 1, "wonder": 0.6, "tension": 0.6 }, "color": "#6ff0a8" },
-    { "id": "tension", "intensity": 0.45, "tension": 0.8,  "bars": [8],     "tags": ["tension"],          "next": { "tension": 0.5, "build": 1, "danger": 0.6, "release": 1 }, "color": "#ff8a5c" },
-    { "id": "build",   "intensity": 0.65, "tension": 0.55, "bars": [4],     "tags": ["build"],            "tracks": { "drums": 1 }, "next": { "peak": 2.5, "danger": 1, "tension": 0.3 }, "color": "#ffc857" },
-    { "id": "danger",  "intensity": 0.78, "tension": 0.7,  "bars": [8],     "tags": ["tension", "peak"],  "tracks": { "drums": 1 }, "next": { "danger": 0.5, "peak": 0.8, "tension": 0.6, "release": 0.6 }, "color": "#ff4f6d" },
-    { "id": "peak",    "intensity": 0.85, "tension": 0.35, "bars": [8, 16], "tags": ["peak"],             "next": { "peak": 0.5, "danger": 0.5, "release": 1.2, "drift": 0.6 }, "color": "#ff6b9a" },
-    { "id": "release", "intensity": 0.3,  "tension": 0.15, "bars": [4, 8],  "tags": ["release", "calm"],  "tracks": { "drums": 0, "lead": 0.3 }, "next": { "calm": 1, "drift": 0.8, "wonder": 0.6 }, "color": "#8fb8ff" }
+    { "id": "intro",   "intensity": 0.15, "tension": 0.05, "bars": [4],     "tags": ["intro", "calm"],    "tracks": { "pad": 1, "stars": 1, "bass": 0.5, "arp": 0, "lead": 0, "drums": 0 }, "next": { "calm": 1 } },
+    { "id": "calm",    "intensity": 0.2,  "tension": 0.1,  "bars": [8, 16], "tags": ["calm"],             "next": { "calm": 0.6, "drift": 1.5, "wonder": 1, "tension": 0.5 } },
+    { "id": "wonder",  "intensity": 0.32, "tension": 0.05, "bars": [8],     "tags": ["wonder", "calm"],   "tracks": { "drums": 0.3 }, "next": { "calm": 1, "drift": 1 } },
+    { "id": "drift",   "intensity": 0.45, "tension": 0.2,  "bars": [8, 16], "tags": ["drift"],            "next": { "drift": 0.6, "calm": 0.8, "build": 1, "wonder": 0.6, "tension": 0.6 } },
+    { "id": "tension", "intensity": 0.45, "tension": 0.8,  "bars": [8],     "tags": ["tension"],          "next": { "tension": 0.5, "build": 1, "danger": 0.6, "release": 1 } },
+    { "id": "build",   "intensity": 0.65, "tension": 0.55, "bars": [4],     "tags": ["build"],            "tracks": { "drums": 1 }, "next": { "peak": 2.5, "danger": 1, "tension": 0.3 } },
+    { "id": "danger",  "intensity": 0.78, "tension": 0.7,  "bars": [8],     "tags": ["tension", "peak"],  "tracks": { "drums": 1 }, "next": { "danger": 0.5, "peak": 0.8, "tension": 0.6, "release": 0.6 } },
+    { "id": "peak",    "intensity": 0.85, "tension": 0.35, "bars": [8, 16], "tags": ["peak"],             "next": { "peak": 0.5, "danger": 0.5, "release": 1.2, "drift": 0.6 } },
+    { "id": "release", "intensity": 0.3,  "tension": 0.15, "bars": [4, 8],  "tags": ["release", "calm"],  "tracks": { "drums": 0, "lead": 0.3 }, "next": { "calm": 1, "drift": 0.8, "wonder": 0.6 } }
   ],
 
   "progressions": [
