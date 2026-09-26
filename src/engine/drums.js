@@ -1,7 +1,7 @@
 // Synthesized drum kits. Each hit is a sum of components:
 //   tones  – up to 2 oscillators with an exponential pitch drop (drum bodies)
 //   noise  – white or LFSR noise through a state-variable filter (snare wires, hats, wash)
-//   metal  – six detuned squares at TR-808 ratios through a filter (hats, cymbals, ticks)
+//   metal  – six detuned squares at TR-808 ratios through a filter (hats, cymbals, ticks), band-limited
 //   click  – a very short noise transient (beater attack)
 //   drive  – soft saturation for punch
 // All times are exponential time constants in seconds, frequencies in Hz.
@@ -11,6 +11,13 @@ const TWO_PI = Math.PI * 2;
 const TRI4 = new Float32Array(32);
 for (let i = 0; i < 32; i++) TRI4[i] = (i < 16 ? 15 - i : i - 16) / 7.5 - 1;
 const METAL_HZ = [205.3, 304.4, 369.6, 522.7, 540, 800];
+
+// polyBLEP: smooths a square's jumps so its harmonics above Nyquist don't fold back as digital hash
+function blep(t, dt) {
+  if (t < dt) { t /= dt; return t + t - t * t - 1; }
+  if (t > 1 - dt) { t = (t - 1) / dt; return t * t + t + t + 1; }
+  return 0;
+}
 
 export const KITS = {
   // Default: clean analog-style kit that sits well under chip melodies.
@@ -32,8 +39,8 @@ export const KITS = {
     k: { tones: [{ amp: 0.85, f0: 112, f1: 100, sweep: 0.08, decay: 0.7 }, { amp: 0.3, f0: 168, f1: 152, sweep: 0.08, decay: 0.45 }], noise: { amp: 0.08, decay: 0.02, filter: 'lp', freq: 1500 }, click: 0.1, len: 2.5 },
     s: { tones: [{ amp: 0.22, f0: 240, f1: 205, sweep: 0.01, decay: 0.04 }], noise: { amp: 0.7, decay: 0.15, filter: 'bp', freq: 3600, q: 0.5 }, click: 0.08, len: 0.8 },
     h: { noise: { amp: 0.22, decay: 0.035, attack: 0.008, filter: 'bp', freq: 6500, q: 0.8 }, len: 0.2 },
-    o: { metal: { amp: 0.2, decay: 0.7, filter: 'hp', freq: 5000 }, noise: { amp: 0.28, decay: 0.6, attack: 0.04, filter: 'hp', freq: 4000 }, len: 2.5 },
-    c: { metal: { amp: 0.35, decay: 1.4, filter: 'hp', freq: 3500 }, noise: { amp: 0.4, decay: 1.5, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
+    o: { metal: { amp: 0.35, decay: 0.7, filter: 'hp', freq: 5000 }, noise: { amp: 0.1, decay: 0.3, attack: 0.04, filter: 'hp', freq: 4000 }, len: 2.5 },
+    c: { metal: { amp: 0.35, decay: 1.4, filter: 'hp', freq: 3500 }, noise: { amp: 0.15, decay: 0.5, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
     t: { tones: [{ amp: 0.9, f0: 74, f1: 66, sweep: 0.1, decay: 0.8 }, { amp: 0.25, f0: 111, f1: 100, sweep: 0.1, decay: 0.5 }], noise: { amp: 0.12, decay: 0.04, filter: 'lp', freq: 900 }, len: 2.5 },
     m: { tones: [{ amp: 0.5, f0: 1250, f1: 1180, sweep: 0.004, decay: 0.03 }], click: 0.2, len: 0.15 },
   },
@@ -44,9 +51,9 @@ export const KITS = {
       tones: [{ amp: 0.5, f0: 200, f1: 180, sweep: 0.015, decay: 0.07 }, { amp: 0.25, f0: 320, f1: 300, sweep: 0.01, decay: 0.05 }],
       noise: { amp: 0.95, decay: 0.16, filter: 'bp', freq: 2200, q: 0.45 }, click: 0.15, drive: 1.8, len: 0.8,
     },
-    h: { metal: { amp: 0.7, decay: 0.04, filter: 'hp', freq: 7000 }, noise: { amp: 0.35, decay: 0.03, filter: 'hp', freq: 8000 }, len: 0.3 },
-    o: { metal: { amp: 0.6, decay: 0.35, filter: 'hp', freq: 6500 }, noise: { amp: 0.3, decay: 0.3, filter: 'hp', freq: 8000 }, len: 1.5 },
-    c: { metal: { amp: 0.4, decay: 1.3, filter: 'hp', freq: 4000 }, noise: { amp: 0.45, decay: 1.4, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
+    h: { metal: { amp: 0.7, decay: 0.04, filter: 'hp', freq: 7000 }, noise: { amp: 0.15, decay: 0.03, filter: 'hp', freq: 8000 }, len: 0.3 },
+    o: { metal: { amp: 0.6, decay: 0.35, filter: 'hp', freq: 6500 }, noise: { amp: 0.12, decay: 0.12, filter: 'hp', freq: 8000 }, len: 1.5 },
+    c: { metal: { amp: 0.4, decay: 1.3, filter: 'hp', freq: 4000 }, noise: { amp: 0.15, decay: 0.35, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
     t: { tones: [{ amp: 0.8, f0: 150, f1: 90, sweep: 0.06, decay: 0.22 }], noise: { amp: 0.12, decay: 0.03, filter: 'bp', freq: 1000, q: 0.8 }, click: 0.15, drive: 1.6, len: 1 },
     m: { metal: { amp: 0.6, decay: 0.5, filter: 'bp', freq: 3000, q: 1.2, tune: 1.3 }, len: 1.2 },
   },
@@ -196,10 +203,11 @@ export class DrumVoice {
       alive = true;
       let x = 0;
       for (let i = 0; i < 6; i++) {
-        let ph = this.metalPh[i] + m.inc[i];
+        const dt = m.inc[i];
+        let ph = this.metalPh[i] + dt;
         if (ph >= 1) ph -= 1;
         this.metalPh[i] = ph;
-        x += ph < 0.5 ? 1 : -1;
+        x += (ph < 0.5 ? 1 : -1) + blep(ph, dt) - blep(ph < 0.5 ? ph + 0.5 : ph - 0.5, dt);
       }
       out += runFilter(m.filter, this.mf, x / 6) * this.mEnv;
       this.mEnv *= this.mDecay;

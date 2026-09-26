@@ -234,5 +234,38 @@ for (const [file, sg] of toCheck) {
   ok(!a.gen && expandTokens(a.pattern).length === 32 && a.pattern === b.pattern, `generator blocks freeze into patterns (${a.pattern})`);
 }
 
+// 13. Amps and double tracking: every amp on a driven guitar, doubled, stays finite, sane and near the level without
+{
+  const { AMPS } = await import('../src/engine/synth.js');
+  const { renderPhrase } = await import('./lab/phrase.js');
+  const e = lib.instruments.find((x) => x.id === 'power_chords');
+  const phrase = { bpm: 130, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0 . 0 . 0+2+3! - 0 . 0 . 0 . 0+2+3 - - .', beats: 4 } };
+  const base = renderPhrase(phrase, e.sound, e.track, { raw: true }).rms, off = [];
+  for (const amp of Object.keys(AMPS)) {
+    const r = renderPhrase(phrase, { ...e.sound, amp }, { ...e.track, double: 0.7 }, { raw: true });
+    const db = 20 * Math.log10(r.rms / base);
+    if (![...r.left, ...r.right].every(Number.isFinite) || Math.abs(db) > 4) off.push(`${amp} ${db.toFixed(1)} dB`);
+  }
+  ok(!off.length, `amps and double tracking are healthy and level-matched (${Object.keys(AMPS)})${off.length ? ` — ${off}` : ''}`);
+}
+
+// 14. Bodies, ensembles, swell and scoop: every body on a string section chord stays finite, sane and near its level
+{
+  const { BODIES } = await import('../src/engine/synth.js');
+  const { renderPhrase } = await import('./lab/phrase.js');
+  const e = lib.instruments.find((x) => x.id === 'strings_ensemble');
+  const phrase = { bpm: 96, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0+2+4+5 -*13 . .', beats: 4 } };
+  const base = renderPhrase(phrase, e.sound, e.track, { raw: true }).rms, off = [];
+  for (const body of Object.keys(BODIES)) {
+    const r = renderPhrase(phrase, { ...e.sound, body, ensemble: 0.8, swell: 1, scoop: 0.3 }, e.track, { raw: true });
+    const db = 20 * Math.log10(r.rms / base);
+    if (![...r.left, ...r.right].every(Number.isFinite) || Math.abs(db) > 6) off.push(`${body} ${db.toFixed(1)} dB`);
+  }
+  ok(!off.length, `bodies with ensemble, swell and scoop are healthy (${Object.keys(BODIES)})${off.length ? ` — ${off}` : ''}`);
+  const sources = [['fm', { type: 'fm', fm: { ratio: 1, index: 5, env: 1, feedback: 0.3 }, unison: 3, detune: 8, env: { a: 0.05, d: 0.4, s: 0.8, r: 0.3 } }], ['warm', { ...e.sound, wave: 'warm' }]];
+  const badSrc = sources.filter(([, s]) => { const r = renderPhrase(phrase, s, e.track, { raw: true }); return !(r.rms > 0.003) || ![...r.left].every(Number.isFinite); }).map(([n]) => n);
+  ok(!badSrc.length, `fm and warm sources sound and stay finite${badSrc.length ? ` — ${badSrc}` : ''}`);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

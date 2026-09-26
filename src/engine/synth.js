@@ -1,6 +1,6 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
-// (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), per-track drive (distortion) and
-// state-variable lowpass, ping-pong echo and a small Freeverb.
+// (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
+// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, state-variable lowpass, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -14,7 +14,7 @@ for (let i = 0; i < 32; i++) TRI_TABLE[i] = (i < 16 ? 15 - i : i - 16) / 7.5 - 1
 
 
 // 32 steps of 4-bit values (0..15): a preset name or a custom array (editor-drawable).
-export const WAVE_PRESETS = ['soft', 'sine', 'saw', 'organ', 'hollow'];
+export const WAVE_PRESETS = ['soft', 'sine', 'saw', 'warm', 'organ', 'hollow'];
 export function waveSteps(spec) {
   if (Array.isArray(spec) && spec.length) {
     return Array.from({ length: 32 }, (_, i) => Math.max(0, Math.min(15, Math.round(+spec[i % spec.length] || 0))));
@@ -25,6 +25,7 @@ export function waveSteps(spec) {
     switch (spec) {
       case 'sine': t[i] = Math.sin(x); break;
       case 'saw': t[i] = 1 - (2 * i) / 32; break;
+      case 'warm': for (let k = 1; k <= 12; k++) t[i] += Math.sin(k * x) / Math.pow(k, 1.6); break;
       case 'organ': t[i] = Math.sin(x) + 0.5 * Math.sin(2 * x) + 0.3 * Math.sin(3 * x); break;
       case 'hollow': t[i] = Math.sin(x) + 0.4 * Math.sin(3 * x); break;
       default: t[i] = Math.sin(x) + 0.35 * Math.sin(2 * x) + 0.12 * Math.sin(3 * x); // 'soft'
@@ -61,19 +62,100 @@ function waveTables(def) {
     if (!smooth) return buildTables(stairHarmonics(stepValues(spec)));
     if (Array.isArray(spec)) return buildTables(sampledHarmonics(stepValues(spec)));
     if (spec === 'saw') return buildTables(formulaHarmonics(null, (k) => 2 / (Math.PI * k)), 1);
+    // warm: a saw whose harmonics fall off faster (1/k^1.6), relative to the note: bowed and blown sounds without the buzz
+    if (spec === 'warm') return buildTables(formulaHarmonics(null, (k) => 2 / (Math.PI * Math.pow(k, 1.6))), 1);
     const amps = SMOOTH[spec] || SMOOTH.soft;
     return buildTables(formulaHarmonics(null, (k) => amps[k - 1] || 0), 1);
   });
 }
 
-const TYPES = ['pulse', 'triangle', 'wave', 'string', 'drums'];
+// RBJ cookbook biquads, [kind, Hz, Q, dB] with kind lp | hp | peak, as flat coefficients (b0 b1 b2 a1 a2 per stage)
+function biquads(list, sr) {
+  const c = new Float64Array(list.length * 5);
+  list.forEach(([kind, f, q = 0.707, db = 0], i) => {
+    const w = (TWO_PI * Math.min(f, sr * 0.45)) / sr, cs = Math.cos(w), al = Math.sin(w) / (2 * q), A = Math.pow(10, db / 40);
+    let b0, b1, b2, a0, a1, a2;
+    if (kind === 'lp') { b1 = 1 - cs; b0 = b2 = b1 / 2; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al; }
+    else if (kind === 'hp') { b1 = -(1 + cs); b0 = b2 = (1 + cs) / 2; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al; }
+    else { b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cs; a2 = 1 - al / A; }
+    c.set([b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0], i * 5);
+  });
+  return c;
+}
+// one sample through a chain of biquads (transposed direct form II; z holds two states per stage)
+function chain(c, z, x) {
+  for (let i = 0, j = 0; i < c.length; i += 5, j += 2) {
+    const y = c[i] * x + z[j];
+    z[j] = c[i + 1] * x - c[i + 3] * y + z[j + 1];
+    z[j + 1] = c[i + 2] * x - c[i + 4] * y;
+    x = y;
+  }
+  return x;
+}
+// log(cosh(x)), the integral of tanh, without overflow
+const logcosh = (x) => { const a = Math.abs(x); return a + Math.log1p(Math.exp(-2 * a)) - Math.LN2; };
+
+// Amps around the drive: EQ into the clipper, a speaker cabinet after it, a bias for the even harmonics of a tube
+// and a level to match a sound without the amp.
+export const AMPS = {
+  // tight lows and a mid push into the clipper (a Tube Screamer in front of the amp), then a 4×12 cabinet:
+  // lows gone below 75 Hz with a bump at 110, a dip where fizz lives, a steep roll-off from about 4 kHz
+  guitar: { bias: 0.25, gain: 0.71, pre: [['hp', 110], ['peak', 850, 0.8, 8]], post: [['hp', 75], ['peak', 110, 1, 3], ['peak', 2600, 1.5, -3], ['lp', 4200], ['lp', 5000, 1.2]] },
+  // a bass amp keeps the lows and rounds off the top
+  bass: { bias: 0.1, gain: 0.83, pre: [['hp', 35], ['peak', 700, 0.7, 3]], post: [['lp', 2800], ['lp', 3600, 0.9]] },
+};
+
+// Bodies: the fixed resonances of an instrument's box, bell or mouth, the same for every note it plays. They are much
+// of what makes a sound a violin or a horn rather than a synth. [kind, Hz, Q, dB] like the amps; a sound's `body` is
+// a name from here or its own list, and is levelled so a sound keeps its loudness with a body.
+export const BODIES = {
+  // a violin: the air in the box near 280 Hz, the wood around 470 Hz, the "bridge hill" near 2.8 kHz, little above 5 kHz
+  violin: [['hp', 180], ['peak', 280, 3, 6], ['peak', 470, 3, 5], ['peak', 1300, 1, -4], ['peak', 2800, 1.2, 6], ['lp', 5500, 0.8]],
+  // a cello: the same shape, lower
+  cello: [['hp', 60], ['peak', 110, 3, 6], ['peak', 220, 3, 5], ['peak', 700, 1, -3], ['peak', 1800, 1.2, 4], ['lp', 3500, 0.8]],
+  // a string section: violins to basses together, their peaks smeared
+  strings: [['peak', 300, 1.2, 4], ['peak', 1200, 1, -3], ['peak', 2600, 1, 4], ['lp', 6000, 0.7]],
+  // a french horn: the bell faces away from you, full around 180 Hz, warm around 400 Hz, dark above 2 kHz
+  horn: [['peak', 180, 0.8, 5], ['peak', 400, 1.2, 6], ['peak', 1200, 1, -3], ['lp', 2200, 0.8]],
+  // trumpets and trombones: the brassy band around 1.2 kHz
+  brass: [['hp', 120], ['peak', 1200, 1.1, 6], ['peak', 2600, 1.5, 3], ['lp', 7000, 0.7]],
+  // voices: the formants of a vowel (on a rich source such as a saw)
+  ah: [['lp', 3500, 0.7], ['peak', 750, 5, 16], ['peak', 1200, 6, 13], ['peak', 2600, 7, 9]],
+  oh: [['lp', 3500, 0.7], ['peak', 500, 5, 16], ['peak', 850, 6, 13], ['peak', 2500, 7, 8]],
+  oo: [['lp', 3000, 0.7], ['peak', 330, 5, 16], ['peak', 800, 6, 12], ['peak', 2300, 7, 6]],
+  ee: [['lp', 4000, 0.7], ['peak', 300, 5, 14], ['peak', 2250, 6, 14], ['peak', 3000, 7, 10]],
+};
+
+// the gain of a biquad chain at f Hz
+function chainMag(c, sr, f) {
+  const w = (TWO_PI * f) / sr, c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+  let m = 1;
+  for (let i = 0; i < c.length; i += 5) {
+    const nr = c[i] + c[i + 1] * c1 + c[i + 2] * c2, ni = -(c[i + 1] * s1 + c[i + 2] * s2);
+    const dr = 1 + c[i + 3] * c1 + c[i + 4] * c2, di = -(c[i + 3] * s1 + c[i + 4] * s2);
+    m *= Math.sqrt((nr * nr + ni * ni) / (dr * dr + di * di));
+  }
+  return m;
+}
+// a body's coefficients and the gain that levels it (its average power from 150 Hz to 5 kHz back to 1)
+function compileBody(spec, sr) {
+  const list = typeof spec === 'string' ? BODIES[spec] : Array.isArray(spec) ? spec : null;
+  if (!list?.length) return null;
+  const c = biquads(list, sr);
+  let pw = 0;
+  for (let i = 0; i < 24; i++) pw += chainMag(c, sr, 150 * Math.pow(5000 / 150, i / 23)) ** 2;
+  return { c, gain: 1 / Math.sqrt(pw / 24) };
+}
+
+const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
 
 export function compileInst(def = {}, sr) {
   const env = def.env || {};
   const a = Math.max(0.001, env.a ?? 0.01), d = Math.max(0.001, env.d ?? 0.2), r = Math.max(0.001, env.r ?? 0.2);
   const U = def.type === 'string' ? 1 : Math.max(1, Math.min(4, def.unison | 0 || 1));
-  const driveG = def.drive > 0 ? 1 + Math.min(1, def.drive) * 24 : 0;
+  const amp = AMPS[def.amp], bias = amp?.bias || 0;
+  const driveG = def.drive > 0 ? 1 + Math.min(2, def.drive) * 24 : amp ? 1 : 0; // 1 = crunch, 2 = high gain
   const detuneMul = new Float64Array(U);
   for (let u = 0; u < U; u++) detuneMul[u] = Math.pow(2, (U === 1 ? 0 : (def.detune || 0) * (u / (U - 1) - 0.5)) / 1200);
   return {
@@ -93,12 +175,25 @@ export function compileInst(def = {}, sr) {
     // filter envelope: each note opens the filter by `amount` octaves (scaled by velocity), closing over `decay` s
     fenvAmt: def.filterEnv?.amount || 0, fenvCoef: Math.exp(-4.6 / (Math.max(0.005, def.filterEnv?.decay ?? 0.2) * sr)),
     gain: def.gain ?? 1,
-    // drive: soft clipping of the track's voices before its filter (the filter then acts as the amp's cabinet);
+    // drive: soft clipping of the track's voices before its filter, inside an amp if the sound names one;
     // scaled so a normal-level note keeps its level while louder ones (chords) saturate
-    driveG, driveNorm: driveG ? 0.5 / Math.tanh(driveG * 0.5) : 1,
+    driveG, driveBias: bias, driveOffset: Math.tanh(bias), driveNorm: driveG ? 0.5 / (Math.tanh(driveG * 0.5 + bias) - Math.tanh(bias)) : 1,
+    amp: amp ? { pre: biquads(amp.pre, sr), post: biquads(amp.post, sr), gain: amp.gain } : null,
     noise: Math.max(0, Math.min(1, def.noise || 0)), // breath: white noise under the tone, following its envelope
+    body: compileBody(def.body, sr),
+    // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
+    // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
+    // feedback roughens the modulator
+    fmRatio: def.fm?.ratio ?? 1, fmIndex: def.fm?.index ?? 2, fmEnv: Math.max(0, Math.min(1, def.fm?.env ?? 1)), fmFb: def.fm?.feedback || 0,
+    // ensemble 0..1: each unison voice (a player of the section) drifts and vibrates on its own
+    ensemble: U > 1 || def.ensemble ? Math.max(0, Math.min(1, def.ensemble || 0)) : 0,
+    // swell: the filter opens this many octaves with the note's loudness (brass and bowed strings brighten as they swell)
+    swell: Math.max(0, Math.min(4, def.swell || 0)),
+    // scoop: a note starts this many semitones flat and slides up within about 70 ms (brass, voices)
+    scoop: Math.max(0, Math.min(2, def.scoop || 0)), scoopCoef: def.scoop ? Math.exp(-4.6 / (0.07 * sr)) : 0,
     // string: T60 decay in seconds and brightness 0..1 (how much of the high end the loop keeps and the pluck has)
     sDecay: Math.max(0.05, def.string?.decay ?? 2), sBright: Math.max(0, Math.min(1, def.string?.bright ?? 0.5)),
+    sMute: Math.max(0, Math.min(1, def.string?.mute || 0)), // palm mute: how damped and dull short notes are
     kit: def.type === 'drums' ? compileKit(def, sr) : null,
   };
 }
@@ -117,25 +212,31 @@ class Voice {
     this.lvl = 0; // wavetable level for the current pitch
     this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string voices: loop buffer, write index
     for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
+    // ensemble: per player a slow drift rate, a vibrato rate and a phase; ens holds their pitch factors
+    this.rnd = Array.from({ length: 4 }, () => [0.13 + Math.random() * 0.25, 4.8 + Math.random() * 1.4, Math.random() * TWO_PI]);
+    this.ens = new Float64Array(4).fill(1); this.ensT = 0;
+    this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
   }
-  start(p, midi, vel, arp) {
+  start(p, midi, vel, arp, short = false) {
     const legato = this.stage !== IDLE && p.glideCoef > 0;
     this.target = midi;
-    if (!legato) this.cur = midi;
+    if (!legato) this.cur = midi - p.scoop;
     this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
     this.arp = arp; this.arpIdx = 0; this.arpT = 0;
-    if (p.type === 'string') this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12)); // every note is picked; glide still slides into it
+    if (p.type === 'string') this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12), short ? p.sMute : 0); // every note is picked; glide still slides into it
   }
-  // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass
-  pluck(p, f) {
+  // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass.
+  // mute 0..1: a palm-muted note, much duller and dying within a few hundredths of a second (through a driven amp,
+  // anything above about -35 dB still clips, so the string has to fall fast to sound damped)
+  pluck(p, f, mute = 0) {
     const kb = (this.kb ||= new Float32Array(STRING_BUF)), mask = STRING_BUF - 1;
-    const n = Math.min(STRING_BUF - 4, Math.ceil(p.sr / f) + 2), c = 0.15 + 0.85 * p.sBright * (0.5 + 0.5 * this.vel);
+    const n = Math.min(STRING_BUF - 4, Math.ceil(p.sr / f) + 2), c = (0.15 + 0.85 * p.sBright * (0.5 + 0.5 * this.vel)) * (1 - 0.85 * mute);
     let lp = 0, mean = 0;
     for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
     mean /= n;
     for (let i = 1; i <= n; i++) kb[(this.kw - i) & mask] -= mean; // no DC in the loop
     this.kPrev = 0;
-    this.kLoss = Math.exp(-6.9 / (p.sDecay * f)); // -60 dB after sDecay seconds
+    this.kLoss = Math.exp(-6.9 / (Math.pow(p.sDecay, 1 - mute) * Math.pow(0.035, mute) * f)); // -60 dB after sDecay s (35 ms fully muted)
   }
   // one sample of the string at frequency f (glide and vibrato change the loop length)
   string(p, f) {
@@ -149,6 +250,14 @@ class Voice {
     return y;
   }
   release() { if (this.stage !== IDLE) this.stage = REL; this.gate = false; }
+  // a section's players: each wanders slowly off pitch (up to 5 cents) and has its own vibrato (7 cents), fading in
+  drift(p) {
+    const a = this.age, k = p.ensemble, fade = Math.min(1, a / 0.4);
+    for (let u = 0; u < p.U; u++) {
+      const r = this.rnd[u];
+      this.ens[u] = Math.pow(2, (k * (5 * Math.sin(TWO_PI * r[0] * a + r[2]) + 7 * fade * Math.sin(TWO_PI * r[1] * a + 3 * r[2]))) / 1200);
+    }
+  }
   render(p) {
     let lv = this.level;
     switch (this.stage) {
@@ -167,7 +276,8 @@ class Voice {
       if (this.arpT >= p.arpPeriod) { this.arpT -= p.arpPeriod; this.arpIdx = (this.arpIdx + 1) % this.arp.length; }
       m = this.arp[this.arpIdx];
     } else {
-      this.cur = p.glideCoef ? this.target + (this.cur - this.target) * p.glideCoef : this.target;
+      const k = p.glideCoef || p.scoopCoef;
+      this.cur = k ? this.target + (this.cur - this.target) * k : this.target;
       m = this.cur;
     }
     if (p.vibDepth && this.age > p.vibDelay) {
@@ -181,6 +291,24 @@ class Voice {
       if (!this.kb) this.pluck(p, f); // the sound became a string while this voice was sounding
       return (this.string(p, f) + (p.noise ? p.noise * (Math.random() * 2 - 1) : 0)) * lv * this.vel * 3.5;
     }
+    if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
+    if (p.type === 'fm') {
+      const I = p.fmIndex * (1 - p.fmEnv + p.fmEnv * lv) * (0.5 + 0.5 * this.vel);
+      for (let u = 0; u < p.U; u++) {
+        const dt = (f * p.detuneMul[u] * this.ens[u]) / sr;
+        let ph = this.ph[u] + dt;
+        if (ph >= 1) ph -= 1;
+        this.ph[u] = ph;
+        let mp = this.mph[u] + dt * p.fmRatio;
+        mp -= Math.floor(mp);
+        this.mph[u] = mp;
+        const mod = Math.sin(TWO_PI * mp + p.fmFb * this.mfb[u]);
+        this.mfb[u] = mod;
+        out += Math.sin(TWO_PI * ph + I * mod);
+      }
+      if (p.noise) out = out * (1 - 0.5 * p.noise) + p.noise * (Math.random() * 2 - 1) * p.U;
+      return out * p.uniNorm * lv * this.vel;
+    }
     let duty = p.duty, tb = null;
     if (p.mips) {
       // the fullest table whose harmonics stay below Nyquist at this pitch
@@ -193,7 +321,7 @@ class Voice {
     } else if (p.pwmDepth) duty += p.pwmDepth * Math.sin(TWO_PI * p.pwmRate * this.age);
     duty = duty < 0.05 ? 0.05 : duty > 0.95 ? 0.95 : duty;
     for (let u = 0; u < p.U; u++) {
-      const dt = (f * p.detuneMul[u]) / sr;
+      const dt = (f * p.detuneMul[u] * this.ens[u]) / sr;
       let ph = this.ph[u] + dt;
       if (ph >= 1) ph -= 1;
       this.ph[u] = ph;
@@ -221,6 +349,8 @@ class TrackBus {
     this.ic1 = 0; this.ic2 = 0; this.cut = 1000; this.cutTarget = 1000; this.coefTimer = 0;
     this.g = 0; this.gTarget = 1; this.rr = 0;
     this.fenv = 0; // filter envelope level (1 at a note's start, decays)
+    this.u1 = 0; this.F1 = 0; // the clipper's previous input and its integral
+    this.loud = 0; // the loudest voice's envelope level (swell)
   }
   set(tr, p, sr) {
     this.p = p; this.sr = sr;
@@ -230,7 +360,42 @@ class TrackBus {
     this.pr = Math.sin(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
     this.pump = Math.max(0, Math.min(1, tr.pump || 0)); // sidechain: dips on every kick
+    if (p.body && this.zBody?.length !== p.body.c.length / 2.5) this.zBody = new Float64Array(p.body.c.length / 2.5);
+    if (p.amp && this.zPre?.length !== p.amp.pre.length / 2.5) this.zPre = new Float64Array(p.amp.pre.length / 2.5);
+    if (p.amp && this.zPost?.length !== p.amp.post.length / 2.5) this.zPost = new Float64Array(p.amp.post.length / 2.5);
+    // double tracking: a second take, a few ms late with a slowly wandering delay, on the other side;
+    // the two sit at pan ± double
+    this.dbl = Math.max(0, Math.min(1, tr.double || 0));
+    if (this.dbl) {
+      const at = (x) => Math.max(-1, Math.min(1, x)), a = ((at(pan - this.dbl) + 1) * Math.PI) / 4, b = ((at(pan + this.dbl) + 1) * Math.PI) / 4;
+      this.pl = Math.cos(a); this.pr = Math.sin(a); this.ql = Math.cos(b); this.qr = Math.sin(b);
+      if (!this.dBuf) { this.dBuf = new Float32Array(Math.ceil(sr * 0.03)); this.dI = 0; this.dT = 0; }
+    }
     this.updateCoefs();
+  }
+  // the second take: 14 ms late, the delay drifting by about a millisecond (a few cents of pitch, like a player)
+  double(x) {
+    const buf = this.dBuf, n = buf.length;
+    buf[this.dI] = x;
+    this.dT += this.p.invSr;
+    const d = this.sr * (0.014 + 0.0012 * Math.sin(TWO_PI * 0.23 * this.dT) + 0.0007 * Math.sin(TWO_PI * 0.61 * this.dT));
+    let r = this.dI - d;
+    if (r < 0) r += n;
+    const i = Math.floor(r), f = r - i, y = buf[i] + (buf[(i + 1) % n] - buf[i]) * f;
+    if (++this.dI >= n) this.dI = 0;
+    return y;
+  }
+  // the amp's EQ, the clipper, the cabinet. The clipper is tanh with first-order antiderivative anti-aliasing:
+  // it outputs the average of tanh between two samples (from its integral, log cosh). A plain tanh at high gain
+  // folds harmonics above Nyquist back into the audible band, the fizz of cheap distortion.
+  drive(x) {
+    const p = this.p, amp = p.amp;
+    if (amp) x = chain(amp.pre, this.zPre, x);
+    const u = x * p.driveG + p.driveBias, d = u - this.u1, F = logcosh(u);
+    const y = Math.abs(d) > 1e-6 ? (F - this.F1) / d : Math.tanh(0.5 * (u + this.u1));
+    this.u1 = u; this.F1 = F;
+    x = (y - p.driveOffset) * p.driveNorm;
+    return amp ? chain(amp.post, this.zPost, x) * amp.gain : x;
   }
   setMood(intensity, tension) {
     const p = this.p;
@@ -241,16 +406,16 @@ class TrackBus {
     const k = 1 / Math.max(0.3, this.p.q);
     this.a1 = 1 / (1 + g * (g + k)); this.a2 = g * this.a1; this.a3 = g * this.a2;
   }
-  noteOn(midis, vel) {
+  noteOn(midis, vel, short) {
     const p = this.p, vs = this.voices;
     if (p.fenvAmt) this.fenv = vel;
     if (vs.length === 1) {
       const arp = midis.length > 1 && p.arpPeriod ? midis.slice().sort((a, b) => a - b) : null;
-      vs[0].start(p, arp ? arp[0] : midis[0], vel, arp);
+      vs[0].start(p, arp ? arp[0] : midis[0], vel, arp, short);
       return;
     }
     for (const v of vs) if (v.gate) v.release();
-    for (const m of midis) this.alloc().start(p, m, vel, null);
+    for (const m of midis) this.alloc().start(p, m, vel, null, short);
   }
   alloc() {
     let best = null, score = Infinity;
@@ -283,16 +448,21 @@ class TrackBus {
     let x = 0;
     const p = this.p;
     if (this.isDrum) { for (const v of this.voices) if (v.active) x += v.render(this.sr, p.invSr); }
-    else for (const v of this.voices) if (v.stage !== IDLE) x += v.render(p);
-    if (p.driveG) x = Math.tanh(x * p.driveG) * p.driveNorm;
+    else {
+      let loud = 0;
+      for (const v of this.voices) if (v.stage !== IDLE) { x += v.render(p); if (v.level > loud) loud = v.level; }
+      this.loud = loud;
+    }
+    if (p.body) x = chain(p.body.c, this.zBody, x) * p.body.gain;
+    if (p.driveG) x = this.drive(x);
 
     if (this.fenv > 0) this.fenv *= p.fenvCoef;
     if (--this.coefTimer <= 0) {
-      const env = this.fenv > 0.002;
-      this.coefTimer = env ? 16 : 64;
+      const env = this.fenv > 0.002, moving = env || p.swell;
+      this.coefTimer = moving ? 16 : 64;
       const glide = Math.abs(this.cut - this.cutTarget) > 0.5;
-      if (glide) this.cut += (this.cutTarget - this.cut) * (env ? 0.0015 : 0.006); // ~0.25 s glide
-      if (env) this.updateCoefs(this.cut * Math.pow(2, p.fenvAmt * this.fenv));
+      if (glide) this.cut += (this.cutTarget - this.cut) * (moving ? 0.0015 : 0.006); // ~0.25 s glide
+      if (moving) this.updateCoefs(this.cut * Math.pow(2, p.fenvAmt * this.fenv + p.swell * (this.loud - 1)));
       else if (glide || this.fenv > 0) { this.fenv = 0; this.updateCoefs(); }
     }
     const v3 = x - this.ic2;
@@ -435,7 +605,7 @@ export class Synth {
       this.tracks[id].gTarget = d && !d.keep.includes(id) ? g * (1 - d.amount) : g;
     }
   }
-  noteOn(id, midis, vel) { this.tracks[id]?.noteOn(midis, vel); }
+  noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
   release(id) { this.tracks[id]?.release(); }
   drum(id, hits, vel) {
     this.tracks[id]?.drum(hits, vel);
@@ -476,7 +646,12 @@ export class Synth {
     for (const b of this.list) {
       let x = b.render();
       if (b.pump) x *= 1 - b.pump * this.kick;
-      l += x * b.pl; r += x * b.pr; e += x * b.echo; v += x * b.rev;
+      if (b.dbl) {
+        const c = b.double(x);
+        l += x * b.pl + c * b.ql; r += x * b.pr + c * b.qr;
+        x = (x + c) * 0.5;
+      } else { l += x * b.pl; r += x * b.pr; }
+      e += x * b.echo; v += x * b.rev;
     }
     const pv = this.pv;
     if (pv) {

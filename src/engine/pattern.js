@@ -6,7 +6,6 @@
 //   *        the whole current chord (poly tracks) or a fast chip arpeggio (mono tracks with `arp`)
 //   0+4+8    several notes at once
 //   k s h    drum hits: k kick, s snare, h hat, o open hat, c crash/wash, t tom, m metal tick
-//   x        generator rhythm slot (gen blocks only)
 // Suffixes: ' octave up, , octave down, # / b semitone up/down
 // Flags:    ! accent, ? 50% chance, ?30 30% chance
 // Repeat:   T*n repeats token T n times ("-*15"), `|` is ignored (visual bar separator)
@@ -64,7 +63,13 @@ export function parseToken(t) {
   };
 }
 
-export const parseTokens = (tokens) => tokens.map(parseToken);
+// a note not held into the next step (a rest or another note follows) is short: string sounds with `mute` play it
+// palm-muted, while held notes ring open
+export const parseTokens = (tokens) => tokens.map((t, i) => {
+  const st = parseToken(t);
+  if (st.t === NOTE) st.short = tokens[(i + 1) % tokens.length] !== '-';
+  return st;
+});
 
 // Tokens -> readable pattern string, one bar per group, runs compressed as T*n.
 export function formatTokens(tokens, stepsPerBar = 16) {

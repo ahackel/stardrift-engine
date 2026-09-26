@@ -282,7 +282,7 @@ export class Engine {
     }
     const midis = this.resolve(tr, src, st.atoms);
     if (!midis.length) return;
-    this.synth.noteOn(tr.id, midis, vel);
+    this.synth.noteOn(tr.id, midis, vel, st.short && !isFollow);
     ts.sounding = st;
     if (!isFollow) this.emit({ type: 'note', track: tr.id, midi: midis[0] });
   }
