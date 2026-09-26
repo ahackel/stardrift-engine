@@ -3,7 +3,7 @@
 
 import { Rng } from './rng.js';
 import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES } from './theory.js';
-import { expandTokens, parseTokens, generateTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD } from './pattern.js';
+import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD } from './pattern.js';
 import { Synth } from './synth.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -428,7 +428,7 @@ export class Engine {
     ts.start = this.step;
     ts.loop = 0;
     const len = this.blockLen(b);
-    ts.base = b.gen ? generateTokens(b.gen, this.rng, len, b.mode || tr.mode) : b.theme ? this.themeFor(tr, b, len) : expandTokens(b.pattern, len);
+    ts.base = b.theme ? this.themeFor(tr, b, len) : expandTokens(b.pattern, len);
     ts.tokens = ts.base;
     ts.steps = parseTokens(ts.tokens);
     const h = (this.history[tr.id] ||= []);
@@ -459,8 +459,7 @@ export class Engine {
   onBlockLoop(tr, ts) {
     ts.loop++;
     const b = ts.block;
-    if (b.gen && this.rng.chance(b.gen.regen ?? 0.3)) ts.base = generateTokens(b.gen, this.rng, ts.base.length, b.mode || tr.mode);
-    else if (b.theme && this.rng.chance(0.5)) ts.base = this.themeFor(tr, b, ts.base.length);
+    if (b.theme && this.rng.chance(0.5)) ts.base = this.themeFor(tr, b, ts.base.length);
     const v = this.section.variation ?? this.song.variation;
     ts.tokens = (b.mutate ?? 1) > 0 && this.rng.chance(v) ? mutateTokens(ts.base, this.rng, tr.inst.type === 'drums', b.mutate ?? 1) : ts.base;
     ts.steps = parseTokens(ts.tokens);
@@ -732,8 +731,7 @@ export class Engine {
       const len = this.blockLen(b);
       ts.block = b;
       if (b.theme) { if (!ts.base || ts.base.length !== len || ts.theme !== (s.theme && `${s.theme.beats}:${s.theme.pattern}`)) ts.base = this.themeFor(tr, b, len); }
-      else if (!b.gen) ts.base = expandTokens(b.pattern, len);
-      else if (!ts.base || ts.base.length !== len) ts.base = generateTokens(b.gen, this.rng, len, b.mode || tr.mode);
+      else ts.base = expandTokens(b.pattern, len);
       ts.tokens = ts.base;
       ts.steps = parseTokens(ts.tokens);
     }

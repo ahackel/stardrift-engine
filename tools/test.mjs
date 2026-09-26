@@ -2,7 +2,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree } from '../src/engine/theory.js';
-import { starterSong, addTrack, removeTrack } from '../src/editor/library.js';
+import { starterSong, addTrack, removeTrack, songLike } from '../src/editor/library.js';
 
 const song = JSON.parse(readFileSync(new URL('../songs/deep-space.json', import.meta.url), 'utf8'));
 const SR = 44100;
@@ -66,7 +66,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 {
   const e = new Engine(SR, { ...song, breath: { every: 16, bars: [4, 4] } }, 3);
   let inBreath = null, after = null;
-  run(e, 240, () => {
+  run(e, 480, () => {
     for (const ev of e.drainEvents()) if (ev.type === 'state') {
       const active = Object.entries(ev.tracks).filter(([, t]) => t.active).map(([id]) => id);
       if (ev.section === 'breather') inBreath ||= active;
@@ -141,14 +141,18 @@ const readJson = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url
 const lib = readJson('../library/instruments.json');
 const toCheck = readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json')).map((f) => [f, readJson(`../songs/${f}`)]);
 toCheck.push(['starter song', starterSong(readJson('../library/starter-song.json'), lib, { name: 'test', key: 'E', scale: 'dorian', bpm: 110 })]);
-// quick start: a song made up in every style (compose.js)
-const { composeSong } = await import('../src/engine/compose.js');
+// styles: a new song like every example (library.js songLike)
 const { Rng: SeedRng } = await import('../src/engine/rng.js');
-const composeData = { styles: readJson('../library/styles.json'), lib, template: readJson('../library/starter-song.json') };
-for (const st of composeData.styles.styles) toCheck.push([`style ${st.id}`, composeSong(st, composeData, new SeedRng(11))]);
+const examples = readJson('../library/examples.json').examples;
+for (const ex of examples) {
+  const src = readJson(`../${ex.song}`);
+  toCheck.push([`like ${ex.id}`, songLike(src, lib, new SeedRng(11), { ex })]);
+  ok(Object.keys(ex.sounds || {}).every((id) => src.tracks.some((t) => t.id === id)) && Object.values(ex.sounds || {}).flat().every((id) => lib.instruments.some((e) => e.id === id)),
+    `example ${ex.id}: its sound lists name its tracks and library sounds`);
+}
 {
-  const st = composeData.styles.styles[0], a = composeSong(st, composeData, new SeedRng(5)), b = composeSong(st, composeData, new SeedRng(5));
-  ok(JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(composeSong(st, composeData, new SeedRng(6))), 'made-up songs: same seed, same song');
+  const ex = examples[0], src = readJson(`../${ex.song}`), a = songLike(src, lib, new SeedRng(5), { ex }), b = songLike(src, lib, new SeedRng(5), { ex });
+  ok(JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(songLike(src, lib, new SeedRng(6), { ex })), 'songs like an example: same seed, same song');
 }
 for (const [file, sg] of toCheck) {
   const e = new Engine(SR, sg, 3);
@@ -208,9 +212,8 @@ for (const [file, sg] of toCheck) {
       const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: (tr.poly || 1) > 1, mode: b.mode || tr.mode || 'chord' });
       for (const c of cands) {
         n++;
-        const toks = b.gen ? expandTokens(c.value.gen.rhythm) : expandTokens(c.value.pattern);
-        const len = b.gen ? expandTokens(b.gen.rhythm).length : Math.round((b.beats || 4) * spb);
-        if (toks.length !== len || toks.some((x) => x !== '.' && x !== '-' && !/^x/.test(x) && parseToken(x).t !== 2)) bad.push(`${b.id}/${c.kind}`);
+        const toks = expandTokens(c.value.pattern), len = Math.round((b.beats || 4) * spb);
+        if (toks.length !== len || toks.some((x) => x !== '.' && x !== '-' && parseToken(x).t !== 2)) bad.push(`${b.id}/${c.kind}`);
       }
     }
     for (const p of sg.progressions) for (const c of progressionVariations(p, new Rng(n++), SCALES[p.scale || sg.scale])) if (parseChords(c.value.chords).length < 1) bad.push(`${p.id}/${c.kind}`);
@@ -220,6 +223,15 @@ for (const [file, sg] of toCheck) {
   ok(n > 100 && !bad.length, `variations are valid song data (${n} candidates)${bad.length ? ` — bad: ${bad.slice(0, 5)}` : ''}`);
   const b = song.blocks.find((x) => x.id === 'bass_pulse'), ctx = { spb: 4, stepsPerBar: 16, drums: false, mode: 'chord' };
   ok(JSON.stringify(blockVariations(b, new Rng(3), ctx)) === JSON.stringify(blockVariations(b, new Rng(3), ctx)), 'same seed, same variations');
+}
+
+// 12. Older songs: generator blocks become plain patterns of the block's length, the same each time
+{
+  const { freezeGenerators } = await import('../src/engine/compose.js');
+  const { expandTokens } = await import('../src/engine/pattern.js');
+  const old = () => ({ ...structuredClone(song), blocks: [...structuredClone(song.blocks), { id: 'old_gen', track: 'lead', beats: 8, mode: 'scale', gen: { rhythm: 'x - . x . . x - x - - . . . . .', range: [0, 9], leap: 2 } }] });
+  const a = freezeGenerators(old()).blocks.at(-1), b = freezeGenerators(old()).blocks.at(-1);
+  ok(!a.gen && expandTokens(a.pattern).length === 32 && a.pattern === b.pattern, `generator blocks freeze into patterns (${a.pattern})`);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

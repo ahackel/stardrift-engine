@@ -124,7 +124,7 @@ class Voice {
     if (!legato) this.cur = midi;
     this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
     this.arp = arp; this.arpIdx = 0; this.arpT = 0;
-    if (p.type === 'string' && !legato) this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12));
+    if (p.type === 'string') this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12)); // every note is picked; glide still slides into it
   }
   // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass
   pluck(p, f) {

@@ -97,34 +97,6 @@ export function nearestTone(d, tones, n) {
   return best;
 }
 
-// Generator blocks: a rhythm ("x" = note slot) + a constrained random walk for pitch.
-// gen = { rhythm, range:[lo,hi], leap, chordBias, tones, start }
-export function generateTokens(gen, rng, length, mode = 'scale') {
-  const rhythm = expandTokens(gen.rhythm || 'x . . .');
-  const [lo, hi] = gen.range || [0, 7];
-  const leap = Math.max(0, gen.leap ?? 2);
-  const bias = mode === 'chord' ? 0 : gen.chordBias ?? 0.6;
-  const tones = gen.tones || [0, 2, 4];
-  const mid = (lo + hi) / 2;
-  let d = Math.round(Math.max(lo, Math.min(hi, gen.start ?? mid)));
-  const out = [];
-  for (let i = 0; i < length; i++) {
-    const r = rhythm.length ? rhythm[i % rhythm.length] : '.';
-    const m = /^x(.*)$/.exec(r);
-    if (!m) { out.push(r === '-' || r === '.' ? r : '.'); continue; }
-    let step = rng.int(-leap, leap);
-    if (d > mid + 2 && step > 0 && rng.chance(0.5)) step = -step;
-    if (d < mid - 2 && step < 0 && rng.chance(0.5)) step = -step;
-    d += step;
-    if (bias > 0 && rng.chance(bias)) d = nearestTone(d, tones, 7);
-    if (d > hi) d = hi - (d - hi);
-    if (d < lo) d = lo + (lo - d);
-    d = Math.max(lo, Math.min(hi, d));
-    out.push(String(d) + m[1]);
-  }
-  return out;
-}
-
 // Small, musical mutations applied when a block loops, so repeats are never identical.
 export function mutateTokens(tokens, rng, isDrum, amount = 1) {
   const out = tokens.slice();

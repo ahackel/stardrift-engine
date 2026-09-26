@@ -112,14 +112,13 @@
 
     { "id": "lead_theme",      "track": "lead", "beats": 16, "tags": ["calm", "drift", "wonder"], "intensity": [0.3, 0.85], "theme": true },
     { "id": "lead_theme_star", "track": "lead", "beats": 16, "tags": ["peak"], "intensity": [0.6, 1], "theme": ["whole", "sequence", "shift"] },
-    { "id": "lead_gen_hop",    "track": "lead", "beats": 8, "tags": ["drift", "calm"], "intensity": [0.3, 0.8], "mode": "scale", "gen": { "rhythm": "x . x x . x . . x . x . x x - .", "range": [0, 9], "leap": 2, "chordBias": 0.7, "regen": 0.35 } },
-    { "id": "lead_gen_star",   "track": "lead", "beats": 4, "tags": ["peak"], "intensity": [0.65, 1], "mode": "scale", "gen": { "rhythm": "x x . x x . x x x . x . x x x .", "range": [2, 11], "leap": 3, "chordBias": 0.6, "regen": 0.3 } },
+    { "id": "lead_theme_hop",  "track": "lead", "beats": 16, "tags": ["drift", "calm"], "intensity": [0.3, 0.8], "theme": ["head", "sequence", "slow"] },
     { "id": "lead_creep",      "track": "lead", "beats": 4, "tags": ["tension"], "tension": [0.5, 1], "mode": "scale", "pattern": "0 . 0# . 1 . . . 0 . 0# . 1 . . ." },
     { "id": "lead_castle",     "track": "lead", "beats": 4, "tags": ["tension", "peak"], "intensity": [0.6, 1], "tension": [0.5, 1], "mode": "scale", "pattern": "4 3# 4 3# 4 3# 4 3# 2 1# 2 1# 2 1# 2 1#" },
     { "id": "lead_climb",      "track": "lead", "beats": 4, "tags": ["build"], "pattern": "0 1 2 3 1 2 3 4 2 3 4 5 3 4 5 6" },
     { "id": "lead_fanfare",    "track": "lead", "beats": 4, "tags": ["release"], "pattern": "0 . 1 . 2 . 3 -*9" },
 
-    { "id": "twinkle_gen",     "track": "twinkle", "beats": 8, "tags": ["intro", "calm", "wonder", "release", "drift"], "intensity": [0, 0.6], "mode": "chord", "gen": { "rhythm": "x? .*7 x? .*3 x? . . . | .*4 x? .*11", "range": [2, 7], "leap": 2, "regen": 0.5 } },
+    { "id": "twinkle_scatter",     "track": "twinkle", "beats": 8, "tags": ["intro", "calm", "wonder", "release", "drift"], "intensity": [0, 0.6], "mode": "chord", "pattern": "5? .*7 5? .*3 7? .*3 | .*4 5? .*11" },
     { "id": "twinkle_theme",   "track": "twinkle", "beats": 16, "tags": ["calm", "wonder", "release"], "intensity": [0, 0.55], "theme": ["head", "slow", "answer"] },
     { "id": "twinkle_coins",   "track": "twinkle", "beats": 8, "tags": ["wonder", "calm"], "intensity": [0, 0.5], "pattern": "2 4 - - .*12 | .*8 3 5 - - .*4" },
     { "id": "twinkle_drip",    "track": "twinkle", "beats": 8, "tags": ["tension"], "tension": [0.4, 1], "mode": "scale", "pattern": "4 .*10 3 .*4 | .*16" },
