@@ -184,5 +184,34 @@ for (const [file, sg] of toCheck) {
   ok(Object.keys(sg.instruments).length === 3 && sg.tracks.length === 3, 'removing a track removes its blocks and unused instrument');
 }
 
+// 11. Variations (compose.js): every candidate is valid song data of the right length, and a seed repeats them
+{
+  const { Rng } = await import('../src/engine/rng.js');
+  const { blockVariations, progressionVariations, soundVariations, themeVariations } = await import('../src/engine/compose.js');
+  const { SCALES, parseChords } = await import('../src/engine/theory.js');
+  const { expandTokens, parseToken } = await import('../src/engine/pattern.js');
+  const bad = [];
+  let n = 0;
+  for (const [, sg] of toCheck) {
+    const spb = sg.stepsPerBeat || 4, ctx0 = { spb, stepsPerBar: spb * (sg.beatsPerBar || 4) };
+    for (const b of sg.blocks.filter((x) => !x.theme)) {
+      const tr = sg.tracks.find((x) => x.id === b.track), drums = sg.instruments[tr.instrument]?.type === 'drums';
+      const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: (tr.poly || 1) > 1, mode: b.mode || tr.mode || 'chord' });
+      for (const c of cands) {
+        n++;
+        const toks = b.gen ? expandTokens(c.value.gen.rhythm) : expandTokens(c.value.pattern);
+        const len = b.gen ? expandTokens(b.gen.rhythm).length : Math.round((b.beats || 4) * spb);
+        if (toks.length !== len || toks.some((x) => x !== '.' && x !== '-' && !/^x/.test(x) && parseToken(x).t !== 2)) bad.push(`${b.id}/${c.kind}`);
+      }
+    }
+    for (const p of sg.progressions) for (const c of progressionVariations(p, new Rng(n++), SCALES[p.scale || sg.scale])) if (parseChords(c.value.chords).length < 1) bad.push(`${p.id}/${c.kind}`);
+    for (const [name, s] of Object.entries(sg.instruments)) for (const c of soundVariations(s, new Rng(n++))) if (c.value.type !== s.type) bad.push(`${name}/${c.kind}`);
+    if (sg.theme) for (const c of themeVariations(sg.theme, new Rng(n++), ctx0)) if (expandTokens(c.value.pattern).length !== Math.round(sg.theme.beats * spb)) bad.push(`theme/${c.kind}`);
+  }
+  ok(n > 100 && !bad.length, `variations are valid song data (${n} candidates)${bad.length ? ` — bad: ${bad.slice(0, 5)}` : ''}`);
+  const b = song.blocks.find((x) => x.id === 'bass_pulse'), ctx = { spb: 4, stepsPerBar: 16, drums: false, mode: 'chord' };
+  ok(JSON.stringify(blockVariations(b, new Rng(3), ctx)) === JSON.stringify(blockVariations(b, new Rng(3), ctx)), 'same seed, same variations');
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);
