@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree } from '../src/engine/theory.js';
+import { starterSong, addTrack, removeTrack } from '../src/editor/library.js';
 
 const song = JSON.parse(readFileSync(new URL('../songs/deep-space.json', import.meta.url), 'utf8'));
 const SR = 44100;
@@ -135,9 +136,12 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   ok(onBeat > 10 && fits === onBeat, `theme notes on the beat are chord tones (${fits}/${onBeat})`);
 }
 
-// 9. Every song in songs/: healthy audio, each mood reached, each stinger plays, the theme comes back
-for (const file of readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json'))) {
-  const sg = JSON.parse(readFileSync(new URL(`../songs/${file}`, import.meta.url), 'utf8'));
+// 9. Every song in songs/ and the starter song: healthy audio, each mood reached, each stinger plays, the theme comes back
+const readJson = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
+const lib = readJson('../library/instruments.json');
+const toCheck = readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json')).map((f) => [f, readJson(`../songs/${f}`)]);
+toCheck.push(['starter song', starterSong(readJson('../library/starter-song.json'), lib, { name: 'test', key: 'E', scale: 'dorian', bpm: 110 })]);
+for (const [file, sg] of toCheck) {
   const e = new Engine(SR, sg, 3);
   const h = run(e, 90);
   const themed = [];
@@ -161,6 +165,23 @@ for (const file of readdirSync(new URL('../songs/', import.meta.url)).filter((f)
     return !notes;
   }).map((x) => x.id);
   ok(!silent.length, `${file}: every stinger plays (${(sg.stingers || []).length})${silent.length ? ` — silent: ${silent}` : ''}`);
+}
+
+// 10. Instrument library: every entry becomes a track that plays its starter block; removing it leaves a clean song
+{
+  const sg = starterSong(readJson('../library/starter-song.json'), lib);
+  const quiet = [];
+  for (const entry of lib.instruments) {
+    const tr = addTrack(sg, lib, entry);
+    const e = new Engine(SR, sg, 1);
+    e.lock(tr.id, sg.blocks.find((b) => b.track === tr.id).id);
+    let notes = 0;
+    run(e, 8, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note' && ev.track === tr.id) notes++; });
+    if (!notes) quiet.push(entry.id);
+    removeTrack(sg, tr.id);
+  }
+  ok(!quiet.length, `every library instrument plays as a new track (${lib.instruments.length})${quiet.length ? ` — silent: ${quiet}` : ''}`);
+  ok(Object.keys(sg.instruments).length === 3 && sg.tracks.length === 3, 'removing a track removes its blocks and unused instrument');
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
