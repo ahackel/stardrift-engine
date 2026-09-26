@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "dev": "node tools/serve.mjs",
-    "render": "node tools/render.mjs"
+    "render": "node tools/render.mjs",
+    "bench": "node tools/bench.mjs"
   }
 }

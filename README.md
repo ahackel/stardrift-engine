@@ -9,6 +9,7 @@ A procedural, block-based chiptune music engine for (space) games: atmospheric a
 npm run dev        # → http://localhost:8321  (no-cache static server; AudioWorklet needs http://, not file://)
 npm run render     # offline render + conductor log (node tools/render.mjs song secs seed out.wav --mood 30:tension --sting 45:discovery)
 node tools/test.mjs
+npm run bench      # CPU per song and mood, slowest audio blocks, voices (node tools/bench.mjs [songs] --sr 22050 --breakdown)
 ```
 
 `demo/stardrift-demo.mp3` is 2:40 rendered with mood changes: auto → *tension* at 0:40 → *action* at 1:15 → *relaxed* at 1:55.
