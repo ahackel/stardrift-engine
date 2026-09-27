@@ -106,12 +106,30 @@ export class StardriftPlayer {
     this.send({ type: 'preview', inst, events, options });
   }
 
+  // Live keyboard (editor): a note (midi, or a drum hit like 's') sounds until keyOff. While the song is paused the
+  // audio runs until a few seconds after the last key is let go.   options: { volume, vel }
+  async keyOn(inst, note, options) {
+    if (!this.ctx) return;
+    this.keysDown = (this.keysDown || 0) + 1;
+    await this.audition(600);
+    this.send({ type: 'keyOn', inst, note, options });
+  }
+  keyOff(note) {
+    this.send({ type: 'keyOff', note });
+    this.keysDown = Math.max(0, (this.keysDown || 0) - 1);
+    if (!this.keysDown) this.audition(4, { exact: true });
+  }
+
   // While the song is paused, let the audio run for `seconds` (the song stands still) so a preview can sound.
-  async audition(seconds) {
+  // A later request only ever extends the time, unless `exact` (the keyboard's last key let go).
+  async audition(seconds, { exact = false } = {}) {
     if (!this.ctx || this.playing) return;
     this.setHold(true);
     await this.ctx.resume().catch(() => {});
-    this.holdTimer = setTimeout(() => { if (this.holding) this.ctx?.suspend(); }, seconds * 1000);
+    const now = performance.now(), until = exact ? now + seconds * 1000 : Math.max(now + seconds * 1000, this.holdUntil || 0);
+    clearTimeout(this.holdTimer);
+    this.holdUntil = until;
+    this.holdTimer = setTimeout(() => { if (this.holding) this.ctx?.suspend(); }, until - now);
   }
 
   dispose() {

@@ -635,6 +635,7 @@ export class Synth {
     this.mutes = {}; this.solos = {};
     this.mood = [0.2, 0.1];
     this.pv = null; this.pvQ = []; this.pvI = 0; this.pvT = 0;
+    this.kb = null; this.kbJson = null; this.kbHeld = new Map(); this.kbT = 0;
     this.duck = null;
     this.kick = 0; this.kickT = 0; this.kickRel = 0.999; // sidechain envelope: jumps on every kick, recovers
     this.samples = {}; // the sample library, once loaded (Engine.setSamples)
@@ -687,6 +688,32 @@ export class Synth {
   allOff() { for (const b of this.list) b.allOff(); }
   releaseAll() { for (const b of this.list) b.release(); }
 
+  // Live keyboard (editor): a note sounds while its key is down, on a bus of its own like the preview.
+  // note: a midi number, or a drum hit ('k', 's' …) for a drum kit. The sound is compiled again only when it changed.
+  keyOn(def, note, { volume = 0.3, vel = 0.8 } = {}) {
+    const json = JSON.stringify(def);
+    if (json !== this.kbJson) {
+      const p = compileInst(def, this.sr, this.samples), isDrum = p.type === 'drums';
+      if (!this.kb || this.kb.isDrum !== isDrum) this.kb = new TrackBus(isDrum ? 6 : 8, isDrum);
+      this.kb.set({ volume, echo: 0.08, reverb: 0.25 }, p, this.sr);
+      this.kbJson = json;
+      this.kbHeld = new Map();
+    }
+    const kb = this.kb;
+    kb.setMood(this.mood[0], this.mood[1]);
+    kb.g = 1;
+    if (kb.isDrum) return void kb.drum([note], vel);
+    this.keyOff(note);
+    const v = kb.alloc();
+    v.start(kb.p, note, vel, null, false);
+    this.kbHeld.set(note, v);
+  }
+  keyOff(note) {
+    const v = this.kbHeld?.get(note);
+    if (v?.gate) v.release();
+    this.kbHeld?.delete(note);
+  }
+
   // Audition an instrument outside the song (editor). events: [{ t: seconds, notes: [midi] | hit: 'k', dur, vel }]
   // Plays on its own bus that ignores mute/solo, so it works with the song held or playing.
   preview(def, events, { poly = 1, volume = 0.3 } = {}) {
@@ -738,6 +765,13 @@ export class Synth {
       if ((++this.pvT & 4095) === 0 && this.pvI === this.pvQ.length && pv.idle()) this.pv = null;
       const x = pv.render();
       l += x; r += x; e += x * pv.echo; v += x * pv.rev;
+    }
+    const kb = this.kb;
+    if (kb) {
+      // idle and no key down: drop the bus so it costs nothing
+      if ((++this.kbT & 4095) === 0 && !this.kbHeld.size && kb.idle()) { this.kb = null; this.kbJson = null; }
+      const x = kb.render();
+      l += x; r += x; e += x * kb.echo; v += x * kb.rev;
     }
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;

@@ -176,6 +176,8 @@ export class Engine {
   }
 
   preview(inst, events, opts) { this.synth.preview(inst, events, opts); }
+  keyOn(inst, note, opts) { this.synth.keyOn(inst, note, opts); }
+  keyOff(note) { this.synth.keyOff(note); }
 
   process(outL, outR, n) {
     const syn = this.synth;
@@ -268,7 +270,7 @@ export class Engine {
     if (key === this.chordKey) return false;
     this.chord = chord;
     this.chordKey = key;
-    this.emit({ type: 'chord', label: chordLabel(this.song.keyRoot, this.scaleNow(), chord), scale: scaleName });
+    this.emit({ type: 'chord', label: chordLabel(this.song.keyRoot, this.scaleNow(), chord), scale: scaleName, degree: chord.degree, shape: chord.shapeName });
     return true;
   }
 

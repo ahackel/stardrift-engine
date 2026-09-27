@@ -36,6 +36,8 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'section': e.forceSection(m.id); break;
         case 'state': e.emitState(); break;
         case 'preview': e.preview(m.inst, m.events, m.options); break;
+        case 'keyOn': e.keyOn(m.inst, m.note, m.options); break;
+        case 'keyOff': e.keyOff(m.note); break;
       }
     } catch (err) {
       this.port.postMessage([{ type: 'error', text: String(err && err.message || err) }]);
