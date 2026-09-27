@@ -6,17 +6,21 @@ class StardriftProcessor extends AudioWorkletProcessor {
     super();
     this.engine = null;
     this.hold = false;
+    this.samples = null; // the sample library, once the main thread has loaded it
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
   onMessage(m) {
     try {
       if (m.type === 'load') {
-        if (!this.engine || m.restart) this.engine = new Engine(sampleRate, m.song, m.seed ?? 1);
-        else this.engine.setSong(m.song);
+        if (!this.engine || m.restart) {
+          this.engine = new Engine(sampleRate, m.song, m.seed ?? 1);
+          if (this.samples) this.engine.setSamples(this.samples);
+        } else this.engine.setSong(m.song);
         this.engine.setHold(this.hold);
         return;
       }
+      if (m.type === 'samples') { this.samples = m.samples; this.engine?.setSamples(m.samples); return; }
       if (m.type === 'hold') { this.hold = !!m.on; this.engine?.setHold(this.hold); return; }
       const e = this.engine;
       if (!e) return;

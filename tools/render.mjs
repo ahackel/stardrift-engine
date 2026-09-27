@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { encodeWav } from '../src/wav.js';
+import { diskSamples } from './load-samples.mjs';
 
 const args = process.argv.slice(2);
 const cues = []; // timed setMood / sting calls
@@ -17,6 +18,7 @@ const [songPath = 'songs/deep-space.json', secs = '120', seed = '1', out = ''] =
 const SR = 44100;
 const song = JSON.parse(readFileSync(songPath, 'utf8'));
 const engine = new Engine(SR, song, +seed);
+engine.setSamples(await diskSamples());
 const n = Math.round(+secs * SR);
 const L = new Float32Array(n), R = new Float32Array(n);
 const BLOCK = 128;

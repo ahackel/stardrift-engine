@@ -3,6 +3,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree } from '../src/engine/theory.js';
 import { starterSong, addTrack, removeTrack, songLike } from '../src/editor/library.js';
+import { diskSamples } from './load-samples.mjs';
+import { KITS } from '../src/engine/drums.js';
+
+const SAMPLES = await diskSamples();
+// an engine with the sample library loaded, as the player has it
+const newEngine = (sr, song, seed) => { const e = new Engine(sr, song, seed); e.setSamples(SAMPLES); return e; };
 
 const song = JSON.parse(readFileSync(new URL('../songs/deep-space.json', import.meta.url), 'utf8'));
 const SR = 44100;
@@ -25,18 +31,18 @@ function run(engine, secs, onBlock) { // onBlock(seconds, engine) before each 12
 }
 
 // 1. Determinism: same seed => identical note decisions (audio may differ only by random unison phases)
-const logOf = (seed) => { const e = new Engine(SR, song, seed); const out = []; run(e, 90, () => { for (const ev of e.drainEvents()) if (ev.type === 'log' || ev.type === 'note') out.push(ev.text || `${ev.track}:${ev.midi}`); }); return out.join('|'); };
+const logOf = (seed) => { const e = newEngine(SR, song, seed); const out = []; run(e, 90, () => { for (const ev of e.drainEvents()) if (ev.type === 'log' || ev.type === 'note') out.push(ev.text || `${ev.track}:${ev.midi}`); }); return out.join('|'); };
 ok(logOf(42) === logOf(42), 'same seed produces the same arrangement');
 ok(logOf(42) !== logOf(43), 'different seeds produce different arrangements');
 
 // 2. Audio health
-const h = run(new Engine(SR, song, 7), 120);
+const h = run(newEngine(SR, song, 7), 120);
 ok(h.bad === 0, `no NaN/Inf samples (${h.bad})`);
 ok(h.peak > 0.1 && h.peak < 1, `peak level sane (${h.peak.toFixed(3)})`);
 
 // 3. Mood routing: a mood request reaches a matching section quickly and smoothly (through bridges)
 for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed'], ['action', 'peak', 40, 'relaxed'], ['relaxed', 'calm|release', 40, 'action']]) {
-  const e = new Engine(SR, song, 11);
+  const e = newEngine(SR, song, 11);
   e.setMood(from);
   run(e, 60);
   e.drainEvents();
@@ -52,7 +58,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 
 // 4. Hot reload keeps the position
 {
-  const e = new Engine(SR, song, 5);
+  const e = newEngine(SR, song, 5);
   run(e, 20);
   const step = e.step, sec = e.section.id;
   const edited = JSON.parse(JSON.stringify(song));
@@ -64,7 +70,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 
 // 5. Breathers: the music thins out to the ambient tracks now and then, and comes back
 {
-  const e = new Engine(SR, { ...song, breath: { every: 16, bars: [4, 4] } }, 3);
+  const e = newEngine(SR, { ...song, breath: { every: 16, bars: [4, 4] } }, 3);
   let inBreath = null, after = null;
   run(e, 480, () => {
     for (const ev of e.drainEvents()) if (ev.type === 'state') {
@@ -79,7 +85,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 
 // 6. Lead-in: the chord change into a new section is prepared in the section's last beats
 {
-  const e = new Engine(SR, song, 5);
+  const e = newEngine(SR, song, 5);
   let changes = 0, prepared = 0, lastChordStep = -1;
   run(e, 120, () => {
     for (const ev of e.drainEvents()) {
@@ -92,7 +98,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 
 // 7. Stingers: start on the beat, borrow their tracks (with their own chord), duck the rest, then hand back
 {
-  const e = new Engine(SR, song, 9);
+  const e = newEngine(SR, song, 9);
   run(e, 20);
   e.sting('jump');
   let start = null, end = null, duck = null;
@@ -107,7 +113,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   ok(start !== null && (start - 1) % e.song.spb < 2 && end - start >= len - 2 && end - start <= len + 2, `stinger starts on a beat and lasts its length (${start}…${end})`);
   ok(notes.has('arp') && notes.has('drums') && duck < 1, `stinger plays its parts and ducks the rest (pad ×${duck})`);
   ok(e.curSting === null && e.synth.duck === null, 'stinger ends and the music comes back up');
-  const held = new Engine(SR, song, 2);
+  const held = newEngine(SR, song, 2);
   held.setHold(true);
   held.sting('reward');
   let heard = 0;
@@ -117,7 +123,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 
 // 8. Theme: theme blocks restate the song theme in varied forms, notes on the beat fit the chord
 {
-  const e = new Engine(SR, song, 4);
+  const e = newEngine(SR, song, 4);
   const forms = new Set();
   let onBeat = 0, fits = 0;
   const noteOn = e.synth.noteOn.bind(e.synth);
@@ -155,7 +161,7 @@ for (const ex of examples) {
   ok(JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(songLike(src, lib, new SeedRng(6), { ex })), 'songs like an example: same seed, same song');
 }
 for (const [file, sg] of toCheck) {
-  const e = new Engine(SR, sg, 3);
+  const e = newEngine(SR, sg, 3);
   const h = run(e, 90);
   const themed = [];
   const ids = new Set(sg.blocks.map((b) => b.id));
@@ -186,7 +192,7 @@ for (const [file, sg] of toCheck) {
   const quiet = [];
   for (const entry of lib.instruments) {
     const tr = addTrack(sg, lib, entry);
-    const e = new Engine(SR, sg, 1);
+    const e = newEngine(SR, sg, 1);
     e.lock(tr.id, sg.blocks.find((b) => b.track === tr.id).id);
     let notes = 0;
     run(e, 8, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note' && ev.track === tr.id) notes++; });
@@ -265,6 +271,46 @@ for (const [file, sg] of toCheck) {
   const sources = [['fm', { type: 'fm', fm: { ratio: 1, index: 5, env: 1, feedback: 0.3 }, unison: 3, detune: 8, env: { a: 0.05, d: 0.4, s: 0.8, r: 0.3 } }], ['warm', { ...e.sound, wave: 'warm' }]];
   const badSrc = sources.filter(([, s]) => { const r = renderPhrase(phrase, s, e.track, { raw: true }); return !(r.rms > 0.003) || ![...r.left].every(Number.isFinite); }).map(([n]) => n);
   ok(!badSrc.length, `fm and warm sources sound and stay finite${badSrc.length ? ` — ${badSrc}` : ''}`);
+}
+
+// 15. Recorded sounds and the bowed string: samples play at the note's pitch, drum hits play their recording (and
+// fall back to synthesis without the library), the bowed string holds its pitch across the cello range
+{
+  const { Synth } = await import('../src/engine/synth.js');
+  const note = (inst, midi, samples = SAMPLES, secs = 1.2) => {
+    const s = new Synth(SR); s.samples = samples;
+    s.configure({ bpm: 120, tracks: [{ id: 'x', poly: 1, volume: 1, inst }], fx: { echo: { beats: 1, feedback: 0, damp: 0, level: 0 }, reverb: { size: 0.5, damp: 0.5, level: 0 }, echoToReverb: 0 }, master: { gain: 1 } });
+    s.tracks.x.g = 1;
+    if (inst.type === 'drums') s.drum('x', [midi], 0.8); else s.noteOn('x', [midi], 0.8);
+    const out = new Float64Array(Math.round(secs * SR));
+    for (let i = 0; i < out.length; i++) out[i] = s.tracks.x.render();
+    return out;
+  };
+  // pitch deviation in semitones: the best autocorrelation lag within half an octave of the note's period
+  const pitchOf = (x, midi) => {
+    const T = SR / (440 * 2 ** ((midi - 69) / 12)), N = 4096, st = 24000;
+    let best = -1, bl = 0;
+    for (let lag = Math.floor(T / 1.41); lag <= Math.ceil(T * 1.41); lag++) {
+      let s = 0, e1 = 0, e2 = 0;
+      for (let i = 0; i < N; i++) { s += x[st + i] * x[st + i + lag]; e1 += x[st + i] ** 2; e2 += x[st + i + lag] ** 2; }
+      const r = s / Math.sqrt(e1 * e2 + 1e-20);
+      if (r > best) { best = r; bl = lag; }
+    }
+    return 12 * Math.log2(T / bl);
+  };
+  const off = [];
+  for (const [name, inst] of [['cello', { type: 'sample', sample: 'cello', env: { a: 0.01, d: 0.1, s: 1, r: 0.3 } }], ['trombone', { type: 'sample', sample: 'trombone', env: { a: 0.01, d: 0.1, s: 1, r: 0.3 } }],
+    ['bowed', { type: 'bowed', env: { a: 0.08, d: 0.3, s: 0.9, r: 0.2 }, cutoff: 12000 }]]) {
+    for (const midi of name === 'trombone' ? [46, 53, 60, 65] : [36, 43, 50, 57, 64]) {
+      const d = pitchOf(note(inst, midi), midi);
+      if (!(Math.abs(d) < 0.3)) off.push(`${name} ${midi}: ${d.toFixed(2)}`);
+    }
+  }
+  ok(!off.length, `recorded notes and the bowed string play in tune${off.length ? ` — ${off}` : ''}`);
+  const crash = { type: 'drums', kit: { c: { ...KITS.rock.c, sample: 'crash' } }, preset: 'rock' };
+  const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
+  const rec = note(crash, 'c'), synth = note(crash, 'c', {});
+  ok(rms(rec) > 0.001 && rms(synth) > 0.001 && Math.abs(rms(rec) - rms(synth)) > 1e-4, 'drum hits play their recording, and synthesize without the library');
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

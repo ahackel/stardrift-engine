@@ -64,6 +64,14 @@ export class Engine {
     this.setSong(song || this.song.raw);
   }
 
+  // The sample library (src/samples.js: { name: [zones] }) for sample sounds and drum hits; they are silent (or
+  // synthesized) until it arrives, so a host can load it in the background.
+  setSamples(samples) {
+    this.synth.samples = samples || {};
+    this.synth.configure(this.song);
+    this.synth.setMood(this.intensity, this.tension);
+  }
+
   // Hot-swap the song (editor edits) without losing the musical position.
   setSong(raw) {
     this.song = prepareSong(raw);

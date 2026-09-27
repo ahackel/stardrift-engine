@@ -5,6 +5,9 @@
 // ("cold"); an ahead-of-time build (Unity IL2CPP) doesn't have that. Run it on the machine you care about.
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
+import { diskSamples } from './load-samples.mjs';
+
+const SAMPLES = await diskSamples();
 
 const args = process.argv.slice(2);
 const opt = { sr: 48000, secs: 60, warm: 30, block: 128, breakdown: false };
@@ -26,6 +29,7 @@ const MOOD_PARAMS = { relaxed: { intensity: 0.25, tension: 0.1 }, action: { inte
 function run(song, mood, patch) {
   const t0 = performance.now();
   const e = new Engine(sr, song, 7);
+  e.setSamples(SAMPLES);
   const load = performance.now() - t0;
   if (song.moods?.[mood]) e.setMood(mood, { within: 0 });
   else e.setMood(MOOD_PARAMS[mood], { within: 0 });

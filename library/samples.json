@@ -1,0 +1,130 @@
+{
+  "about": "Recorded sounds for the sample sound type and drum kits. Each entry is a list of zones: a mono 16-bit WAV, its root (midi, measured) and, for sustained notes, a loop [start, end] in samples. Built by tools/samples.mjs.",
+  "license": "CC0 1.0 (public domain) recordings by Versilian Studios: VSCO 2 Community Edition and the Versilian Community Sample Library (VCSL).",
+  "samples": {
+    "cello": [
+      {
+        "file": "samples/cello-36.wav",
+        "root": 36.01,
+        "loop": [
+          57720,
+          140856
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/susvib/susvib_C1_v1_1.wav"
+      },
+      {
+        "file": "samples/cello-43.wav",
+        "root": 42.98,
+        "loop": [
+          57755,
+          140838
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/susvib/susvib_G1_v1_1.wav"
+      },
+      {
+        "file": "samples/cello-50.wav",
+        "root": 49.99,
+        "loop": [
+          57623,
+          140807
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/susvib/susvib_D2_v1_1.wav"
+      },
+      {
+        "file": "samples/cello-57.wav",
+        "root": 56.94,
+        "loop": [
+          57656,
+          140801
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/susvib/susvib_A2_v1_1.wav"
+      },
+      {
+        "file": "samples/cello-64.wav",
+        "root": 64.01,
+        "loop": [
+          57621,
+          140833
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/susvib/susvib_E3_v1_1.wav"
+      }
+    ],
+    "trombone": [
+      {
+        "file": "samples/trombone-46.wav",
+        "root": 45.97,
+        "loop": [
+          57630,
+          140862
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Brass/Tenor Trombone/sus/tenortbn_sus_A#1_v2_1.wav"
+      },
+      {
+        "file": "samples/trombone-50.wav",
+        "root": 49.99,
+        "loop": [
+          57613,
+          140810
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Brass/Tenor Trombone/sus/tenortbn_sus_D2_v2_1.wav"
+      },
+      {
+        "file": "samples/trombone-53.wav",
+        "root": 53.02,
+        "loop": [
+          57637,
+          140840
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Brass/Tenor Trombone/sus/tenortbn_sus_F2_v2_1.wav"
+      },
+      {
+        "file": "samples/trombone-61.wav",
+        "root": 61.07,
+        "loop": [
+          57614,
+          140800
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Brass/Tenor Trombone/sus/tenortbn_sus_C#3_v2_1.wav"
+      },
+      {
+        "file": "samples/trombone-65.wav",
+        "root": 64.93,
+        "loop": [
+          57631,
+          140832
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Brass/Tenor Trombone/sus/tenortbn_sus_F3_v2_1.wav"
+      }
+    ],
+    "hat_closed": [
+      {
+        "file": "samples/hat_closed.wav",
+        "source": "https://github.com/sgossner/VCSL/blob/master/Idiophones/Struck Idiophones/Hi-Hat Cymbal/HiHat_HitC_v3_rr1_Mid.wav"
+      }
+    ],
+    "hat_open": [
+      {
+        "file": "samples/hat_open.wav",
+        "source": "https://github.com/sgossner/VCSL/blob/master/Idiophones/Struck Idiophones/Hi-Hat Cymbal/HiHat_HitO_rr1_Mid.wav"
+      }
+    ],
+    "crash": [
+      {
+        "file": "samples/crash.wav",
+        "source": "https://github.com/sgossner/VCSL/blob/master/Idiophones/Struck Idiophones/Suspended Cymbal 1/susCymb1_hit_stick_f1.wav"
+      }
+    ],
+    "clash": [
+      {
+        "file": "samples/clash.wav",
+        "source": "https://github.com/sgossner/VCSL/blob/master/Idiophones/Struck Idiophones/Clash Cymbals 1/cymbal_crash1_mf1.wav"
+      }
+    ],
+    "cymbal_swell": [
+      {
+        "file": "samples/cymbal_swell.wav",
+        "source": "https://github.com/sgossner/VCSL/blob/master/Idiophones/Struck Idiophones/Suspended Cymbal 1/susCymb1_cresc_2s.wav"
+      }
+    ]
+  }
+}

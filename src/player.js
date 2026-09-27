@@ -1,7 +1,9 @@
+import { fetchSamples } from './samples.js';
+
 // Main-thread API. This is what a (web) game uses:
 //
 //   const music = new StardriftPlayer();
-//   await music.init();                       // must follow a user gesture
+//   await music.init();                       // must follow a user gesture (init({ library: url }) if library/ is elsewhere)
 //   await music.loadUrl('songs/deep-space.json');
 //   music.play();
 //   music.setMood('relaxed');                 // or 'tension', 'danger', 'wonder', 'auto', {intensity, tension}
@@ -18,7 +20,7 @@ export class StardriftPlayer {
     this.holding = false; // editor preview while "paused": the song stands still, previews sound
   }
 
-  async init() {
+  async init({ library } = {}) {
     if (this.ctx) return;
     // Default latency on purpose: latencyHint 'playback' makes WebKit request a buffer size
     // some macOS devices refuse ("InvalidStateError: Failed to start the audio device").
@@ -40,6 +42,11 @@ export class StardriftPlayer {
     };
     this.send({ type: 'hold', on: this.holding });
     if (this.song) this.send({ type: 'load', song: this.song, seed: this.seed, restart: true });
+    // recorded sounds load in the background: sample sounds join when they arrive, cymbals are synthesized until then
+    this.samples = fetchSamples(library).then((samples) => {
+      const buffers = Object.values(samples).flat().map((z) => z.data.buffer);
+      this.node?.port.postMessage({ type: 'samples', samples }, buffers);
+    }).catch((err) => this.emit('error', { type: 'error', text: `could not load the sample library: ${err.message}` }));
   }
 
   on(type, fn) { (this.listeners[type] ||= []).push(fn); return () => this.off(type, fn); }

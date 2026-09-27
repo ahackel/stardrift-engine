@@ -111,8 +111,19 @@ export const AMPS = {
 export const BODIES = {
   // a violin: the air in the box near 280 Hz, the wood around 470 Hz, the "bridge hill" near 2.8 kHz, little above 5 kHz
   violin: [['hp', 180], ['peak', 280, 3, 6], ['peak', 470, 3, 5], ['peak', 1300, 1, -4], ['peak', 2800, 1.2, 6], ['lp', 5500, 0.8]],
-  // a cello: the same shape, lower
-  cello: [['hp', 60], ['peak', 110, 3, 6], ['peak', 220, 3, 5], ['peak', 700, 1, -3], ['peak', 1800, 1.2, 4], ['lp', 3500, 0.8]],
+  // a cello: the air in the box near 126 Hz, then the wood's many sharp resonances, alternately up and down, from 250 Hz
+  // to 3.5 kHz. The vibrato moves each overtone across them, so it swells and fades the way a real cello's do
+  // (a few dB) instead of keeping a synth's steady colour.
+  cello: [['hp', 80, 0.7], ['peak', 126, 4, 6],
+    ['peak', 250, 48, 5.8], ['peak', 263, 45, -6.9], ['peak', 276, 45, 7.9], ['peak', 291, 44, -7.4], ['peak', 307, 35, 6.2], ['peak', 319, 44, -4.7], ['peak', 333, 39, 8.7], ['peak', 350, 32, -6.8],
+    ['peak', 367, 44, 7.4], ['peak', 379, 48, -8.6], ['peak', 393, 37, 8.3], ['peak', 410, 33, -5.8], ['peak', 430, 36, 8.7], ['peak', 452, 45, -8.5], ['peak', 464, 35, 7], ['peak', 492, 38, -5.4],
+    ['peak', 522, 31, 6.1], ['peak', 534, 43, -8.7], ['peak', 562, 33, 6.3], ['peak', 582, 37, -6.4], ['peak', 610, 41, 7.3], ['peak', 635, 48, -6.6], ['peak', 678, 43, 7.4], ['peak', 700, 40, -7.6],
+    ['peak', 743, 38, 7.7], ['peak', 757, 42, -6.1], ['peak', 794, 38, 8.1], ['peak', 845, 32, -8.2], ['peak', 859, 38, 5.2], ['peak', 898, 50, -5.5], ['peak', 956, 33, 6.6], ['peak', 998, 33, -8.6],
+    ['peak', 1054, 48, 8.5], ['peak', 1102, 45, -5.7], ['peak', 1116, 35, 4.8], ['peak', 1166, 42, -5.5], ['peak', 1250, 40, 7.6], ['peak', 1283, 48, -5.6], ['peak', 1348, 48, 5], ['peak', 1414, 30, -8.6],
+    ['peak', 1485, 48, 4.6], ['peak', 1566, 34, -8.9], ['peak', 1618, 44, 5.7], ['peak', 1670, 34, -7], ['peak', 1735, 45, 7.7], ['peak', 1855, 40, -4.6], ['peak', 1898, 48, 5.1], ['peak', 2024, 48, -4.7],
+    ['peak', 2130, 47, 9], ['peak', 2231, 45, -6.4], ['peak', 2274, 45, 8.5], ['peak', 2389, 35, -6.3], ['peak', 2540, 41, 6.1], ['peak', 2629, 45, -6], ['peak', 2758, 38, 5.4], ['peak', 2840, 50, -9],
+    ['peak', 3001, 47, 8.6], ['peak', 3089, 43, -5.1], ['peak', 3262, 41, 8], ['peak', 3463, 40, -5.3],
+    ['lp', 4500, 0.7]],
   // a string section: violins to basses together, their peaks smeared
   strings: [['peak', 300, 1.2, 4], ['peak', 1200, 1, -3], ['peak', 2600, 1, 4], ['lp', 6000, 0.7]],
   // a french horn: the bell faces away from you, full around 180 Hz, warm around 400 Hz, dark above 2 kHz
@@ -147,13 +158,15 @@ function compileBody(spec, sr) {
   return { c, gain: 1 / Math.sqrt(pw / 24) };
 }
 
-const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'drums'];
+const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
+const WG_BUF = 4096, WG_MASK = WG_BUF - 1; // waveguides of the bowed string
 
-export function compileInst(def = {}, sr) {
+// samples: the loaded sample library (see src/samples.js), { name: [zones] }; a sound of type sample plays def.sample
+export function compileInst(def = {}, sr, samples = {}) {
   const env = def.env || {};
   const a = Math.max(0.001, env.a ?? 0.01), d = Math.max(0.001, env.d ?? 0.2), r = Math.max(0.001, env.r ?? 0.2);
-  const U = def.type === 'string' ? 1 : Math.max(1, Math.min(4, def.unison | 0 || 1));
+  const U = ['string', 'sample'].includes(def.type) ? 1 : Math.max(1, Math.min(4, def.unison | 0 || 1));
   const amp = AMPS[def.amp], bias = amp?.bias || 0;
   const driveG = def.drive > 0 ? 1 + Math.min(2, def.drive) * 24 : amp ? 1 : 0; // 1 = crunch, 2 = high gain
   const detuneMul = new Float64Array(U);
@@ -194,7 +207,12 @@ export function compileInst(def = {}, sr) {
     // string: T60 decay in seconds and brightness 0..1 (how much of the high end the loop keeps and the pluck has)
     sDecay: Math.max(0.05, def.string?.decay ?? 2), sBright: Math.max(0, Math.min(1, def.string?.bright ?? 0.5)),
     sMute: Math.max(0, Math.min(1, def.string?.mute || 0)), // palm mute: how damped and dull short notes are
-    kit: def.type === 'drums' ? compileKit(def, sr) : null,
+    // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
+    bowSlope: 5 - 4 * Math.max(0, Math.min(1, def.bow?.pressure ?? 0.8)), bowBeta: 0.04 + 0.2 * Math.max(0, Math.min(1, def.bow?.position ?? 0.4)),
+    stringPole: 0.75 - (0.2 * 22050) / sr,
+    // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
+    zones: def.type === 'sample' ? samples[def.sample] || [] : null,
+    kit: def.type === 'drums' ? compileKit(def, sr, samples) : null,
   };
 }
 
@@ -202,6 +220,35 @@ function blep(t, dt) {
   if (t < dt) { t /= dt; return t + t - t * t - 1; }
   if (t > 1 - dt) { t = (t - 1) / dt; return t * t + t + t + 1; }
   return 0;
+}
+
+// One bowed string (after STK's Bowed): the bow splits the string into a neck part and a bridge part (two delay
+// lines). Where the bow touches, it sticks while the string moves with it and slips when the difference grows:
+// the bow table. The loop is two samples shorter than the period for the delay of the bridge filter. Pressure 0.8 at position
+// 0.4 (the defaults) keeps the string in its normal motion from G1 to E5; much lighter or heavier bowing can make it
+// jump an octave.
+class BowedString {
+  constructor() { this.a = new Float32Array(WG_BUF); this.b = new Float32Array(WG_BUF); this.i = 0; this.w1 = 0; }
+  // a read from a delay line d samples back (linear interpolation)
+  tap(buf, d) {
+    const r = this.i - d, i = Math.floor(r), fr = r - i;
+    return buf[i & WG_MASK] + (buf[(i + 1) & WG_MASK] - buf[i & WG_MASK]) * fr;
+  }
+  // one sample at frequency f with the bow moving at speed v; returns the bridge's motion
+  tick(p, f, v) {
+    const a = p.stringPole, base = Math.max(4, p.sr / f - 2), bridgeLen = base * p.bowBeta, neckLen = base - bridgeLen;
+    const bridgeOut = this.tap(this.b, bridgeLen), neckOut = this.tap(this.a, neckLen);
+    this.w1 = (1 - a) * 0.95 * bridgeOut + a * this.w1; // string losses at the bridge (one pole)
+    const bridgeRefl = -this.w1, nutRefl = -neckOut, stringVel = bridgeRefl + nutRefl;
+    const velDiff = v - stringVel;
+    let k = Math.pow(Math.abs(velDiff * p.bowSlope) + 0.75, -4);
+    if (k > 1) k = 1;
+    const newVel = velDiff * k;
+    this.a[this.i & WG_MASK] = bridgeRefl + newVel;
+    this.b[this.i & WG_MASK] = nutRefl + newVel;
+    this.i++;
+    return bridgeOut;
+  }
 }
 
 class Voice {
@@ -216,6 +263,7 @@ class Voice {
     this.rnd = Array.from({ length: 4 }, () => [0.13 + Math.random() * 0.25, 4.8 + Math.random() * 1.4, Math.random() * TWO_PI]);
     this.ens = new Float64Array(4).fill(1); this.ensT = 0;
     this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
+    this.bows = []; // bowed: a string per player
   }
   start(p, midi, vel, arp, short = false) {
     const legato = this.stage !== IDLE && p.glideCoef > 0;
@@ -224,6 +272,11 @@ class Voice {
     this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
     this.arp = arp; this.arpIdx = 0; this.arpT = 0;
     if (p.type === 'string') this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12), short ? p.sMute : 0); // every note is picked; glide still slides into it
+    if (p.type === 'bowed') while (this.bows.length < p.U) this.bows.push(new BowedString());
+    if (p.type === 'sample' && !legato) {
+      this.zone = null; this.spos = 0;
+      for (const z of p.zones) if (!this.zone || Math.abs(z.root - midi) < Math.abs(this.zone.root - midi)) this.zone = z;
+    }
   }
   // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass.
   // mute 0..1: a palm-muted note, much duller and dying within a few hundredths of a second (through a driven amp,
@@ -287,11 +340,30 @@ class Voice {
     const f = 440 * Math.pow(2, (m - 69) / 12);
     const sr = p.sr;
     let out = 0;
+    if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
+    // bowed: the envelope is the bow's speed, so a note swells like a bow stroke; with unison a section of players,
+    // and with ensemble each player's pitch wanders and their vibrato is never quite even
+    if (p.type === 'bowed') {
+      if (this.bows.length < p.U) return 0; // the sound became bowed while this voice was sounding
+      const v = (0.03 + 0.2 * this.vel) * lv;
+      for (let u = 0; u < p.U; u++) out += this.bows[u].tick(p, f * p.detuneMul[u] * this.ens[u], v);
+      return out * p.uniNorm * this.vel;
+    }
+    if (p.type === 'sample') {
+      // the recording, resampled to the note (glide and vibrato too); sustained notes loop, others end
+      const z = this.zone;
+      if (!z) return 0;
+      const d = z.data, i = this.spos | 0, fr = this.spos - i, j = z.loopEnd && i + 1 >= z.loopEnd ? z.loopStart : i + 1;
+      const y = d[i] + ((d[j] || 0) - d[i]) * fr;
+      this.spos += Math.pow(2, (m - z.root) / 12) * z.rate * p.invSr;
+      if (z.loopEnd) { if (this.spos >= z.loopEnd) this.spos -= z.loopEnd - z.loopStart; }
+      else if (this.spos >= d.length - 1) { this.stage = IDLE; this.level = 0; }
+      return (y + (p.noise ? p.noise * (Math.random() * 2 - 1) : 0)) * lv * this.vel * 5; // recordings sit at -16 dB: about as loud as a saw
+    }
     if (p.type === 'string') {
       if (!this.kb) this.pluck(p, f); // the sound became a string while this voice was sounding
       return (this.string(p, f) + (p.noise ? p.noise * (Math.random() * 2 - 1) : 0)) * lv * this.vel * 3.5;
     }
-    if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
     if (p.type === 'fm') {
       const I = p.fmIndex * (1 - p.fmEnv + p.fmEnv * lv) * (0.5 + 0.5 * this.vel);
       for (let u = 0; u < p.U; u++) {
@@ -565,11 +637,12 @@ export class Synth {
     this.pv = null; this.pvQ = []; this.pvI = 0; this.pvT = 0;
     this.duck = null;
     this.kick = 0; this.kickT = 0; this.kickRel = 0.999; // sidechain envelope: jumps on every kick, recovers
+    this.samples = {}; // the sample library, once loaded (Engine.setSamples)
   }
   configure(song) {
     const next = {};
     for (const tr of song.tracks) {
-      const p = compileInst(tr.inst, this.sr);
+      const p = compileInst(tr.inst, this.sr, this.samples);
       const isDrum = p.type === 'drums';
       const poly = isDrum ? 6 : Math.max(1, Math.min(16, tr.poly || 1));
       let bus = this.tracks[tr.id];
@@ -617,7 +690,7 @@ export class Synth {
   // Audition an instrument outside the song (editor). events: [{ t: seconds, notes: [midi] | hit: 'k', dur, vel }]
   // Plays on its own bus that ignores mute/solo, so it works with the song held or playing.
   preview(def, events, { poly = 1, volume = 0.3 } = {}) {
-    const p = compileInst(def, this.sr);
+    const p = compileInst(def, this.sr, this.samples);
     const isDrum = p.type === 'drums';
     const voices = isDrum ? 6 : Math.max(1, Math.min(16, poly));
     if (!this.pv || this.pv.isDrum !== isDrum || this.pv.voices.length !== voices) this.pv = new TrackBus(voices, isDrum);

@@ -3,6 +3,8 @@
 //   noise  – white or LFSR noise through a state-variable filter (snare wires, hats, wash)
 //   metal  – six detuned squares at TR-808 ratios through a filter (hats, cymbals, ticks), band-limited
 //   click  – a very short noise transient (beater attack)
+//   sample – a recording from the sample library (cymbals); when it is loaded the hit plays only the recording,
+//            without it the hit falls back to its synthesized parts
 //   drive  – soft saturation for punch
 // All times are exponential time constants in seconds, frequencies in Hz.
 // Simple per-hit knobs on top of that (all multipliers, default 1): pitch, decay, level.
@@ -39,8 +41,8 @@ export const KITS = {
     k: { tones: [{ amp: 0.85, f0: 112, f1: 100, sweep: 0.08, decay: 0.7 }, { amp: 0.3, f0: 168, f1: 152, sweep: 0.08, decay: 0.45 }], noise: { amp: 0.08, decay: 0.02, filter: 'lp', freq: 1500 }, click: 0.1, len: 2.5 },
     s: { tones: [{ amp: 0.22, f0: 240, f1: 205, sweep: 0.01, decay: 0.04 }], noise: { amp: 0.7, decay: 0.15, filter: 'bp', freq: 3600, q: 0.5 }, click: 0.08, len: 0.8 },
     h: { noise: { amp: 0.22, decay: 0.035, attack: 0.008, filter: 'bp', freq: 6500, q: 0.8 }, len: 0.2 },
-    o: { metal: { amp: 0.35, decay: 0.7, filter: 'hp', freq: 5000 }, noise: { amp: 0.1, decay: 0.3, attack: 0.04, filter: 'hp', freq: 4000 }, len: 2.5 },
-    c: { metal: { amp: 0.35, decay: 1.4, filter: 'hp', freq: 3500 }, noise: { amp: 0.15, decay: 0.5, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
+    o: { sample: 'cymbal_swell', level: 0.85, metal: { amp: 6.5, decay: 0.7, filter: 'hp', freq: 5000 }, noise: { amp: 1.86, decay: 0.3, attack: 0.04, filter: 'hp', freq: 4000 }, len: 2.5 },
+    c: { sample: 'clash', level: 3.8, metal: { amp: 0.64, decay: 1.4, filter: 'hp', freq: 3500 }, noise: { amp: 0.28, decay: 0.5, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
     t: { tones: [{ amp: 0.9, f0: 74, f1: 66, sweep: 0.1, decay: 0.8 }, { amp: 0.25, f0: 111, f1: 100, sweep: 0.1, decay: 0.5 }], noise: { amp: 0.12, decay: 0.04, filter: 'lp', freq: 900 }, len: 2.5 },
     m: { tones: [{ amp: 0.5, f0: 1250, f1: 1180, sweep: 0.004, decay: 0.03 }], click: 0.2, len: 0.15 },
   },
@@ -51,9 +53,9 @@ export const KITS = {
       tones: [{ amp: 0.5, f0: 200, f1: 180, sweep: 0.015, decay: 0.07 }, { amp: 0.25, f0: 320, f1: 300, sweep: 0.01, decay: 0.05 }],
       noise: { amp: 0.95, decay: 0.16, filter: 'bp', freq: 2200, q: 0.45 }, click: 0.15, drive: 1.8, len: 0.8,
     },
-    h: { metal: { amp: 0.7, decay: 0.04, filter: 'hp', freq: 7000 }, noise: { amp: 0.15, decay: 0.03, filter: 'hp', freq: 8000 }, len: 0.3 },
-    o: { metal: { amp: 0.6, decay: 0.35, filter: 'hp', freq: 6500 }, noise: { amp: 0.12, decay: 0.12, filter: 'hp', freq: 8000 }, len: 1.5 },
-    c: { metal: { amp: 0.4, decay: 1.3, filter: 'hp', freq: 4000 }, noise: { amp: 0.15, decay: 0.35, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
+    h: { sample: 'hat_closed', level: 1.16, metal: { amp: 13, decay: 0.04, filter: 'hp', freq: 7000 }, noise: { amp: 2.8, decay: 0.03, filter: 'hp', freq: 8000 }, len: 0.3 },
+    o: { sample: 'hat_open', level: 0.73, metal: { amp: 6.7, decay: 0.35, filter: 'hp', freq: 6500 }, noise: { amp: 1.35, decay: 0.12, filter: 'hp', freq: 8000 }, len: 1.5 },
+    c: { sample: 'crash', level: 2.67, metal: { amp: 0.63, decay: 1.3, filter: 'hp', freq: 4000 }, noise: { amp: 0.24, decay: 0.35, attack: 0.002, filter: 'hp', freq: 3000 }, len: 5 },
     t: { tones: [{ amp: 0.8, f0: 150, f1: 90, sweep: 0.06, decay: 0.22 }], noise: { amp: 0.12, decay: 0.03, filter: 'bp', freq: 1000, q: 0.8 }, click: 0.15, drive: 1.6, len: 1 },
     m: { metal: { amp: 0.6, decay: 0.5, filter: 'bp', freq: 3000, q: 1.2, tune: 1.3 }, len: 1.2 },
   },
@@ -81,7 +83,7 @@ function filterSpec(type, freq, q, sr) {
 
 // instrument def: { type: 'drums', kit: 'clean' | 'chip' | { s: {...override}, ... }, preset: 'clean' }
 // e.g. { type: 'drums', preset: 'clean', kit: { s: { pitch: 1.1, decay: 0.8 }, h: { level: 0.7 } } }
-export function compileKit(def, sr) {
+export function compileKit(def, sr, samples = {}) {
   const presetName = typeof def.kit === 'string' ? def.kit : def.preset || 'clean';
   const preset = KITS[presetName] || KITS.clean;
   const over = typeof def.kit === 'object' && def.kit ? def.kit : {};
@@ -89,6 +91,11 @@ export function compileKit(def, sr) {
   for (const name of new Set([...Object.keys(preset), ...Object.keys(over)])) {
     const h = { ...(preset[name] || {}), ...(over[name] || {}) };
     const pitch = h.pitch ?? 1, dec = h.decay ?? 1;
+    const z = h.sample && samples[h.sample]?.[0];
+    if (z) {
+      out[name] = { level: h.level ?? 1, sample: z.data, inc: (z.rate / sr) * pitch, len: z.data.length / z.rate / pitch, tones: [], noise: null, metal: null, click: 0 };
+      continue;
+    }
     out[name] = {
       level: h.level ?? 1,
       len: (h.len ?? 1) * Math.max(1, dec),
@@ -143,6 +150,7 @@ export class DrumVoice {
 
   start(h, kind, vel) {
     this.h = h; this.kind = kind; this.t = 0; this.active = true;
+    this.spos = 0; this.sEnv = 1; this.sDecay = 1;
     // tiny per-hit variation so repeated hits don't sound machine-gunned
     const pitch = 1 + this.rand() * 0.015;
     this.vel = vel * (1 + this.rand() * 0.06);
@@ -161,7 +169,7 @@ export class DrumVoice {
   }
 
   // open hat cut off by a closed hat
-  choke(sr) { this.nDecay = this.mDecay = this.tDecay = coef(0.006, sr); }
+  choke(sr) { this.nDecay = this.mDecay = this.tDecay = this.sDecay = coef(0.006, sr); }
 
   render(sr, invSr) {
     const h = this.h;
@@ -211,6 +219,16 @@ export class DrumVoice {
       }
       out += runFilter(m.filter, this.mf, x / 6) * this.mEnv;
       this.mEnv *= this.mDecay;
+    }
+
+    if (h.sample && this.sEnv > 1e-4) {
+      const d = h.sample, i = this.spos | 0;
+      if (i + 1 < d.length) {
+        alive = true;
+        out += (d[i] + (d[i + 1] - d[i]) * (this.spos - i)) * this.sEnv;
+        this.spos += h.inc;
+        this.sEnv *= this.sDecay;
+      }
     }
 
     if (this.cEnv > 1e-4) {
