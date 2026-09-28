@@ -209,7 +209,6 @@ export function compileInst(def = {}, sr, samples = {}) {
     sMute: Math.max(0, Math.min(1, def.string?.mute || 0)), // palm mute: how damped and dull short notes are
     // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
     bowSlope: 5 - 4 * Math.max(0, Math.min(1, def.bow?.pressure ?? 0.8)), bowBeta: 0.04 + 0.2 * Math.max(0, Math.min(1, def.bow?.position ?? 0.4)),
-    stringPole: 0.75 - (0.2 * 22050) / sr,
     // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
     zones: def.type === 'sample' ? samples[def.sample] || [] : null,
     kit: def.type === 'drums' ? compileKit(def, sr, samples) : null,
@@ -227,16 +226,25 @@ function blep(t, dt) {
 // the bow table. The loop is two samples shorter than the period for the delay of the bridge filter. Pressure 0.8 at position
 // 0.4 (the defaults) keeps the string in its normal motion from G1 to E5; much lighter or heavier bowing can make it
 // jump an octave.
+const COMP = +(globalThis.process?.env?.COMP ?? 0);
 class BowedString {
-  constructor() { this.a = new Float32Array(WG_BUF); this.b = new Float32Array(WG_BUF); this.i = 0; this.w1 = 0; }
+  constructor() { this.a = new Float32Array(WG_BUF); this.b = new Float32Array(WG_BUF); this.i = 0; this.w1 = 0; this.f = 0; this.pole = 0; this.len = 0; }
   // a read from a delay line d samples back (linear interpolation)
   tap(buf, d) {
     const r = this.i - d, i = Math.floor(r), fr = r - i;
     return buf[i & WG_MASK] + (buf[(i + 1) & WG_MASK] - buf[i & WG_MASK]) * fr;
   }
+  // the loss filter keeps 3.2 kHz, or the first 25 overtones of high notes, so they ring as well as low ones; the
+  // loop is shorter than the period by the filter's delay at the note (and a fixed part, found by measuring)
+  tune(p, f) {
+    this.f = f;
+    const w = (TWO_PI * f) / p.sr, a = (this.pole = Math.exp((-TWO_PI * Math.min(0.4 * p.sr, Math.max(3200, 25 * f))) / p.sr));
+    this.len = Math.max(4, p.sr / f - Math.atan2(a * Math.sin(w), 1 - a * Math.cos(w)) / w - COMP);
+  }
   // one sample at frequency f with the bow moving at speed v; returns the bridge's motion
   tick(p, f, v) {
-    const a = p.stringPole, base = Math.max(4, p.sr / f - 2), bridgeLen = base * p.bowBeta, neckLen = base - bridgeLen;
+    if (Math.abs(f - this.f) > f * 0.001) this.tune(p, f);
+    const a = this.pole, bridgeLen = this.len * p.bowBeta, neckLen = this.len - bridgeLen;
     const bridgeOut = this.tap(this.b, bridgeLen), neckOut = this.tap(this.a, neckLen);
     this.w1 = (1 - a) * 0.95 * bridgeOut + a * this.w1; // string losses at the bridge (one pole)
     const bridgeRefl = -this.w1, nutRefl = -neckOut, stringVel = bridgeRefl + nutRefl;

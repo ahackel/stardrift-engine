@@ -5,6 +5,7 @@ import { degSemis, foldDegree, prepareSong } from '../src/engine/theory.js';
 import { starterSong, addTrack, removeTrack, songLike, emptySong, upgradeSong, playInstrument } from '../src/editor/library.js';
 import { playsIn, setPlaysIn, togglePlaysIn, everywhere, renameTag } from '../src/editor/tags.js';
 import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
+import { stacksNotes } from '../src/editor/util.js';
 import { clipsOf, tracksOf, linkClips, putClip, takeClip, renameClip } from '../src/editor/clips.js';
 import { diskSamples } from './load-samples.mjs';
 import { KITS } from '../src/engine/drums.js';
@@ -218,7 +219,7 @@ for (const [file, sg] of toCheck) {
     const spb = sg.stepsPerBeat || 4, ctx0 = { spb, stepsPerBar: spb * (sg.beatsPerBar || 4) };
     for (const b of sg.blocks.filter((x) => !x.theme)) {
       const tr = tracksOf(sg, b.id)[0], drums = sg.instruments[tr.instrument]?.type === 'drums';
-      const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: (sg.instruments[tr.instrument]?.poly || 1) > 1, mode: b.mode || tr.mode || 'chord' });
+      const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: stacksNotes(sg, tr), mode: b.mode || tr.mode || 'chord' });
       for (const c of cands) {
         n++;
         const toks = expandTokens(c.value.pattern), len = Math.round((b.beats || 4) * spb);
