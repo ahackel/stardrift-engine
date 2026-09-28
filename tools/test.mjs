@@ -403,5 +403,17 @@ for (const [file, sg] of toCheck) {
   ok(takeClip(sg, b, 'shared_one') && !sg.blocks.some((x) => x.id === 'shared_one'), 'off the last track, the clip is gone');
 }
 
+// A clip swapped for a copy of its own while it plays (make unique) plays on
+{
+  const sg = structuredClone(song), e = newEngine(SR, sg, 2);
+  run(e, 4, () => {});
+  const id = Object.keys(e.tracks).find((k) => e.tracks[k].active && e.tracks[k].block), tr = sg.tracks.find((t) => t.id === id);
+  const old = e.tracks[id].block.id, copy = { ...structuredClone(sg.blocks.find((b) => b.id === old)), id: `${old}_2`, color: '#ff5c5c' };
+  sg.blocks.push(copy);
+  tr.clips = tr.clips.map((x) => (x === old ? copy.id : x));
+  e.setSong(structuredClone(sg));
+  ok(e.tracks[id].active && e.tracks[id].block?.id === copy.id, 'a clip swapped for its copy while it plays plays on');
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

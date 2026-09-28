@@ -9,6 +9,8 @@ import { Synth } from './synth.js';
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const DEFAULT_CHORD = { degree: 0, shape: SHAPES.triad, shapeName: 'triad', beats: 4 };
 const isFill = (b) => !!b.tags && b.tags.includes('fill');
+// the same notes (a copy or a renamed clip), whatever its name or colour
+const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && JSON.stringify(a.theme ?? null) === JSON.stringify(b.theme ?? null);
 
 function rangeFit(v, r) {
   if (!r) return 1;
@@ -741,8 +743,10 @@ export class Engine {
       const ts = this.tracks[id], tr = s.trackMap[id];
       if (!tr) { delete this.tracks[id]; continue; }
       if (!ts.block) continue;
-      const b = s.blockMap[ts.block.id];
-      if (!b || !s.blocksByTrack[id]?.includes(b)) {
+      let b = s.blockMap[ts.block.id];
+      // a clip renamed, or swapped for a copy of its own (make unique), plays on
+      if (!b || !s.blocksByTrack[id]?.includes(b)) b = s.blocksByTrack[id]?.find((x) => sameNotes(x, ts.block));
+      if (!b) {
         ts.block = null; ts.active = false; ts.steps = null;
         if (ts.sounding) { this.synth.release(id); ts.sounding = null; }
         continue;
