@@ -2,7 +2,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree } from '../src/engine/theory.js';
-import { starterSong, addTrack, removeTrack, songLike } from '../src/editor/library.js';
+import { starterSong, addTrack, removeTrack, songLike, emptySong } from '../src/editor/library.js';
+import { playsIn, setPlaysIn, togglePlaysIn, everywhere, renameTag } from '../src/editor/tags.js';
+import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
 import { diskSamples } from './load-samples.mjs';
 import { KITS } from '../src/engine/drums.js';
 
@@ -311,6 +313,51 @@ for (const [file, sg] of toCheck) {
   const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
   const rec = note(crash, 'c'), synth = note(crash, 'c', {});
   ok(rms(rec) > 0.001 && rms(synth) > 0.001 && Math.abs(rms(rec) - rms(synth)) > 1e-4, 'drum hits play their recording, and synthesize without the library');
+}
+
+// 12. Empty songs, "plays in" and the parts library
+{
+  const lib = readJson('../library/instruments.json');
+  const empty = emptySong(readJson('../library/starter-song.json'), { key: 'D', scale: 'dorian', bpm: 90 });
+  const r = run(newEngine(SR, empty, 3), 10, (t, e) => { if (t > 4 && t < 4.01) e.setMood('danger'); });
+  ok(r.bad === 0 && empty.tracks.length === 0 && Object.keys(empty.moods).length > 0, 'an empty song plays (silently) and takes mood calls');
+  addTrack(empty, lib, lib.instruments.find((e) => e.group === 'bass'));
+  ok(run(newEngine(SR, empty, 3), 6).peak > 0.01, 'an empty song sounds after adding one track');
+
+  const s = structuredClone(song);
+  const b = s.blocks.find((x) => (x.tags || []).length && !x.tags.includes('fill'));
+  const secIds = s.sections.map((x) => x.id);
+  const target = secIds.find((id) => !playsIn(s, b.tags).has(id));
+  const before = playsIn(s, b.tags);
+  const after = togglePlaysIn(s, b, target);
+  ok(after.has(target) && [...before].every((id) => after.has(id)), 'plays in: switching a section on keeps the others');
+  const only = setPlaysIn(s, b, new Set([target]));
+  ok(only.has(target), `plays in: one section alone (${[...only].join(', ')})`);
+  setPlaysIn(s, b, new Set(secIds));
+  ok(everywhere(s, b.tags) && !b.tags.filter((t) => t !== 'fill').length, 'plays in: every section means no tags');
+  const sec = s.sections.find((x) => x.id === target);
+  renameTag(s, target, 'renamed_sec');
+  ok(!s.sections.some((x) => (x.tags || []).includes(target)) || (sec.tags || []).length > 1, 'renaming a section takes its own tag along');
+
+  const src = structuredClone(song), parts = songParts(src);
+  ok(parts.track.length === src.tracks.length && parts.clip.length > 0 && parts.prog.length === src.progressions.length, 'a song lists its parts');
+  const dst = emptySong(readJson('../library/starter-song.json'));
+  const drumClip = parts.clip.find((p) => p.drums), noteClip = parts.clip.find((p) => !p.drums && !p.clip.theme);
+  ok(clipTarget(dst, noteClip) === null, 'a clip with no fitting track brings its own');
+  const o1 = insertPart(dst, noteClip);
+  const o2 = insertPart(dst, drumClip);
+  ok(dst.tracks.length === 2 && dst.blocks.every((x) => dst.tracks.some((t) => t.id === x.track)) && o1.kind === 'block', 'clips land on new tracks of their own sound');
+  insertPart(dst, parts.clip.find((p) => p.drums && p !== drumClip) || drumClip);
+  ok(dst.tracks.length === 2, 'a second drum clip goes onto the drum track');
+  ok(dst.blocks.every((x) => !(x.tags || []).some((t) => t !== 'fill' && t !== 'main')), 'tags of other songs\' sections are dropped (it plays everywhere)');
+  insertPart(dst, parts.track[0]);
+  insertPart(dst, parts.prog[0]);
+  if (parts.sting[0]) insertPart(dst, parts.sting[0]);
+  const st = dst.stingers[0];
+  ok(!st || st.parts.every((p) => dst.tracks.some((t) => t.id === p.track)), 'a stinger\'s parts find (or bring) their tracks');
+  const rr = run(newEngine(SR, dst, 5), 12, (t, e) => { if (st && t > 3 && t < 3.01) e.sting(st.id); });
+  ok(rr.bad === 0 && rr.peak > 0.01, 'a song built from parts plays');
+  ok(JSON.stringify(o2) && dst.instruments && Object.keys(dst.instruments).length === dst.tracks.length, 'every track owns its sound');
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
