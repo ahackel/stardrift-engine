@@ -41,7 +41,7 @@ So Stardrift **borrows the proven ideas** instead of the code: horizontal re-seq
                                   • fills, drops, mutations
 ```
 
-- **Blocks** are 1–32 beats of pattern for one track, e.g. `{ "id": "bass_pulse", "track": "bass", "beats": 4, "tags": ["drift","calm"], "intensity": [0.3, 0.7], "pattern": "0 - - . 0 - . . 0 - - . -1 - . ." }`. Notes are relative to the current chord or scale, so every block works over every progression.
+- **Blocks** (clips in the editor) are 1–32 beats of pattern, e.g. `{ "id": "pulse", "beats": 4, "tags": ["drift","calm"], "intensity": [0.3, 0.7], "pattern": "0 - - . 0 - . . 0 - - . -1 - . ." }`; the id is the clip's name. A track lists the blocks it plays (`"clips": ["pulse", …]`), and one block can be on several tracks: it sounds with each track's instrument and octave (song `"format": 2`). Notes are relative to the current chord or scale, so every block works over every progression. (Older songs name the track on the block, `"track": "bass"`; the engine still reads them.)
 - **Melodies come from the song theme** (below), not from random walks: a tune you remember repeats. The editor turns generator blocks from older songs (`gen`) into plain patterns when it opens them.
 - **Sections** (intro, calm, wonder, drift, tension, build, peak, danger, release) carry an intensity, a tension, tags, a length and weighted `next` links. Together they form a graph the conductor walks.
 - **Progressions** are roman numerals diatonic to a scale, which can be switched per progression (lydian for *wonder*, phrygian or harmonic minor for *tension*).

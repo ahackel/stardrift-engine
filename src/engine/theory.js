@@ -182,9 +182,13 @@ export function prepareSong(raw) {
   }));
   s.stingMap = Object.fromEntries(s.stingers.map((x) => [x.id, x]));
 
-  s.blocks = (raw.blocks || []).filter((b) => b && b.id && b.track);
+  // blocks (clips) are a pool: a track lists the ones it plays (tracks[].clips), and one block can be on several
+  // tracks. Older songs name the track on the block instead.
+  s.blocks = (raw.blocks || []).filter((b) => b && b.id);
   s.blockMap = Object.fromEntries(s.blocks.map((b) => [b.id, b]));
   s.blocksByTrack = {};
-  for (const b of s.blocks) (s.blocksByTrack[b.track] ||= []).push(b);
+  for (const t of s.tracks) {
+    s.blocksByTrack[t.id] = Array.isArray(t.clips) ? t.clips.map((id) => s.blockMap[id]).filter(Boolean) : s.blocks.filter((b) => b.track === t.id);
+  }
   return s;
 }

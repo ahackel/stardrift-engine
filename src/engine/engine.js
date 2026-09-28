@@ -742,7 +742,7 @@ export class Engine {
       if (!tr) { delete this.tracks[id]; continue; }
       if (!ts.block) continue;
       const b = s.blockMap[ts.block.id];
-      if (!b || b.track !== id) {
+      if (!b || !s.blocksByTrack[id]?.includes(b)) {
         ts.block = null; ts.active = false; ts.steps = null;
         if (ts.sounding) { this.synth.release(id); ts.sounding = null; }
         continue;

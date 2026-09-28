@@ -5,6 +5,7 @@ import { degSemis, foldDegree } from '../src/engine/theory.js';
 import { starterSong, addTrack, removeTrack, songLike, emptySong } from '../src/editor/library.js';
 import { playsIn, setPlaysIn, togglePlaysIn, everywhere, renameTag } from '../src/editor/tags.js';
 import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
+import { clipsOf, tracksOf, linkClips, putClip, takeClip, renameClip } from '../src/editor/clips.js';
 import { diskSamples } from './load-samples.mjs';
 import { KITS } from '../src/engine/drums.js';
 
@@ -64,7 +65,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   run(e, 20);
   const step = e.step, sec = e.section.id;
   const edited = JSON.parse(JSON.stringify(song));
-  edited.blocks.find((b) => b.id === 'pad_hold').pattern = '* -*31 . . 0+2 -*29';
+  edited.blocks.find((b) => b.id === 'hold').pattern = '* -*31 . . 0+2 -*29';
   e.setSong(edited);
   ok(e.step === step && e.section.id === sec, 'hot reload keeps musical position');
   ok(run(e, 10).bad === 0, 'engine keeps running after hot reload');
@@ -167,7 +168,7 @@ for (const [file, sg] of toCheck) {
   const h = run(e, 90);
   const themed = [];
   const ids = new Set(sg.blocks.map((b) => b.id));
-  const orphans = sg.blocks.filter((b) => !sg.tracks.some((t) => t.id === b.track)).map((b) => b.id);
+  const orphans = sg.blocks.filter((b) => b.track !== undefined || !tracksOf(sg, b.id).length).map((b) => b.id); // every clip on a track, none naming one
   ok(h.bad === 0 && h.peak > 0.1 && h.peak < 1 && !orphans.length && ids.size === sg.blocks.length, `${file}: healthy (peak ${h.peak.toFixed(2)}), blocks valid`);
   const far = [];
   for (const [mood, m] of Object.entries(sg.moods || {})) {
@@ -195,7 +196,7 @@ for (const [file, sg] of toCheck) {
   for (const entry of lib.instruments) {
     const tr = addTrack(sg, lib, entry);
     const e = newEngine(SR, sg, 1);
-    e.lock(tr.id, sg.blocks.find((b) => b.track === tr.id).id);
+    e.lock(tr.id, clipsOf(sg, tr)[0].id);
     let notes = 0;
     run(e, 8, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note' && ev.track === tr.id) notes++; });
     if (!notes) quiet.push(entry.id);
@@ -216,7 +217,7 @@ for (const [file, sg] of toCheck) {
   for (const [, sg] of toCheck) {
     const spb = sg.stepsPerBeat || 4, ctx0 = { spb, stepsPerBar: spb * (sg.beatsPerBar || 4) };
     for (const b of sg.blocks.filter((x) => !x.theme)) {
-      const tr = sg.tracks.find((x) => x.id === b.track), drums = sg.instruments[tr.instrument]?.type === 'drums';
+      const tr = tracksOf(sg, b.id)[0], drums = sg.instruments[tr.instrument]?.type === 'drums';
       const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: (tr.poly || 1) > 1, mode: b.mode || tr.mode || 'chord' });
       for (const c of cands) {
         n++;
@@ -229,12 +230,23 @@ for (const [file, sg] of toCheck) {
     if (sg.theme) for (const c of themeVariations(sg.theme, new Rng(n++), ctx0)) if (expandTokens(c.value.pattern).length !== Math.round(sg.theme.beats * spb)) bad.push(`theme/${c.kind}`);
   }
   ok(n > 100 && !bad.length, `variations are valid song data (${n} candidates)${bad.length ? ` — bad: ${bad.slice(0, 5)}` : ''}`);
-  const b = song.blocks.find((x) => x.id === 'bass_pulse'), ctx = { spb: 4, stepsPerBar: 16, drums: false, mode: 'chord' };
+  const b = song.blocks.find((x) => x.id === 'pulse'), ctx = { spb: 4, stepsPerBar: 16, drums: false, mode: 'chord' };
   ok(JSON.stringify(blockVariations(b, new Rng(3), ctx)) === JSON.stringify(blockVariations(b, new Rng(3), ctx)), 'same seed, same variations');
 }
 
-// 12. Older songs: generator blocks become plain patterns of the block's length, the same each time
+// 12. Older songs: generator blocks become plain patterns of the block's length, the same each time; clips that
+// name their track become the track's list
 {
+  const legacy = structuredClone(song);
+  for (const t of legacy.tracks) { for (const id of t.clips) legacy.blocks.find((b) => b.id === id).track = t.id; delete t.clips; }
+  const linked = linkClips(structuredClone(legacy));
+  ok(JSON.stringify(linked.tracks.map((t) => t.clips)) === JSON.stringify(song.tracks.map((t) => t.clips)) && linked.blocks.every((b) => b.track === undefined), 'clips naming their track become the track\'s list');
+  const named = linkClips({ format: 1, tracks: [{ id: 'bass' }, { id: 'drums' }], blocks: [{ id: 'bass_walk', track: 'bass' }, { id: 'drums_walk', track: 'drums' }, { id: 'bass_x', track: 'drums' }] });
+  ok(named.format === 2 && named.blocks.map((b) => b.id).join() === 'walk,drums_walk,bass_x' && named.tracks[1].clips.join() === 'drums_walk,bass_x', 'an older song\'s clips lose their track prefix where the name stays unique');
+  ok(linkClips({ format: 2, tracks: [{ id: 'bass', clips: ['bass_line'] }], blocks: [{ id: 'bass_line' }] }).blocks[0].id === 'bass_line', 'a name given in a format-2 song stays');
+  const notes = (sg) => { const out = []; run(newEngine(SR, sg, 4), 30, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') out.push(`${ev.track}:${ev.midi}`); }); return out.join('|'); };
+  ok(notes(legacy) === notes(song), 'the engine plays an older song the same');
+
   const { freezeGenerators } = await import('../src/engine/compose.js');
   const { expandTokens } = await import('../src/engine/pattern.js');
   const old = () => ({ ...structuredClone(song), blocks: [...structuredClone(song.blocks), { id: 'old_gen', track: 'lead', beats: 8, mode: 'scale', gen: { rhythm: 'x - . x . . x - x - - . . . . .', range: [0, 9], leap: 2 } }] });
@@ -346,7 +358,8 @@ for (const [file, sg] of toCheck) {
   ok(clipTarget(dst, noteClip) === null, 'a clip with no fitting track brings its own');
   const o1 = insertPart(dst, noteClip);
   const o2 = insertPart(dst, drumClip);
-  ok(dst.tracks.length === 2 && dst.blocks.every((x) => dst.tracks.some((t) => t.id === x.track)) && o1.kind === 'block', 'clips land on new tracks of their own sound');
+  ok(dst.tracks.length === 2 && dst.blocks.every((x) => x.track === undefined && tracksOf(dst, x.id).length === 1) && o1.kind === 'block' && o1.track, 'clips with no track to take them get new tracks');
+  ok(parts.clip.every((p) => !p.track && !p.trackName && !p.sound && !p.group), 'a clip part is its notes, with no track');
   insertPart(dst, parts.clip.find((p) => p.drums && p !== drumClip) || drumClip);
   ok(dst.tracks.length === 2, 'a second drum clip goes onto the drum track');
   ok(dst.blocks.every((x) => !(x.tags || []).some((t) => t !== 'fill' && t !== 'main')), 'tags of other songs\' sections are dropped (it plays everywhere)');
@@ -358,6 +371,23 @@ for (const [file, sg] of toCheck) {
   const rr = run(newEngine(SR, dst, 5), 12, (t, e) => { if (st && t > 3 && t < 3.01) e.sting(st.id); });
   ok(rr.bad === 0 && rr.peak > 0.01, 'a song built from parts plays');
   ok(JSON.stringify(o2) && dst.instruments && Object.keys(dst.instruments).length === dst.tracks.length, 'every track owns its sound');
+}
+
+// Shared clips: one clip on two tracks plays on both; taking it off one keeps it, off the last drops it
+{
+  const sg = structuredClone(song), mel = sg.tracks.filter((t) => sg.instruments[t.instrument]?.type !== 'drums');
+  const [a, b] = mel, id = clipsOf(sg, a).find((x) => !x.theme && !(x.tags || []).includes('fill')).id;
+  putClip(b, id);
+  ok(tracksOf(sg, id).length === 2, 'a clip can be on two tracks');
+  const e = newEngine(SR, sg, 2);
+  e.lock(a.id, id); e.lock(b.id, id);
+  const heard = new Set();
+  run(e, 6, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') heard.add(ev.track); });
+  ok(heard.has(a.id) && heard.has(b.id), 'the engine plays a shared clip on both tracks');
+  renameClip(sg, id, 'shared_one');
+  ok(a.clips.includes('shared_one') && b.clips.includes('shared_one') && !a.clips.includes(id), 'renaming a clip renames it on every track');
+  ok(!takeClip(sg, a, 'shared_one') && sg.blocks.some((x) => x.id === 'shared_one'), 'off one track, the clip stays for the other');
+  ok(takeClip(sg, b, 'shared_one') && !sg.blocks.some((x) => x.id === 'shared_one'), 'off the last track, the clip is gone');
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
