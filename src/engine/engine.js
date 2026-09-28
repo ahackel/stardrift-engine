@@ -176,6 +176,15 @@ export class Engine {
   }
 
   preview(inst, events, opts) { this.synth.preview(inst, events, opts); }
+  // stop what the editor auditions: the preview phrase and a stinger
+  stopPreview() {
+    const syn = this.synth;
+    syn.pv?.allOff();
+    syn.pvQ = [];
+    syn.pvI = 0;
+    this.nextSting = null;
+    if (this.curSting) this.endSting(this.hold);
+  }
   keyOn(inst, note, opts) { this.synth.keyOn(inst, note, opts); }
   keyOff(note) { this.synth.keyOff(note); }
 

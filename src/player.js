@@ -106,6 +106,8 @@ export class StardriftPlayer {
     this.send({ type: 'preview', inst, events, options });
   }
 
+  stopPreview() { this.send({ type: 'stopPreview' }); } // and a stinger that plays
+
   // Live keyboard (editor): a note (midi, or a drum hit like 's') sounds until keyOff. While the song is paused the
   // audio runs until a few seconds after the last key is let go.   options: { volume, vel }
   async keyOn(inst, note, options) {
