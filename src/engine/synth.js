@@ -428,6 +428,7 @@ class TrackBus {
     this.voices = Array.from({ length: poly }, () => (isDrum ? new DrumVoice() : new Voice()));
     this.ic1 = 0; this.ic2 = 0; this.cut = 1000; this.cutTarget = 1000; this.coefTimer = 0;
     this.g = 0; this.gTarget = 1; this.rr = 0;
+    this.fade = 1; this.fadeTo = 1; this.fadeStep = 0; // a track joining or leaving: a linear ramp (Synth.fade)
     this.fenv = 0; // filter envelope level (1 at a note's start, decays)
     this.u1 = 0; this.F1 = 0; // the clipper's previous input and its integral
     this.loud = 0; // the loudest voice's envelope level (swell)
@@ -551,7 +552,40 @@ class TrackBus {
     this.ic1 = 2 * v1 - this.ic1;
     this.ic2 = 2 * v2 - this.ic2;
     this.g += (this.gTarget - this.g) * 0.0015;
-    return v2 * this.vol * this.g;
+    if (this.fadeStep) {
+      this.fade += this.fadeStep;
+      if (this.fadeStep > 0 ? this.fade >= this.fadeTo : this.fade <= this.fadeTo) {
+        this.fade = this.fadeTo; this.fadeStep = 0;
+        if (this.fade === 0) { this.allOff(); this.fade = this.fadeTo = 1; } // faded out: its notes stop, silently
+      }
+    }
+    return v2 * this.vol * this.g * this.fade;
+  }
+}
+
+// The master bus: a low cut (rumble under 30 Hz only eats headroom), then a gentle compressor that glues the mix
+// (glue 0–1: the ratio, from 1:1 to 4:1 above -9 dB, 10 ms attack, 250 ms release, and makeup gain so the quiet
+// parts come up). The soft clip after it (Synth.renderSample) is the limiter: peaks round off instead of crackling.
+class Master {
+  constructor(sr) {
+    this.hpK = 1 - Math.exp((-2 * Math.PI * 30) / sr);
+    this.att = 1 - Math.exp(-1 / (0.01 * sr));
+    this.rel = 1 - Math.exp(-1 / (0.25 * sr));
+    this.lpL = 0; this.lpR = 0; this.env = 0;
+    this.set(0.5);
+  }
+  set(glue) {
+    const g = Math.max(0, Math.min(1, glue));
+    this.slope = 1 - 1 / (1 + 3 * g); // 0 = no compression
+    this.makeup = 1 + 0.4 * g;
+  }
+  process(l, r) {
+    this.lpL += this.hpK * (l - this.lpL); l -= this.lpL;
+    this.lpR += this.hpK * (r - this.lpR); r -= this.lpR;
+    const lvl = Math.max(Math.abs(l), Math.abs(r));
+    this.env += (lvl > this.env ? this.att : this.rel) * (lvl - this.env);
+    const T = 0.35, g = (this.env > T ? Math.pow(T / this.env, this.slope) : 1) * this.makeup;
+    this.l = l * g; this.r = r * g;
   }
 }
 
@@ -638,7 +672,7 @@ export class Synth {
   constructor(sr) {
     this.sr = sr;
     this.tracks = {}; this.list = [];
-    this.echo = new Echo(sr); this.reverb = new Reverb(sr);
+    this.echo = new Echo(sr); this.reverb = new Reverb(sr); this.bus = new Master(sr);
     this.outL = 0; this.outR = 0;
     this.mutes = {}; this.solos = {};
     this.mood = [0.2, 0.1];
@@ -669,6 +703,7 @@ export class Synth {
     this.revLevel = fx.reverb.level;
     this.echoToRev = fx.echoToReverb;
     this.master = song.master.gain;
+    this.bus.set(song.master.glue ?? 0.5);
     this.updateGains();
   }
   setMood(intensity, tension) {
@@ -686,6 +721,14 @@ export class Synth {
       const g = anySolo ? (this.solos[id] ? 1 : 0) : this.mutes[id] ? 0 : 1;
       this.tracks[id].gTarget = d && !d.keep.includes(id) ? g * (1 - d.amount) : g;
     }
+  }
+  // a track joins (to 1: from silence) or leaves (to 0: its notes stop once it is silent) over sec seconds
+  fade(id, to, sec) {
+    const b = this.tracks[id];
+    if (!b) return;
+    if (to > 0 && !b.fadeStep) b.fade = 0;
+    b.fadeTo = to;
+    b.fadeStep = (to - b.fade) / Math.max(1, sec * this.sr);
   }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
   release(id) { this.tracks[id]?.release(); }
@@ -784,8 +827,9 @@ export class Synth {
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;
     this.reverb.process(v + (el + er) * 0.5 * this.echoToRev);
-    const m = this.master;
-    this.outL = Math.tanh((l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m);
-    this.outR = Math.tanh((r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m);
+    const m = this.master, bus = this.bus;
+    bus.process((l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m, (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m);
+    this.outL = Math.tanh(bus.l);
+    this.outR = Math.tanh(bus.r);
   }
 }

@@ -127,7 +127,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
 
 // 8. Theme: theme blocks restate the song theme in varied forms, notes on the beat fit the chord
 {
-  const e = newEngine(SR, song, 4);
+  const e = newEngine(SR, { ...song, humanize: 0 }, 4); // no late notes: the check reads the step a note starts on
   const forms = new Set();
   let onBeat = 0, fits = 0;
   const noteOn = e.synth.noteOn.bind(e.synth);

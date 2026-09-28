@@ -78,6 +78,7 @@ export class StardriftPlayer {
   async play() {
     if (!this.ctx) return;
     this.setHold(false);
+    if (this.fading) { this.fading = null; this.setVolume(this.volume ?? 1, 0.03); } // played again while fading out
     try {
       await this.ctx.resume();
     } catch (err) {
@@ -86,8 +87,24 @@ export class StardriftPlayer {
       throw err;
     }
   }
-  async pause() { this.setHold(false); await this.ctx?.suspend(); }
-  get playing() { return this.ctx?.state === 'running' && !this.holding; }
+  // fade: seconds the music fades out over before it stops (0: at once)
+  async pause(fade = 0) {
+    this.setHold(false);
+    if (!this.ctx) return;
+    if (fade > 0 && this.ctx.state === 'running') {
+      const g = this.gain.gain, t = this.ctx.currentTime, token = (this.fading = {});
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.linearRampToValueAtTime(0, t + fade);
+      await new Promise((r) => setTimeout(r, fade * 1000));
+      if (this.fading !== token) return; // played again meanwhile
+      this.fading = null;
+    }
+    await this.ctx.suspend();
+    this.gain.gain.cancelScheduledValues(0);
+    this.gain.gain.value = this.volume ?? 1; // at full volume again for the next play
+  }
+  get playing() { return this.ctx?.state === 'running' && !this.holding && !this.fading; }
 
   setHold(on) {
     clearTimeout(this.holdTimer);
@@ -127,6 +144,7 @@ export class StardriftPlayer {
   async audition(seconds, { exact = false } = {}) {
     if (!this.ctx || this.playing) return;
     this.setHold(true);
+    if (this.fading) { this.fading = null; this.setVolume(this.volume ?? 1, 0.03); } // a preview while the song fades out
     await this.ctx.resume().catch(() => {});
     const now = performance.now(), until = exact ? now + seconds * 1000 : Math.max(now + seconds * 1000, this.holdUntil || 0);
     clearTimeout(this.holdTimer);
@@ -154,6 +172,7 @@ export class StardriftPlayer {
   requestState() { this.send({ type: 'state' }); }
 
   setVolume(v, fadeSeconds = 0.5) {
+    this.volume = v;
     if (!this.gain) return;
     const t = this.ctx.currentTime;
     this.gain.gain.cancelScheduledValues(t);

@@ -39,6 +39,7 @@ export class Engine {
     this.vrng = new Rng(this.seed ^ 0x9e3779b9); // velocity humanizing has its own stream: it never changes the arrangement
     this.step = 0;
     this.stepTimer = 0;
+    this.clock = 0; this.later = []; // samples played; notes waiting to start (lagOf)
     this.section = null;
     this.sectionBar = 0;
     this.sectionBars = 0;
@@ -173,7 +174,7 @@ export class Engine {
   // hold = the sequencer stands still and song voices fade out, but previews still sound (editor)
   setHold(on) {
     on = !!on;
-    if (on && !this.hold) this.synth.releaseAll();
+    if (on && !this.hold) { this.later = []; this.synth.releaseAll(); } // no late notes after the pause
     this.hold = on;
   }
 
@@ -191,8 +192,10 @@ export class Engine {
   keyOff(note) { this.synth.keyOff(note); }
 
   process(outL, outR, n) {
-    const syn = this.synth;
+    const syn = this.synth, later = this.later;
     for (let i = 0; i < n; i++) {
+      this.clock++;
+      if (later.length) for (let j = later.length - 1; j >= 0; j--) if (later[j].t <= this.clock) { later[j].fn(); later.splice(j, 1); } // humanized notes
       if (this.hold) {
         if (this.curSting || this.nextSting) { // a stinger still sounds while the song stands still
           if (this.stepTimer <= 0) { this.heldTick(); this.stepTimer += this.stepLen; }
@@ -297,13 +300,15 @@ export class Engine {
     if (tr.inst.type === 'drums') {
       const hits = [];
       for (const a of st.atoms) if (a.kind === 'hit') hits.push(a.value);
-      this.synth.drum(tr.id, hits, this.velocity(st.accent ? 1 : st.prob < 1 ? 0.5 : 0.78)); // chance hits = ghost notes
+      const v = this.velocity(st.accent ? 1 : st.prob < 1 ? 0.5 : 0.78); // chance hits = ghost notes
+      this.at(this.lagOf(tr, hits), () => this.synth.drum(tr.id, hits, v));
       this.emit({ type: 'note', track: tr.id });
       return;
     }
     const midis = this.resolve(tr, src, st.atoms);
     if (!midis.length) return;
-    this.synth.noteOn(tr.id, midis, vel, st.short && !isFollow);
+    const short = st.short && !isFollow;
+    this.at(isFollow ? 0 : this.lagOf(tr), () => this.synth.noteOn(tr.id, midis, vel, short));
     ts.sounding = st;
     if (!isFollow) this.emit({ type: 'note', track: tr.id, midi: midis[0] });
   }
@@ -419,7 +424,7 @@ export class Engine {
   }
 
   setupTrack(tr) {
-    const ts = this.trackState(tr);
+    const ts = this.trackState(tr), was = ts.active;
     ts.fill = null;
     const lock = this.locks[tr.id] && this.song.blockMap[this.locks[tr.id]];
     let active = lock ? true : this.decideActive(tr, ts.active);
@@ -428,9 +433,32 @@ export class Engine {
       if (b) this.startBlock(tr, ts, b);
       else active = false;
     }
-    if (!active && ts.sounding && !this.curSting?.parts[tr.id]) { this.synth.release(tr.id); ts.sounding = null; } // a stinger's note plays on
+    const fade = this.fadeSec(tr);
+    if (active && !was) this.synth.fade(tr.id, 1, fade); // joins: fades in (or, at 0, stops a fade out)
+    if (!active && ts.sounding && !this.curSting?.parts[tr.id]) { // a stinger's note plays on
+      if (fade) this.synth.fade(tr.id, 0, fade); else this.synth.release(tr.id);
+      ts.sounding = null;
+    }
     ts.active = active;
   }
+
+  // how long a track takes to join or leave, in seconds: pads and other sustained sounds (chords, a slow attack) fade
+  // over a bar, the rest start and stop on the beat; tr.fade (bars) sets it
+  fadeSec(tr) {
+    const bars = tr.fade ?? (tr.inst.type !== 'drums' && ((tr.poly || 1) > 1 || (tr.inst.env?.a ?? 0) >= 0.15) ? 1 : 0);
+    return (bars * this.song.stepsPerBar * this.stepLen) / this.sr;
+  }
+
+  // timing humanize: a note a little late, never early (its step is now): drum hits on the beat nearly exact, hats
+  // looser, melodic notes and chords more; song.humanize scales it (0: none). In samples.
+  lagOf(tr, hits) {
+    const h = Math.min(2, this.song.humanize * 10);
+    if (!h) return 0;
+    const ms = hits ? (hits.every((x) => x === 'h' || x === 'o' || x === 'm') ? 6 : 1.5) : (tr.poly || 1) > 1 ? 10 : 6;
+    return Math.round((this.vrng.next() * ms * h * this.sr) / 1000);
+  }
+  // play now, or `lag` samples from now
+  at(lag, fn) { if (lag > 0) this.later.push({ t: this.clock + lag, fn }); else fn(); }
 
   decideActive(tr, wasActive) {
     const o = this.section.tracks && this.section.tracks[tr.id];
