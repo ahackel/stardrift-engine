@@ -2,7 +2,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree } from '../src/engine/theory.js';
-import { starterSong, addTrack, removeTrack, songLike, emptySong } from '../src/editor/library.js';
+import { starterSong, addTrack, removeTrack, songLike, emptySong, upgradeSong, playInstrument } from '../src/editor/library.js';
 import { playsIn, setPlaysIn, togglePlaysIn, everywhere, renameTag } from '../src/editor/tags.js';
 import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
 import { clipsOf, tracksOf, linkClips, putClip, takeClip, renameClip } from '../src/editor/clips.js';
@@ -371,6 +371,19 @@ for (const [file, sg] of toCheck) {
   const rr = run(newEngine(SR, dst, 5), 12, (t, e) => { if (st && t > 3 && t < 3.01) e.sting(st.id); });
   ok(rr.bad === 0 && rr.peak > 0.01, 'a song built from parts plays');
   ok(JSON.stringify(o2) && dst.instruments && Object.keys(dst.instruments).length === dst.tracks.length, 'every track owns its sound');
+}
+
+// Shared instruments: two tracks can play one; tracks keep their own names; an instrument no track plays goes
+{
+  const sg = upgradeSong(structuredClone(song)), [a, b] = sg.tracks.filter((t) => sg.instruments[t.instrument]?.type !== 'drums');
+  const nameB = b.name, oldB = b.instrument;
+  playInstrument(sg, b, a.instrument);
+  ok(b.instrument === a.instrument && b.name === nameB && !sg.instruments[oldB], 'a track can play another track\'s instrument (and keeps its name)');
+  const again = upgradeSong(structuredClone(sg));
+  ok(again.tracks.filter((t) => t.instrument === a.instrument).length === 2 && again.tracks.every((t) => t.name), 'a shared instrument stays shared, every track has a name');
+  const e = newEngine(SR, sg, 2), heard = new Set();
+  run(e, 20, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') heard.add(ev.track); });
+  ok(heard.size > 2, 'a song with a shared instrument plays');
 }
 
 // Shared clips: one clip on two tracks plays on both; taking it off one keeps it, off the last drops it
