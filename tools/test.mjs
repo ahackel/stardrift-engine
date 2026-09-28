@@ -1,7 +1,7 @@
 // node tools/test.mjs — engine sanity checks (determinism, mood routing, hot reload, audio health, stingers, theme)
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
-import { degSemis, foldDegree } from '../src/engine/theory.js';
+import { degSemis, foldDegree, prepareSong } from '../src/engine/theory.js';
 import { starterSong, addTrack, removeTrack, songLike, emptySong, upgradeSong, playInstrument } from '../src/editor/library.js';
 import { playsIn, setPlaysIn, togglePlaysIn, everywhere, renameTag } from '../src/editor/tags.js';
 import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
@@ -218,7 +218,7 @@ for (const [file, sg] of toCheck) {
     const spb = sg.stepsPerBeat || 4, ctx0 = { spb, stepsPerBar: spb * (sg.beatsPerBar || 4) };
     for (const b of sg.blocks.filter((x) => !x.theme)) {
       const tr = tracksOf(sg, b.id)[0], drums = sg.instruments[tr.instrument]?.type === 'drums';
-      const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: (tr.poly || 1) > 1, mode: b.mode || tr.mode || 'chord' });
+      const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: (sg.instruments[tr.instrument]?.poly || 1) > 1, mode: b.mode || tr.mode || 'chord' });
       for (const c of cands) {
         n++;
         const toks = expandTokens(c.value.pattern), len = Math.round((b.beats || 4) * spb);
@@ -401,6 +401,17 @@ for (const [file, sg] of toCheck) {
   ok(a.clips.includes('shared_one') && b.clips.includes('shared_one') && !a.clips.includes(id), 'renaming a clip renames it on every track');
   ok(!takeClip(sg, a, 'shared_one') && sg.blocks.some((x) => x.id === 'shared_one'), 'off one track, the clip stays for the other');
   ok(takeClip(sg, b, 'shared_one') && !sg.blocks.some((x) => x.id === 'shared_one'), 'off the last track, the clip is gone');
+}
+
+// How many notes it plays at once is the instrument's: an older song's track poly moves to its instrument (the first
+// track that plays it says), and the engine reads either
+{
+  const old = structuredClone(song), tr = old.tracks.find((t) => (old.instruments[t.instrument].poly || 1) > 1), inst = old.instruments[tr.instrument];
+  tr.poly = inst.poly;
+  delete inst.poly;
+  ok(prepareSong(old).trackMap[tr.id].poly === tr.poly && prepareSong(song).trackMap[tr.id].poly === tr.poly, 'the engine takes poly from the instrument (or an older song\'s track)');
+  const up = upgradeSong(structuredClone(old));
+  ok(up.instruments[tr.instrument].poly === tr.poly && up.tracks.every((t) => t.poly === undefined), 'an older song\'s track poly moves to its instrument');
 }
 
 // A clip swapped for a copy of its own while it plays (make unique) plays on

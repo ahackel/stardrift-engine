@@ -3,7 +3,7 @@
 //   .        rest (releases a held note)
 //   -        hold the previous note
 //   3        note: chord-tone index / scale degree / key degree (depends on block mode)
-//   *        the whole current chord (poly tracks) or a fast chip arpeggio (mono tracks with `arp`)
+//   *        the whole current chord (instruments with poly) or a fast chip arpeggio (instruments with `arp`)
 //   0+4+8    several notes at once
 //   k s h    drum hits: k kick, s snare, h hat, o open hat, c crash/wash, t tom, m metal tick
 // Suffixes: ' octave up, , octave down, # / b semitone up/down

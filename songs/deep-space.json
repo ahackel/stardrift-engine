@@ -51,7 +51,7 @@
   ],
 
   "instruments": {
-    "pad":   { "type": "wave", "wave": "soft", "smooth": true, "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 650, "cutoffIntensity": 2200, "cutoffTension": -200, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
+    "pad":   { "poly": 10, "type": "wave", "wave": "soft", "smooth": true, "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 650, "cutoffIntensity": 2200, "cutoffTension": -200, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
     "bass":  { "type": "triangle", "env": { "a": 0.005, "d": 0.4, "s": 0.85, "r": 0.12 }, "cutoff": 3000 },
     "arp":   { "type": "pulse", "duty": 0.125, "env": { "a": 0.002, "d": 0.18, "s": 0.2, "r": 0.15 }, "cutoff": 1200, "cutoffIntensity": 3500, "filterEnv": { "amount": 2, "decay": 0.12 }, "arp": 24 },
     "lead":  { "type": "pulse", "duty": 0.25, "pwm": { "depth": 0.12, "rate": 0.3 }, "env": { "a": 0.04, "d": 0.5, "s": 0.65, "r": 0.5 }, "vibrato": { "depth": 0.18, "rate": 5.2, "delay": 0.3 }, "glide": 0.05, "cutoff": 2200, "cutoffIntensity": 3000, "filterEnv": { "amount": 1, "decay": 0.3 } },
@@ -60,7 +60,7 @@
   },
 
   "tracks": [
-    { "id": "pad",   "instrument": "pad",   "octave": 3, "poly": 10, "volume": 0.15, "pan": 0,    "echo": 0.05, "reverb": 0.7,  "follow": true, "stickiness": 3,   "layer": { "min": 0,    "max": 1,    "chance": 1 },    "color": "#a79bff", "clips": ["hold", "open", "swell", "cluster"] },
+    { "id": "pad",   "instrument": "pad",   "octave": 3, "volume": 0.15, "pan": 0,    "echo": 0.05, "reverb": 0.7,  "follow": true, "stickiness": 3,   "layer": { "min": 0,    "max": 1,    "chance": 1 },    "color": "#a79bff", "clips": ["hold", "open", "swell", "cluster"] },
     { "id": "bass",  "instrument": "bass",  "octave": 2,               "volume": 0.3,  "pan": 0,    "echo": 0,    "reverb": 0.08, "follow": true, "stickiness": 3,   "layer": { "min": 0.15, "max": 1,    "chance": 0.95 }, "color": "#5b8cff", "clips": ["drone", "root", "pulse", "walk", "eighths", "octave", "heartbeat", "syncopated"] },
     { "id": "arp",   "instrument": "arp",   "octave": 4,               "volume": 0.2,  "pan": -0.4, "echo": 0.45, "reverb": 0.3,                   "stickiness": 2,   "layer": { "min": 0.22, "max": 1,    "chance": 0.8 },  "color": "#6ff0a8", "clips": ["slow", "sparse", "up", "cascade", "tension", "build", "chip"] },
     { "id": "lead",  "instrument": "lead",  "octave": 4,               "volume": 0.2,  "pan": 0.3,  "echo": 0.4,  "reverb": 0.45,                  "stickiness": 1.5, "layer": { "min": 0.3,  "max": 1,    "chance": 0.7 },  "color": "#ff8a5c", "clips": ["theme_head", "theme_seq", "theme", "theme_peak", "lead_tension", "call"] },

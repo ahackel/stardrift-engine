@@ -148,7 +148,11 @@ export function prepareSong(raw) {
   s.scale = SCALES[s.scaleName];
   s.stepsPerBar = s.spb * s.bpb;
 
-  s.tracks = (raw.tracks || []).map((t) => ({ ...t, inst: s.instruments[t.instrument] || { type: 'pulse' } }));
+  // how many notes a track plays at once is its instrument's (poly; older songs had it on the track)
+  s.tracks = (raw.tracks || []).map((t) => {
+    const inst = s.instruments[t.instrument] || { type: 'pulse' };
+    return { ...t, inst, poly: inst.poly ?? t.poly };
+  });
   s.trackMap = Object.fromEntries(s.tracks.map((t) => [t.id, t]));
 
   s.progressions = (raw.progressions || []).map((p) => {

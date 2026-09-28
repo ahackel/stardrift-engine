@@ -52,17 +52,17 @@
 
   "instruments": {
     "square":  { "type": "pulse", "duty": 0.5, "env": { "a": 0.002, "d": 0.12, "s": 0.55, "r": 0.04 }, "vibrato": { "depth": 0.08, "rate": 6, "delay": 0.2 }, "cutoff": 5000, "cutoffIntensity": 3000 },
-    "stab":    { "type": "pulse", "duty": 0.25, "env": { "a": 0.002, "d": 0.09, "s": 0.2, "r": 0.04 }, "cutoff": 3000, "cutoffIntensity": 3000 },
+    "stab":    { "poly": 3, "type": "pulse", "duty": 0.25, "env": { "a": 0.002, "d": 0.09, "s": 0.2, "r": 0.04 }, "cutoff": 3000, "cutoffIntensity": 3000 },
     "tri":     { "type": "triangle", "env": { "a": 0.002, "d": 0.25, "s": 0.7, "r": 0.04 }, "cutoff": 4000 },
     "sparkle": { "type": "pulse", "duty": 0.125, "env": { "a": 0.001, "d": 0.25, "s": 0, "r": 0.2 }, "cutoff": 7000 },
-    "ocarina": { "type": "wave", "wave": "sine", "smooth": true, "unison": 2, "detune": 6, "env": { "a": 0.25, "d": 1, "s": 0.75, "r": 0.8 }, "vibrato": { "depth": 0.1, "rate": 4.5, "delay": 0.4 }, "cutoff": 2500 },
+    "ocarina": { "poly": 6, "type": "wave", "wave": "sine", "smooth": true, "unison": 2, "detune": 6, "env": { "a": 0.25, "d": 1, "s": 0.75, "r": 0.8 }, "vibrato": { "depth": 0.1, "rate": 4.5, "delay": 0.4 }, "cutoff": 2500 },
     "noise":   { "type": "drums", "kit": "chip", "cutoff": 12000 }
   },
 
   "tracks": [
-    { "id": "pad",     "instrument": "ocarina", "octave": 4, "poly": 6, "volume": 0.12, "pan": -0.1, "echo": 0.1,  "reverb": 0.5,  "follow": true, "stickiness": 3,   "layer": { "min": 0,    "max": 0.55, "chance": 1 },    "color": "#a79bff", "clips": ["pad_hold", "bonus", "under"] },
+    { "id": "pad",     "instrument": "ocarina", "octave": 4, "volume": 0.12, "pan": -0.1, "echo": 0.1,  "reverb": 0.5,  "follow": true, "stickiness": 3,   "layer": { "min": 0,    "max": 0.55, "chance": 1 },    "color": "#a79bff", "clips": ["pad_hold", "bonus", "under"] },
     { "id": "bass",    "instrument": "tri",     "octave": 2,            "volume": 0.34, "pan": 0,    "echo": 0,    "reverb": 0.05, "follow": true, "stickiness": 2.5, "layer": { "min": 0.15, "max": 1,    "chance": 0.95 }, "color": "#5b8cff", "clips": ["hold", "oompah", "bounce", "walk", "calypso", "octaves", "sneak", "castle"] },
-    { "id": "stabs",   "instrument": "stab",    "octave": 4, "poly": 3, "volume": 0.12, "pan": -0.3, "echo": 0.15, "reverb": 0.2,                  "stickiness": 2,   "layer": { "min": 0.3,  "max": 1,    "chance": 0.8 },  "color": "#6ff0a8", "clips": ["offbeat", "stabs_calypso", "star", "build", "tension"] },
+    { "id": "stabs",   "instrument": "stab",    "octave": 4, "volume": 0.12, "pan": -0.3, "echo": 0.15, "reverb": 0.2,                  "stickiness": 2,   "layer": { "min": 0.3,  "max": 1,    "chance": 0.8 },  "color": "#6ff0a8", "clips": ["offbeat", "stabs_calypso", "star", "build", "tension"] },
     { "id": "lead",    "instrument": "square",  "octave": 4,            "volume": 0.2,  "pan": 0.15, "echo": 0.2,  "reverb": 0.25,                 "stickiness": 1.5, "layer": { "min": 0.3,  "max": 1,    "chance": 0.75 }, "color": "#ff8a5c", "clips": ["theme", "theme_star", "theme_hop", "creep", "lead_castle", "climb", "fanfare"] },
     { "id": "twinkle", "instrument": "sparkle", "octave": 5,            "volume": 0.09, "pan": 0.4,  "echo": 0.5,  "reverb": 0.45,                                    "layer": { "min": 0,    "max": 0.65, "chance": 0.85 }, "color": "#c3ef6b", "clips": ["scatter", "twinkle_theme", "coins", "drip"] },
     { "id": "drums",   "instrument": "noise",                           "volume": 0.5,  "pan": 0,    "echo": 0.03, "reverb": 0.1,                  "stickiness": 2,   "layer": { "min": 0.28, "max": 1,    "chance": 0.9 },  "color": "#ff6b9a", "clips": ["skip", "dr_bounce", "dr_calypso", "dr_star", "dr_under", "dr_castle", "dr_build", "fill_roll", "fill_toms", "fill_splash", "fill_bump"] }
