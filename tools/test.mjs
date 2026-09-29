@@ -2,13 +2,15 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree, prepareSong } from '../src/engine/theory.js';
-import { starterSong, addTrack, removeTrack, songLike, emptySong, upgradeSong, playInstrument } from '../src/editor/library.js';
+import { starterSong, addTrack, removeTrack, songLike, varySong, emptySong, upgradeSong, playInstrument, copySound } from '../src/editor/library.js';
 import { playsIn, setPlaysIn, togglePlaysIn, everywhere, renameTag } from '../src/editor/tags.js';
 import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
-import { stacksNotes } from '../src/editor/util.js';
+import { stacksNotes, copyName, uniqueId } from '../src/editor/util.js';
 import { clipsOf, tracksOf, linkClips, putClip, takeClip, renameClip } from '../src/editor/clips.js';
 import { diskSamples } from './load-samples.mjs';
 import { KITS } from '../src/engine/drums.js';
+import { varyBlock, varyProgression, varySound, varyTrack, varyFeel } from '../src/engine/compose.js';
+import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_PARAMS } from '../src/engine/params.js';
 
 const SAMPLES = await diskSamples();
 // an engine with the sample library loaded, as the player has it
@@ -163,6 +165,106 @@ for (const ex of examples) {
 {
   const ex = examples[0], src = readJson(`../${ex.song}`), a = songLike(src, lib, new SeedRng(5), { ex }), b = songLike(src, lib, new SeedRng(5), { ex });
   ok(JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(songLike(src, lib, new SeedRng(6), { ex })), 'songs like an example: same seed, same song');
+  // how different, and what may change
+  const keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'], i = keys.indexOf(src.key);
+  const little = songLike(src, lib, new SeedRng(7), { ex, change: 0.15 });
+  ok(i < 0 || [keys[(i + 5) % 12], keys[(i + 7) % 12]].includes(little.key), `a little different: a key a fifth away (${src.key} → ${little.key})`);
+  const only = songLike(src, lib, new SeedRng(8), { ex, change: 1, vary: ['chords'] });
+  ok(only.key === src.key && only.bpm === src.bpm && JSON.stringify(only.theme) === JSON.stringify(src.theme) && JSON.stringify(only.blocks) === JSON.stringify(src.blocks)
+    && JSON.stringify(only.progressions) !== JSON.stringify(src.progressions), 'only the chords change when only chords may');
+}
+{
+  // varying in place: what is selected changes by the amount asked, the rest stays
+  const src = readJson('../songs/deep-space.json'), sg = upgradeSong(structuredClone(src)), before = JSON.stringify(sg.instruments);
+  const same = varySong(sg, lib, new SeedRng(3), { change: 1, vary: ['chords'] });
+  ok(same === sg && sg.name === src.name && JSON.stringify(sg.blocks) === JSON.stringify(upgradeSong(structuredClone(src)).blocks) && JSON.stringify(sg.instruments) === before
+    && JSON.stringify(sg.progressions) !== JSON.stringify(upgradeSong(structuredClone(src)).progressions), 'varying a song in place: same song, only the chords change');
+  const inst = varySong(upgradeSong(structuredClone(src)), lib, new SeedRng(4), { change: 1, vary: ['sounds'] });
+  ok(JSON.stringify(inst.instruments) !== before, 'a song without a style: its instruments move');
+  const t = sg.blocks.find((b) => !b.theme && !b.tags?.includes('fill')), tr = tracksOf(sg, t.id)[0];
+  const ctx = { spb: 4, stepsPerBar: 16, drums: sg.instruments[tr.instrument].type === 'drums', poly: false, mode: 'scale' };
+  const dist = (a, b) => a.pattern.split(/\s+/).filter((x, i) => x !== b.pattern.split(/\s+/)[i]).length;
+  let little = 0, lot = 0;
+  for (let i = 0; i < 40; i++) {
+    little += dist(varyBlock(t, new SeedRng(i), ctx, 0.05) || t, t);
+    lot += dist(varyBlock(t, new SeedRng(i), ctx, 1) || t, t);
+  }
+  ok(little < lot, `a clip: a little differs less than a lot (${little} < ${lot} changed steps)`);
+  ok(varyProgression(sg.progressions[0], new SeedRng(1), [0, 2, 3, 5, 7, 8, 10], 0.5)?.chords !== undefined && varySound(sg.instruments[tr.instrument], new SeedRng(1), 0.5) !== null, 'sequences and sounds vary');
+  // every setting can change: each one params.js lists moves in some variation of a sound it applies to
+  const get = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+  const moved = new Set();
+  const sounds = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample'].flatMap((type) => [
+    { type, env: { a: 0.01, d: 0.3, s: 0.6, r: 0.3 } },
+    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20 },
+  ]).concat([{ type: 'drums', kit: 'clean' }]);
+  for (const snd of sounds) {
+    for (let i = 0; i < 60; i++) {
+      const v = varySound(snd, new SeedRng(i), 1);
+      for (const [path] of SOUND_PARAMS) if (JSON.stringify(get(v, path)) !== JSON.stringify(get(snd, path))) moved.add(path);
+      for (const k of ['type', 'wave', 'smooth', 'amp', 'body', 'kit']) if (JSON.stringify(v[k]) !== JSON.stringify(snd[k])) moved.add(k);
+      if (snd.type === 'drums') for (const [p] of PAD_PARAMS) if (Object.values(v.kit || {}).some((h) => h?.[p] !== undefined)) moved.add(`pad.${p}`);
+    }
+  }
+  const track = { id: 't', instrument: 'x', volume: 0.3, octave: 4 };
+  for (let i = 0; i < 60; i++) {
+    const v = varyTrack(track, { type: 'pulse' }, new SeedRng(i), 1);
+    for (const [path] of TRACK_PARAMS) if (get(v, path) !== get(track, path)) moved.add(`track.${path}`);
+    if (v.octave !== 4) moved.add('track.octave');
+    const sg2 = { swing: 0, humanize: 0.1, master: {}, leadIn: 2 };
+    varyFeel(sg2, new SeedRng(i), 1);
+    for (const [path] of SONG_PARAMS) if (get(sg2, path) !== undefined && get(sg2, path) !== { swing: 0, humanize: 0.1 }[path]) moved.add(`song.${path}`);
+    if (sg2.leadIn !== 2) moved.add('song.leadIn');
+  }
+  const all = [...SOUND_PARAMS.map(([p]) => p), 'type', 'wave', 'smooth', 'amp', 'body', 'kit', ...PAD_PARAMS.map(([p]) => `pad.${p}`),
+    ...TRACK_PARAMS.map(([p]) => `track.${p}`), 'track.octave', ...SONG_PARAMS.map(([p]) => `song.${p}`), 'song.leadIn'];
+  const never = all.filter((p) => !moved.has(p));
+  ok(!never.length, `every setting of instruments, tracks and the song's feel varies (${all.length})${never.length ? ` — never: ${never.join(', ')}` : ''}`);
+  // … and a little is less than a lot
+  const flat = (o, pre = '', out = {}) => { for (const [k, v] of Object.entries(o || {})) if (v && typeof v === 'object' && !Array.isArray(v)) flat(v, `${pre}${k}.`, out); else out[pre + k] = v; return out; };
+  const diff = (x, y) => { const fx = flat(x), fy = flat(y); return [...new Set([...Object.keys(fx), ...Object.keys(fy)])].filter((k) => JSON.stringify(fx[k]) !== JSON.stringify(fy[k])).length; };
+  let few = 0, many = 0;
+  for (const [, snd] of Object.entries(sg.instruments)) for (let i = 0; i < 20; i++) { few += diff(snd, varySound(snd, new SeedRng(i), 0.05)); many += diff(snd, varySound(snd, new SeedRng(i), 1)); }
+  ok(few < many / 2, `a sound: a little changes fewer settings than a lot (${few} < ${many})`);
+  // the editor's controls and params.js agree: every slider and knob is listed, with the same range
+  const ui = readFileSync(new URL('../src/editor/instruments.js', import.meta.url), 'utf8');
+  const listed = new Map([...SOUND_PARAMS, ...TRACK_PARAMS].map(([p, min, max]) => [p, [min, max]]));
+  const wrong = [...ui.matchAll(/(?:knob|slider)\('[^']*', '([\w.]+)', (-?[\d.]+), (-?[\d.]+)/g)]
+    .filter(([, p, min, max]) => { const r = listed.get(p); return !r || r[0] !== +min || r[1] !== +max; }).map(([, p]) => p);
+  ok(!wrong.length, `every instrument and track control is in params.js, with its range${wrong.length ? ` — not: ${wrong.join(', ')}` : ''}`);
+  // breath: air in the note at the level its curve gives, relative to the tone, the same for every type (a string too)
+  {
+    const { Synth } = await import('../src/engine/synth.js');
+    const measure = (def) => { // the tone, and what breath adds to it (the same random phases, so the difference is the breath)
+      const run = (d) => {
+        let seed = 7;
+        const rnd = Math.random;
+        Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+        const s = new Synth(SR);
+        s.preview(d, [], { volume: 0.3 });
+        s.pv.noteOn([69], 0.8);
+        const out = Array.from({ length: SR / 2 }, () => s.pv.render());
+        Math.random = rnd;
+        return out;
+      };
+      const a = run({ ...def, breath: 0 }), b = run(def);
+      let t = 0, n = 0;
+      for (let i = SR / 4; i < SR / 2; i++) { t += a[i] ** 2; n += (b[i] - a[i]) ** 2; }
+      return 10 * Math.log10(n / t);
+    };
+    const env = { a: 0.01, d: 0.3, s: 0.8, r: 0.3 };
+    const levels = ['pulse', 'wave', 'fm', 'string', 'bowed'].map((type) => [type, measure({ type, env, breath: 0.25 })]);
+    ok(levels.every(([, db]) => db > -27 && db < -20), `breath at 25 % is a hint of air, for every type (${levels.map(([t, db]) => `${t} ${db.toFixed(0)} dB`).join(', ')})`);
+    const sg3 = upgradeSong({ ...structuredClone(song), instruments: { ...song.instruments, flute: { type: 'wave', noise: 0.08 } }, tracks: [...song.tracks, { id: 'fl', instrument: 'flute' }] });
+    ok(sg3.instruments.flute.breath === 0.25 && sg3.instruments.flute.noise === undefined, 'an older sound\'s noise becomes breath (0.08 → 0.25)');
+  }
+  // copies get the next free number
+  const taken = (list) => (x) => list.includes(x);
+  ok(copyName('Song', taken([])) === 'Song 001' && copyName('Song 001', taken([])) === 'Song 002' && copyName('Song', taken(['Song 001'])) === 'Song 002'
+    && copyName('riff_009', taken([]), '_') === 'riff_010' && uniqueId('riff', taken([])) === 'riff' && uniqueId('riff', taken(['riff', 'riff_001'])) === 'riff_002', 'copies take the next free number (Song → Song 001 → Song 002)');
+  const insts = { harp: { name: 'Harp' } };
+  copySound({ instruments: insts }, { id: 'harp', name: 'Harp', sound: {} });
+  ok(insts.harp_001.name === 'Harp 001', 'a second Harp is Harp 001');
 }
 for (const [file, sg] of toCheck) {
   const e = newEngine(SR, sg, 3);
@@ -210,7 +312,7 @@ for (const [file, sg] of toCheck) {
 // 11. Variations (compose.js): every candidate is valid song data of the right length, and a seed repeats them
 {
   const { Rng } = await import('../src/engine/rng.js');
-  const { blockVariations, progressionVariations, soundVariations, themeVariations } = await import('../src/engine/compose.js');
+  const { blockVariations, progressionVariations, themeVariations } = await import('../src/engine/compose.js');
   const { SCALES, parseChords } = await import('../src/engine/theory.js');
   const { expandTokens, parseToken } = await import('../src/engine/pattern.js');
   const bad = [];
@@ -227,7 +329,12 @@ for (const [file, sg] of toCheck) {
       }
     }
     for (const p of sg.progressions) for (const c of progressionVariations(p, new Rng(n++), SCALES[p.scale || sg.scale])) if (parseChords(c.value.chords).length < 1) bad.push(`${p.id}/${c.kind}`);
-    for (const [name, s] of Object.entries(sg.instruments)) for (const c of soundVariations(s, new Rng(n++))) if (c.value.type !== s.type) bad.push(`${name}/${c.kind}`);
+    for (const [name, s] of Object.entries(sg.instruments)) {
+      for (const a of [0.1, 0.5, 1]) {
+        const v = varySound(s, new Rng(n++), a);
+        if (v.name !== s.name || (v.type !== s.type && !['pulse', 'triangle', 'wave', 'fm'].includes(v.type)) || JSON.stringify(v) === JSON.stringify(s)) bad.push(`${name}/${a}`);
+      }
+    }
     if (sg.theme) for (const c of themeVariations(sg.theme, new Rng(n++), ctx0)) if (expandTokens(c.value.pattern).length !== Math.round(sg.theme.beats * spb)) bad.push(`theme/${c.kind}`);
   }
   ok(n > 100 && !bad.length, `variations are valid song data (${n} candidates)${bad.length ? ` — bad: ${bad.slice(0, 5)}` : ''}`);

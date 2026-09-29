@@ -192,7 +192,10 @@ export function compileInst(def = {}, sr, samples = {}) {
     // scaled so a normal-level note keeps its level while louder ones (chords) saturate
     driveG, driveBias: bias, driveOffset: Math.tanh(bias), driveNorm: driveG ? 0.5 / (Math.tanh(driveG * 0.5 + bias) - Math.tanh(bias)) : 1,
     amp: amp ? { pre: biquads(amp.pre, sr), post: biquads(amp.post, sr), gain: amp.gain } : null,
-    noise: Math.max(0, Math.min(1, def.noise || 0)), // breath: white noise under the tone, following its envelope
+    // breath 0..1: air around the note, as loud relative to the tone as the curve says (0.25 −24 dB, 0.5 −15 dB, 1 −6 dB);
+    // songs from before breath have `noise`, white noise at that level, which sounds about like 0.8 × noise
+    breath: def.breath > 0 ? 0.5 * Math.min(1, def.breath) ** 1.5 : Math.min(0.5, 0.8 * (def.noise || 0)),
+    breathCoef: 1 - Math.exp(-1 / (0.02 * sr)), // how fast breath follows the tone's loudness
     body: compileBody(def.body, sr),
     // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
     // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
@@ -272,6 +275,7 @@ class Voice {
     this.ens = new Float64Array(4).fill(1); this.ensT = 0;
     this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
     this.bows = []; // bowed: a string per player
+    this.f = 440; this.bms = 0; this.blo = 0; this.bband = 0; // breath: the note's frequency, the tone's power, the band's state
   }
   start(p, midi, vel, arp, short = false) {
     const legato = this.stage !== IDLE && p.glideCoef > 0;
@@ -319,7 +323,23 @@ class Voice {
       this.ens[u] = Math.pow(2, (k * (5 * Math.sin(TWO_PI * r[0] * a + r[2]) + 7 * fade * Math.sin(TWO_PI * r[1] * a + 3 * r[2]))) / 1200);
     }
   }
+  // one sample: the tone, and the breath around it
   render(p) {
+    const y = this.tone(p);
+    return p.breath && this.stage !== IDLE ? y + this.breathe(p, y) : y;
+  }
+  // Breath: noise in a band around the note (centred an octave up, about two octaves wide), so it sounds like air in
+  // the note rather than hiss beside it. Its level follows the tone's own (over 20 ms), so every type breathes alike,
+  // a string as it dies away too.
+  breathe(p, y) {
+    this.bms += (y * y - this.bms) * p.breathCoef;
+    const fc = Math.min(6000, Math.max(200, 2 * this.f)), F = 2 * Math.sin(Math.PI * fc * p.invSr);
+    this.blo += F * this.bband;
+    this.bband += F * (Math.random() * 2 - 1 - this.blo - this.bband); // a state-variable band-pass, Q 1
+    // the band keeps π·fc/sr of white noise's power (1/3): scaled back to the power of the tone
+    return this.bband * Math.sqrt(this.bms / ((Math.PI * fc * p.invSr) / 3)) * p.breath;
+  }
+  tone(p) {
     let lv = this.level;
     switch (this.stage) {
       case IDLE: return 0;
@@ -345,7 +365,7 @@ class Voice {
       const ramp = Math.min(1, (this.age - p.vibDelay) / 0.4);
       m += p.vibDepth * ramp * Math.sin(TWO_PI * p.vibRate * this.age);
     }
-    const f = 440 * Math.pow(2, (m - 69) / 12);
+    const f = (this.f = 440 * Math.pow(2, (m - 69) / 12));
     const sr = p.sr;
     let out = 0;
     if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
@@ -366,11 +386,11 @@ class Voice {
       this.spos += Math.pow(2, (m - z.root) / 12) * z.rate * p.invSr;
       if (z.loopEnd) { if (this.spos >= z.loopEnd) this.spos -= z.loopEnd - z.loopStart; }
       else if (this.spos >= d.length - 1) { this.stage = IDLE; this.level = 0; }
-      return (y + (p.noise ? p.noise * (Math.random() * 2 - 1) : 0)) * lv * this.vel * 5; // recordings sit at -16 dB: about as loud as a saw
+      return y * lv * this.vel * 5; // recordings sit at -16 dB: about as loud as a saw
     }
     if (p.type === 'string') {
       if (!this.kb) this.pluck(p, f); // the sound became a string while this voice was sounding
-      return (this.string(p, f) + (p.noise ? p.noise * (Math.random() * 2 - 1) : 0)) * lv * this.vel * 3.5;
+      return this.string(p, f) * lv * this.vel * 3.5;
     }
     if (p.type === 'fm') {
       const I = p.fmIndex * (1 - p.fmEnv + p.fmEnv * lv) * (0.5 + 0.5 * this.vel);
@@ -386,7 +406,6 @@ class Voice {
         this.mfb[u] = mod;
         out += Math.sin(TWO_PI * ph + I * mod);
       }
-      if (p.noise) out = out * (1 - 0.5 * p.noise) + p.noise * (Math.random() * 2 - 1) * p.U;
       return out * p.uniNorm * lv * this.vel;
     }
     let duty = p.duty, tb = null;
@@ -417,7 +436,6 @@ class Voice {
         out += tb[i] + (tb[i + 1] - tb[i]) * (x - i);
       }
     }
-    if (p.noise) out = out * (1 - 0.5 * p.noise) + p.noise * (Math.random() * 2 - 1) * p.U;
     return out * p.uniNorm * lv * this.vel;
   }
 }
