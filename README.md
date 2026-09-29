@@ -87,7 +87,8 @@ A mood change never cuts: the current section ends at a bar line within `within`
 | `src/engine/compose.js` | variations of clips, progressions, sounds and the theme (`vary*`: as big as asked), new themes (seeded, no DOM: portable to the Unity runtime) |
 | `src/worklet.js` / `src/player.js` | AudioWorklet host / main-thread API for web games |
 | `src/wav.js` | WAV encoder (offline render and the editor's audio export) |
-| `src/editor/*` | editor UI (game input, song rows, tracks, detail panel with block, progression, section, track, stinger and song editors, live chords, JSON; `knob.js` dials, `icons.js` pixel icons); `render-worker.js` exports audio |
+| `src/editor/*` | editor UI (game input, song rows, tracks, detail panel with block, progression, section, track, stinger and song editors, live chords, JSON; `knob.js` dials, `icons.js` pixel icons); panels move to Lit components one by one: `panel.js` (the base: draws from the song and selection, again on each change), `controls.js` (the shared controls), `vary.js` the first; `render-worker.js` exports audio |
+| `src/vendor/lit.js` | Lit 3.3.3 (BSD-3-Clause), the all-in-one bundle, kept here so the editor needs no build step and no network |
 | `songs/deep-space.json` | default song: ambient space, D dorian, 92 bpm |
 | `songs/night-transit.json` | dark synth-pop in the spirit of Depeche Mode: F minor, 116 bpm, four-on-the-floor, sequenced octave bass, 16th sequences, saw strings, metal hits, dotted-8th echo |
 | `songs/hop-hop-hooray.json` | playful platformer music in the spirit of Super Mario: C major, 138 bpm with a shuffle, NES voices (square lead, off-beat square stabs, triangle oom-pah bass, chip noise drums), a bouncy theme with a chromatic step, and worlds as sections: meadow, bonus (lydian), overworld, underground, castle (diminished 7th), run, star (mixolydian I–bVII) and a flagpole fanfare (bVI–bVII–I) |
