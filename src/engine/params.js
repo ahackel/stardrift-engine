@@ -3,7 +3,7 @@
 // [path, min, max, default, opts]
 //   log: the range is exponential (times, frequencies); step: values snap to it
 //   vary: [lo, hi] the part of the range a variation moves in (the rest is for people who mean it); a value already
-//     outside stays reachable
+//     outside stays reachable. Or a function of the sound that gives it
 //   off: at 0 the setting is removed (this key: the whole group, e.g. vibrato)
 //   when(sound, track): it applies (the oscillator's own settings, the vibrato's rate only with a vibrato …)
 
@@ -41,7 +41,8 @@ export const SOUND_PARAMS = [
   ['scoop', 0, 2, 0, { off: 'scoop', vary: [0, 0.8], when: melodic }],
   ['arp', 1, 60, 24, { step: 1, vary: [10, 40], when: (s) => !!s.arp }],
   // filter
-  ['cutoff', 60, 16000, 16000, { log: true, vary: [300, 16000] }],
+  // a high or band pass that moves far up leaves little: its variations stay lower
+  ['cutoff', 60, 16000, 16000, { log: true, vary: (s) => (s.filter === 'high' ? [60, 3000] : s.filter === 'band' ? [200, 6000] : [300, 16000]) }],
   ['resonance', 0.3, 6, 0.707, { log: true, vary: [0.5, 3] }],
   ['swell', 0, 3, 0, { off: 'swell', vary: [0, 1.5], when: melodic }],
   ['cutoffIntensity', -4000, 8000, 0, { step: 50, vary: [-1000, 4000] }],
@@ -54,7 +55,7 @@ export const SOUND_PARAMS = [
 ];
 // the settings that are a choice, not a number (compose.js varySound picks among them); the "plays" setting (one
 // note, chords, arpeggio) is not varied: it changes what the clips play
-export const SOUND_CHOICES = ['type', 'wave', 'smooth', 'amp', 'body', 'sample', 'kit', 'pads'];
+export const SOUND_CHOICES = ['type', 'wave', 'smooth', 'amp', 'body', 'sample', 'kit', 'pads', 'filter'];
 // the oscillator types a variation may switch between (the others need their own settings to sound right)
 export const SWAP_TYPES = ['pulse', 'triangle', 'wave', 'fm'];
 // a drum pad's pitch, decay and level: multipliers on the kit's

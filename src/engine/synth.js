@@ -1,6 +1,6 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, state-variable lowpass, ping-pong echo and a small Freeverb.
+// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, state-variable filter (low, band or high pass), ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -185,6 +185,9 @@ export function compileInst(def = {}, sr, samples = {}) {
     mipLimits: levelLimits(sr),
     cutoff: def.cutoff ?? 16000, cutoffIntensity: def.cutoffIntensity || 0, cutoffTension: def.cutoffTension || 0,
     q: def.resonance ?? 0.707,
+    // the filter's type: low (default) lets the lows through, band a band around the cutoff, high the highs. One
+    // state-variable filter gives all three at once, so the type costs nothing
+    filter: def.filter === 'band' ? 1 : def.filter === 'high' ? 2 : 0,
     // filter envelope: each note opens the filter by `amount` octaves (scaled by velocity), closing over `decay` s
     fenvAmt: def.filterEnv?.amount || 0, fenvCoef: Math.exp(-4.6 / (Math.max(0.005, def.filterEnv?.decay ?? 0.2) * sr)),
     gain: def.gain ?? 1,
@@ -505,6 +508,7 @@ class TrackBus {
     const g = Math.tan((Math.PI * Math.min(cut, this.sr * 0.45)) / this.sr);
     const k = 1 / Math.max(0.3, this.p.q);
     this.a1 = 1 / (1 + g * (g + k)); this.a2 = g * this.a1; this.a3 = g * this.a2;
+    this.k = k; this.bandG = Math.sqrt(k); // the band's peak: √Q, so resonance narrows it and lifts it a little
   }
   noteOn(midis, vel, short) {
     const p = this.p, vs = this.voices;
@@ -570,6 +574,7 @@ class TrackBus {
     const v2 = this.ic2 + this.a2 * this.ic1 + this.a3 * v3;
     this.ic1 = 2 * v1 - this.ic1;
     this.ic2 = 2 * v2 - this.ic2;
+    const y = p.filter === 0 ? v2 : p.filter === 1 ? v1 * this.bandG : x - this.k * v1 - v2; // low, band, high
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
       this.fade += this.fadeStep;
@@ -578,7 +583,7 @@ class TrackBus {
         if (this.fade === 0) { this.allOff(); this.fade = this.fadeTo = 1; } // faded out: its notes stop, silently
       }
     }
-    return v2 * this.vol * this.g * this.fade;
+    return y * this.vol * this.g * this.fade;
   }
 }
 
