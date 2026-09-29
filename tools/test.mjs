@@ -321,6 +321,32 @@ for (const [file, sg] of toCheck) {
   ok(Object.keys(sg.instruments).length === 3 && sg.tracks.length === 3, 'removing a track removes its blocks and unused instrument');
 }
 
+// Clip transforms (transform.js): every one keeps a clip valid, reverse and upside down twice give it back
+{
+  const { transform, canTransform, euclid, TRANSFORMS } = await import('../src/editor/transform.js');
+  const { toEvents, toTokens } = await import('../src/editor/grid.js');
+  const { expandTokens, parseToken } = await import('../src/engine/pattern.js');
+  const bad = [];
+  let n = 0;
+  for (const [, sg] of toCheck) {
+    const spb = sg.stepsPerBeat || 4;
+    for (const b of sg.blocks.filter((x) => !x.theme)) {
+      const tr = tracksOf(sg, b.id)[0], drums = sg.instruments[tr.instrument]?.type === 'drums', beats = b.beats || 4;
+      const toks = expandTokens(b.pattern, Math.round(beats * spb)), o = { drums, single: !drums && !stacksNotes(sg, tr) };
+      for (const [op] of TRANSFORMS) {
+        if (!canTransform(op, beats, drums)) continue;
+        const got = transform(toks, beats, op, o);
+        if (!got) continue;
+        n++;
+        if (got.tokens.length !== Math.round(got.beats * spb) || got.tokens.some((x) => x !== '.' && x !== '-' && parseToken(x).t !== 2)) bad.push(`${b.id}/${op}`);
+        if ((op === 'reverse' || op === 'flip') && transform(got.tokens, beats, op, o).tokens.join(' ') !== toTokens(toEvents(toks), toks.length).join(' ')) bad.push(`${b.id}/${op} twice`);
+      }
+    }
+  }
+  ok(n > 50 && !bad.length, `clip transforms keep every clip valid (${n})${bad.length ? ` — ${bad.slice(0, 6)}` : ''}`);
+  ok(euclid(3, 8, 16).map((x) => (x ? 'x' : '.')).join('') === 'x..x..x.x..x..x.', 'a drum row fills 3 in 8, again to the end');
+}
+
 // 11. Variations (compose.js): every candidate is valid song data of the right length, and a seed repeats them
 {
   const { Rng } = await import('../src/engine/rng.js');
