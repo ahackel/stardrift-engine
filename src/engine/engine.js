@@ -27,6 +27,8 @@ export class Engine {
     this.moodName = 'auto';
     this.locks = {};
     this.progLock = null;
+    this.secLock = null;
+    this.meterLen = 0; this.meterT = 0; // setMeters
     this.events = [];
     this.synth = new Synth(sampleRate);
     this.reset(song, seed);
@@ -141,6 +143,16 @@ export class Engine {
     this.emitState();
   }
 
+  // Hold one section (editor: stay in the part being worked on). The music moves there at the next bar line, then
+  // plays it again each time it ends, whatever mood is asked for. null = back to walking the section graph.
+  lockSection(id) {
+    this.secLock = id && this.song.sectionMap[id] ? id : null;
+    const sec = this.secLock && this.song.sectionMap[this.secLock];
+    if (sec && this.section !== sec) this.forceSection(sec.id);
+    else if (sec && this.nextSection && this.nextSection !== sec) { this.nextSection = sec; this.prepareLeadIn(sec); }
+    this.emitState();
+  }
+
   lock(trackId, blockId) {
     if (blockId) this.locks[trackId] = blockId;
     else delete this.locks[trackId];
@@ -216,7 +228,11 @@ export class Engine {
       outL[i] = syn.outL;
       outR[i] = syn.outR;
     }
+    if (this.meterLen && (this.meterT += n) >= this.meterLen) { this.meterT -= this.meterLen; this.emit({ type: 'levels', ...syn.takePeaks() }); }
   }
+
+  // levels events (the loudest sample of each track and of the master) about 30 times a second: the editor's meters
+  setMeters(on) { this.meterLen = on ? Math.round(this.sr / 30) : 0; this.meterT = 0; }
 
   // ---------------------------------------------------------------- sequencer
   tick() {
@@ -362,7 +378,7 @@ export class Engine {
     if (this.section) this.sectionBar++;
     if (this.section && !this.section.breath) this.barsSinceBreath = this.isThin() ? 0 : this.barsSinceBreath + 1;
     if (!this.section || this.sectionBar >= this.sectionBars) {
-      const next = this.forced || this.nextSection || (this.section ? this.chooseNext() : this.song.sectionMap[this.song.raw.startSection] || this.song.sections[0]);
+      const next = this.forced || this.nextSection || (this.section ? this.chooseNext() : this.song.sectionMap[this.secLock] || this.song.sectionMap[this.song.raw.startSection] || this.song.sections[0]);
       this.forced = null;
       this.startSection(next);
     } else {
@@ -394,7 +410,7 @@ export class Engine {
     this.sectionBars = Math.max(1, rng.pick(sec.bars) | 0);
     this.nextSection = null;
     // still on the way to a requested mood? keep bridging sections short
-    if (this.target.influence > 0.5 && this.distToTarget(sec) > 0.25) {
+    if (!this.secLock && this.target.influence > 0.5 && this.distToTarget(sec) > 0.25) {
       this.sectionBars = Math.min(this.sectionBars, Math.max(1, this.song.transitBars));
     }
 
@@ -655,7 +671,7 @@ export class Engine {
   // (those that play from intensity 0) for a few bars, then grows back. Only while things are calm.
   shouldBreathe() {
     const b = this.song.breath;
-    if (!b || !(b.every > 0) || this.section.breath) return false;
+    if (!b || !(b.every > 0) || this.section.breath || this.secLock) return false;
     if (!this.breathAt) this.breathAt = Math.round(b.every * this.rng.range(0.75, 1.25));
     if (this.barsSinceBreath < this.breathAt) return false;
     const t = this.target;
@@ -713,6 +729,7 @@ export class Engine {
 
   chooseNext() {
     const s = this.song, cur = this.section;
+    if (this.secLock && s.sectionMap[this.secLock]) return s.sectionMap[this.secLock];
     let list = Object.entries(cur.next || {}).filter(([id, w]) => s.sectionMap[id] && w > 0).map(([id, w]) => [s.sectionMap[id], +w]);
     if (!list.length) list = s.sections.map((x) => [x, 1]);
     const inf = this.target.influence;
@@ -729,7 +746,7 @@ export class Engine {
   }
 
   hurry(within) {
-    if (!this.section) return;
+    if (!this.section || this.secLock) return;
     if (this.distToTarget(this.section) < 0.2 && this.target.influence > 0) return;
     const end = this.sectionBar + 1 + Math.max(0, within | 0);
     if (end < this.sectionBars) this.sectionBars = end;
@@ -814,6 +831,7 @@ export class Engine {
       next: this.nextSection && this.nextSection.id,
       prog: this.prog && this.prog.id,
       progLocked: this.progLock,
+      secLocked: this.secLock,
       live: this.liveChord && { degree: this.liveChord.degree, shape: this.liveChord.shapeName },
       livePending: this.livePending ? (this.livePending.off ? -1 : this.livePending.degree) : null, // -1 = release pending
       chords: this.prog ? this.prog.chordList.map((c) => chordLabel(s.keyRoot, this.prog.scale, c)) : [],

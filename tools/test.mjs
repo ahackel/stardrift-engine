@@ -62,6 +62,19 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   ok(reached !== null && reached <= maxSecs, `setMood('${mood}') → ${want} after ${reached?.toFixed(1)}s via ${path.join(' → ')}`);
 }
 
+// 3b. A held section: the music moves there at a bar line and stays, whatever mood is asked for; released, it moves on
+{
+  const e = newEngine(SR, song, 11);
+  run(e, 20);
+  e.lockSection('wonder');
+  const seen = new Set();
+  run(e, 90, (t) => { if (t > 6) seen.add(e.section.id); if (t > 30 && t < 30.01) e.setMood('action'); }); // it moves there within two bars
+  ok(seen.size === 1 && seen.has('wonder'), `a held section plays on through a mood change (${[...seen].join(', ')})`);
+  e.lockSection(null);
+  run(e, 60, () => seen.add(e.section.id));
+  ok(seen.size > 1, `released, the music moves on (${[...seen].join(', ')})`);
+}
+
 // 4. Hot reload keeps the position
 {
   const e = newEngine(SR, song, 5);

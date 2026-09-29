@@ -6,6 +6,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
     super();
     this.engine = null;
     this.hold = false;
+    this.meters = false; // levels events for the editor's meters
     this.samples = null; // the sample library, once the main thread has loaded it
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
@@ -16,12 +17,14 @@ class StardriftProcessor extends AudioWorkletProcessor {
         if (!this.engine || m.restart) {
           this.engine = new Engine(sampleRate, m.song, m.seed ?? 1);
           if (this.samples) this.engine.setSamples(this.samples);
+          this.engine.setMeters(this.meters);
         } else this.engine.setSong(m.song);
         this.engine.setHold(this.hold);
         return;
       }
       if (m.type === 'samples') { this.samples = m.samples; this.engine?.setSamples(m.samples); return; }
       if (m.type === 'hold') { this.hold = !!m.on; this.engine?.setHold(this.hold); return; }
+      if (m.type === 'meters') { this.meters = !!m.on; this.engine?.setMeters(this.meters); return; }
       const e = this.engine;
       if (!e) return;
       switch (m.type) {
@@ -29,6 +32,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'mood': e.setMood(m.mood, m.options); break;
         case 'lock': e.lock(m.track, m.block); break;
         case 'lockProg': e.lockProgression(m.id); break;
+        case 'lockSec': e.lockSection(m.id); break;
         case 'chord': e.playChord(m.degree, m.shape); break;
         case 'sting': e.sting(m.id, m.options); break;
         case 'mute': e.setMute(m.track, m.on); break;

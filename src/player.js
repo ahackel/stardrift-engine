@@ -41,6 +41,7 @@ export class StardriftPlayer {
       for (const ev of e.data) this.emit(ev.type, ev);
     };
     this.send({ type: 'hold', on: this.holding });
+    if (this.meters) this.send({ type: 'meters', on: true });
     if (this.song) this.send({ type: 'load', song: this.song, seed: this.seed, restart: true });
     // recorded sounds load in the background: sample sounds join when they arrive, cymbals are synthesized until then
     this.samples = fetchSamples(library).then((samples) => {
@@ -162,6 +163,9 @@ export class StardriftPlayer {
   setParams(params) { this.send({ type: 'params', params }); }
   lockBlock(track, block) { this.send({ type: 'lock', track, block: block || null }); }
   lockProgression(id) { this.send({ type: 'lockProg', id: id || null }); } // null = back to automatic
+  // 'levels' events about 30 times a second: { tracks: { id: peak }, l, r } (the master before its soft clip)
+  setMeters(on) { this.meters = !!on; this.send({ type: 'meters', on: this.meters }); }
+  lockSection(id) { this.send({ type: 'lockSec', id: id || null }); } // plays this section again and again; null = the graph walk
   // Play your own chord from the next beat: degree 0-6 of the current scale (null = back to the progression)
   playChord(degree, shape = 'triad') { this.send({ type: 'chord', degree: degree ?? null, shape }); }
   // Stinger for a game event (song.stingers), from the next beat or options.at: 'step' | 'beat' | 'half' | 'bar'

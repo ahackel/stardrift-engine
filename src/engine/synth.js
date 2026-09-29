@@ -450,6 +450,7 @@ class TrackBus {
     this.fenv = 0; // filter envelope level (1 at a note's start, decays)
     this.u1 = 0; this.F1 = 0; // the clipper's previous input and its integral
     this.loud = 0; // the loudest voice's envelope level (swell)
+    this.peak = 0; // the loudest sample since the meters last looked (Synth.takePeaks)
   }
   set(tr, p, sr) {
     this.p = p; this.sr = sr;
@@ -692,6 +693,7 @@ export class Synth {
     this.tracks = {}; this.list = [];
     this.echo = new Echo(sr); this.reverb = new Reverb(sr); this.bus = new Master(sr);
     this.outL = 0; this.outR = 0;
+    this.peakL = 0; this.peakR = 0; // the master's loudest samples since the meters last looked (takePeaks)
     this.mutes = {}; this.solos = {};
     this.mood = [0.2, 0.1];
     this.pv = null; this.pvQ = []; this.pvI = 0; this.pvT = 0;
@@ -815,6 +817,8 @@ export class Synth {
     for (const b of this.list) {
       let x = b.render();
       if (b.pump) x *= 1 - b.pump * this.kick;
+      const a = x < 0 ? -x : x;
+      if (a > b.peak) b.peak = a;
       if (b.dbl) {
         const c = b.double(x);
         l += x * b.pl + c * b.ql; r += x * b.pr + c * b.qr;
@@ -847,7 +851,19 @@ export class Synth {
     this.reverb.process(v + (el + er) * 0.5 * this.echoToRev);
     const m = this.master, bus = this.bus;
     bus.process((l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m, (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m);
+    const al = bus.l < 0 ? -bus.l : bus.l, ar = bus.r < 0 ? -bus.r : bus.r; // before the soft clip: above 1 it squashes
+    if (al > this.peakL) this.peakL = al;
+    if (ar > this.peakR) this.peakR = ar;
     this.outL = Math.tanh(bus.l);
     this.outR = Math.tanh(bus.r);
+  }
+
+  // the loudest sample of each track and of the master (left, right) since the last call: the editor's meters
+  takePeaks() {
+    const tracks = {};
+    for (const id in this.tracks) { tracks[id] = this.tracks[id].peak; this.tracks[id].peak = 0; }
+    const out = { tracks, l: this.peakL, r: this.peakR };
+    this.peakL = this.peakR = 0;
+    return out;
   }
 }
