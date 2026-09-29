@@ -226,12 +226,11 @@ for (const ex of examples) {
   let few = 0, many = 0;
   for (const [, snd] of Object.entries(sg.instruments)) for (let i = 0; i < 20; i++) { few += diff(snd, varySound(snd, new SeedRng(i), 0.05)); many += diff(snd, varySound(snd, new SeedRng(i), 1)); }
   ok(few < many / 2, `a sound: a little changes fewer settings than a lot (${few} < ${many})`);
-  // the editor's controls and params.js agree: every slider and knob is listed, with the same range
+  // the editor's controls take their ranges from params.js: every setting they name is listed there
   const ui = readFileSync(new URL('../src/editor/instruments.js', import.meta.url), 'utf8');
-  const listed = new Map([...SOUND_PARAMS, ...TRACK_PARAMS].map(([p, min, max]) => [p, [min, max]]));
-  const wrong = [...ui.matchAll(/(?:knob|slider)\('[^']*', '([\w.]+)', (-?[\d.]+), (-?[\d.]+)/g)]
-    .filter(([, p, min, max]) => { const r = listed.get(p); return !r || r[0] !== +min || r[1] !== +max; }).map(([, p]) => p);
-  ok(!wrong.length, `every instrument and track control is in params.js, with its range${wrong.length ? ` — not: ${wrong.join(', ')}` : ''}`);
+  const listed = new Set([...SOUND_PARAMS, ...TRACK_PARAMS].map(([p]) => p));
+  const named = [...ui.matchAll(/(?:\bp|\bk|this\.p)\((?:d, )?'[^']*', '([\w.]+)'/g)].map(([, p]) => p), wrong = named.filter((p) => !listed.has(p));
+  ok(named.length > 40 && !wrong.length, `every instrument and track control is a setting in params.js (${named.length})${wrong.length ? ` — not: ${wrong.join(', ')}` : ''}`);
   // breath: air in the note at the level its curve gives, relative to the tone, the same for every type (a string too)
   {
     const { Synth } = await import('../src/engine/synth.js');

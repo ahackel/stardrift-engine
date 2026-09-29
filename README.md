@@ -83,11 +83,11 @@ A mood change never cuts: the current section ends at a bar line within `within`
 | `src/engine/pattern.js` | pattern language, mutations, theme forms |
 | `src/engine/theory.js` | scales, chords, song normalisation |
 | `src/engine/rng.js` | seeded RNG (mulberry32) |
-| `src/engine/params.js` | every setting of an instrument, a track and the song's feel, with its range: what variations change |
+| `src/engine/params.js` | every setting of an instrument, a track and the song's feel, with its range: what variations change and what the editor's knobs and sliders show; reading and writing a setting (`getAt`, `putParam`) |
 | `src/engine/compose.js` | variations of clips, progressions, sounds and the theme (`vary*`: as big as asked), new themes (seeded, no DOM: portable to the Unity runtime) |
 | `src/worklet.js` / `src/player.js` | AudioWorklet host / main-thread API for web games |
 | `src/wav.js` | WAV encoder (offline render and the editor's audio export) |
-| `src/editor/*` | editor UI (game input, song rows, tracks, detail panel with block, progression, section, track, stinger and song editors, live chords, JSON; `knob.js` dials, `icons.js` pixel icons); panels move to Lit components one by one: `panel.js` (the base: draws from the song and selection, again on each change), `controls.js` (the shared controls), `vary.js` the first; `render-worker.js` exports audio |
+| `src/editor/*` | editor UI (game input, song rows, tracks, detail panel with block, progression, section, track, stinger and song editors, live chords, JSON; `knob.js` dials, `icons.js` pixel icons); panels move to Lit components one by one: `panel.js` (the base: draws from the song and selection, again on each change), `controls.js` (the shared controls: slider, knob, choice, dropdown, colour …); done: `vary.js`, `instruments.js` (track and instrument editors); `render-worker.js` exports audio |
 | `src/vendor/lit.js` | Lit 3.3.3 (BSD-3-Clause), the all-in-one bundle, kept here so the editor needs no build step and no network |
 | `songs/deep-space.json` | default song: ambient space, D dorian, 92 bpm |
 | `songs/night-transit.json` | dark synth-pop in the spirit of Depeche Mode: F minor, 116 bpm, four-on-the-floor, sequenced octave bass, 16th sequences, saw strings, metal hits, dotted-8th echo |
@@ -119,7 +119,7 @@ In the editor, the top bar holds the transport and a **display**: on top the son
 - **Track:** its clips (one at least, then each with the slider's chance), its mix (volume, pan, echo, reverb, double, pump), when it plays (plays from / until, chance), its fade and octave, and its instrument (on every track that plays it). **changes** turns any of these off.
 - **Song:** the key (a little: a fifth away; a lot: maybe another mode, dorian for minor), the tempo, the feel (swing, humanize, glue, lead-in chord), the theme (a little: the first half stays; a lot: a new one), and the chords, clips, instruments and the tracks' mix, each with that chance. **changes** turns any of these off. Clips keep their role: kicks move but snare and hats stay, lines in scale or key degrees keep their notes.
 
-Every setting and its range is listed once, in `src/engine/params.js`: the variations read it, and a test checks that each control of the instrument and track editors is in it. Names, colours and how an instrument plays notes (one at a time, chords, arpeggio) are never varied. `songLike(song, lib, rng, { ex })` (a song in a style, with the sounds the style lists) and `varySong(song, lib, rng, { change })` are in `library.js`; `varyBlock`, `varyProgression`, `varySound`, `varyTrack` and `varyFeel` in `compose.js`. "Add a theme" makes up a new theme.
+Every setting and its range is listed once, in `src/engine/params.js`: the variations read it, and the instrument and track editors take each control's range from it (a test checks that every setting they name is listed). Names, colours and how an instrument plays notes (one at a time, chords, arpeggio) are never varied. `songLike(song, lib, rng, { ex })` (a song in a style, with the sounds the style lists) and `varySong(song, lib, rng, { change })` are in `library.js`; `varyBlock`, `varyProgression`, `varySound`, `varyTrack` and `varyFeel` in `compose.js`. "Add a theme" makes up a new theme.
 
 | File | What |
 |---|---|

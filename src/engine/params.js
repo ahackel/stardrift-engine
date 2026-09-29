@@ -89,3 +89,27 @@ export const SONG_PARAMS = [
 export const LEAD_INS = [0, 1, 2, 4];
 export const MODE_FAMILIES = [['minor', 'dorian', 'phrygian'], ['major', 'lydian', 'mixolydian']];
 export const MODE_ALIAS = { aeolian: 'minor', ionian: 'major' };
+
+// ---------------------------------------------------------------- reading and writing a setting (a path: 'env.a')
+export const getAt = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+export function setAt(o, path, v) {
+  const ks = path.split('.');
+  let x = o;
+  for (const k of ks.slice(0, -1)) x = x[k] && typeof x[k] === 'object' ? x[k] : (x[k] = {});
+  x[ks.at(-1)] = v;
+}
+// removes the key, and its group when that is left empty
+export function unsetAt(o, path) {
+  const ks = path.split('.'), parent = ks.length > 1 ? getAt(o, ks.slice(0, -1).join('.')) : o;
+  if (!parent) return;
+  delete parent[ks.at(-1)];
+  if (ks.length > 1 && !Object.keys(parent).length) unsetAt(o, ks.slice(0, -1).join('.'));
+}
+// a setting as the editor sets it: one that switches off is removed at its minimum (with its group: vibrato …)
+export function putParam(obj, [path, min, , , o], v) {
+  if (o.off && v <= min) unsetAt(obj, o.off);
+  else setAt(obj, path, v);
+}
+// the lists by path: SOUND['env.a'] → its entry
+const byPath = (list) => Object.fromEntries(list.map((p) => [p[0], p]));
+export const SOUND = byPath(SOUND_PARAMS), TRACK = byPath(TRACK_PARAMS), SONG = byPath(SONG_PARAMS);
