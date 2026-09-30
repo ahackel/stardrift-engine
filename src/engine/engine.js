@@ -8,6 +8,8 @@ import { Synth } from './synth.js';
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const DEFAULT_CHORD = { degree: 0, shape: SHAPES.triad, shapeName: 'triad', beats: 4 };
+// an arpeggio that runs the chord on single notes (sound.arpChord), in one voice
+const chordArp = (tr) => !!(tr.inst.arpChord && tr.inst.arp && (tr.poly || 1) <= 1);
 const isFill = (b) => !!b.tags && b.tags.includes('fill');
 // the same notes (a copy or a renamed clip), whatever its name or colour
 const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && JSON.stringify(a.theme ?? null) === JSON.stringify(b.theme ?? null);
@@ -284,7 +286,7 @@ export class Engine {
     if (st.t === REST) {
       if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; }
     } else if (st.t === HOLD) {
-      if (chordChanged && ts.sounding && tr.follow) this.play(tr, ts, ts.sounding, true, src);
+      if (chordChanged && ts.sounding && (tr.follow || chordArp(tr))) this.play(tr, ts, ts.sounding, true, src);
     } else if (st.prob >= 1 || this.rng.next() < st.prob) {
       this.play(tr, ts, st, false, src);
     } else if (ts.sounding) {
@@ -321,8 +323,9 @@ export class Engine {
       this.emit({ type: 'note', track: tr.id });
       return;
     }
-    const midis = this.resolve(tr, src, st.atoms);
+    let midis = this.resolve(tr, src, st.atoms);
     if (!midis.length) return;
+    if (midis.length === 1 && chordArp(tr)) midis = this.chordFrom(midis[0]);
     const short = st.short && !isFollow;
     this.at(isFollow ? 0 : this.lagOf(tr), () => this.synth.noteOn(tr.id, midis, vel, short));
     ts.sounding = st;
@@ -330,6 +333,16 @@ export class Engine {
   }
 
   scaleNow() { return this.prog ? this.prog.scale : this.song.scale; }
+
+  // A single note on an arpeggio that runs the chord (a tracker's 0xy): the note, then the chord's next tones above
+  // it, so the arpeggio starts on the melody and follows the harmony (a triad: three notes, a seventh chord: four)
+  chordFrom(m) {
+    const scale = this.scaleNow(), chord = this.chord, L = scale.length, root = foldDegree(chord.degree, L);
+    const pcs = new Set(chord.shape.map((o) => (((this.song.keyRoot + degSemis(scale, root + o)) % 12) + 12) % 12));
+    const out = [m];
+    for (let k = m + 1; k < m + 12 && out.length < chord.shape.length; k++) if (pcs.has(k % 12) && k < 128) out.push(k);
+    return out;
+  }
 
   resolve(tr, block, atoms) {
     const s = this.song, scale = this.scaleNow(), L = scale.length;
