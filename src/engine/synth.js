@@ -1,6 +1,6 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, state-variable filter (low or high pass), a 3-band EQ, ping-pong echo and a small Freeverb.
+// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -174,6 +174,18 @@ export function eqResponse(eq, sr = 48000) {
   return (f) => (c ? 20 * Math.log10(chainMag(c, sr, f)) : 0);
 }
 
+// The wah: a resonant band pass whose centre sweeps from WAH_LO up by depth × WAH_OCT octaves, with the tempo (once
+// every `beats`) or with each note's loudness (mode `note`: it opens as a note starts and closes as it fades, as an
+// envelope wah). The bitcrush keeps `bits` of each sample and holds it at `rate` Hz: the grit of early samplers.
+export const WAH_LO = 350, WAH_OCT = 3;
+const WAH_GAIN = 1.3; // the band's level back near the dry sound's
+function compileWah(w) {
+  if (!w) return null;
+  const q = Math.max(1, Math.min(10, w.resonance ?? 4));
+  return { note: w.mode === 'note', beats: Math.max(0.125, w.beats ?? 1), span: WAH_OCT * Math.max(0, Math.min(1, w.depth ?? 0.7)), k: 1 / q, gain: Math.sqrt(q) * WAH_GAIN };
+}
+const compileCrush = (c, sr) => (c ? { levels: 2 ** (Math.max(2, Math.min(16, Math.round(c.bits ?? 6))) - 1), step: Math.min(1, Math.max(500, c.rate ?? 11025) / sr) } : null);
+
 const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
 const WG_BUF = 4096, WG_MASK = WG_BUF - 1; // waveguides of the bowed string
@@ -217,6 +229,8 @@ export function compileInst(def = {}, sr, samples = {}) {
     breathCoef: 1 - Math.exp(-1 / (0.02 * sr)), // how fast breath follows the tone's loudness
     body: compileBody(def.body, sr),
     eq: compileEq(def.eq, sr), // after the filter
+    wah: compileWah(def.wah), // before the drive, as a pedal in front of an amp
+    crush: compileCrush(def.crush, sr), // after the filter, so the filter doesn't smooth the grit away
     // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
     // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
     // feedback roughens the modulator
@@ -471,9 +485,12 @@ class TrackBus {
     this.u1 = 0; this.F1 = 0; // the clipper's previous input and its integral
     this.loud = 0; // the loudest voice's envelope level (swell)
     this.peak = 0; // the loudest sample since the meters last looked (Synth.takePeaks)
+    this.w1 = 0; this.w2 = 0; this.wT = 0; this.wPh = 0; // the wah's filter state, its countdown to new coefficients, its sweep
+    this.cPh = 1; this.cHold = 0; // the bitcrush: its sample clock and the sample it holds
   }
-  set(tr, p, sr) {
-    this.p = p; this.sr = sr;
+  // bps: the song's beats per second (the wah sweeps with them)
+  set(tr, p, sr, bps = 2) {
+    this.p = p; this.sr = sr; this.bps = bps;
     this.vol = (tr.volume ?? 0.3) * p.gain;
     const pan = Math.max(-1, Math.min(1, tr.pan || 0));
     this.pl = Math.cos(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
@@ -517,6 +534,31 @@ class TrackBus {
     this.u1 = u; this.F1 = F;
     x = (y - p.driveOffset) * p.driveNorm;
     return amp ? chain(amp.post, this.zPost, x) * amp.gain : x;
+  }
+  // the wah: every 16 samples the centre moves (with the tempo, or with the loudest note), then one sample of a
+  // state-variable band pass, levelled to its peak
+  wah(x) {
+    const w = this.p.wah;
+    if (--this.wT <= 0) {
+      this.wT = 16;
+      let pos;
+      if (w.note) pos = this.loud;
+      else {
+        this.wPh = (this.wPh + (16 * this.bps) / (w.beats * this.sr)) % 1;
+        pos = 0.5 - 0.5 * Math.cos(TWO_PI * this.wPh);
+      }
+      const g = Math.tan((Math.PI * Math.min(WAH_LO * Math.pow(2, w.span * pos), this.sr * 0.45)) / this.sr);
+      this.wa1 = 1 / (1 + g * (g + w.k)); this.wa2 = g * this.wa1; this.wa3 = g * this.wa2;
+    }
+    const v3 = x - this.w2, v1 = this.wa1 * this.w1 + this.wa2 * v3, v2 = this.w2 + this.wa2 * this.w1 + this.wa3 * v3;
+    this.w1 = 2 * v1 - this.w1; this.w2 = 2 * v2 - this.w2;
+    return v1 * w.k * w.gain;
+  }
+  // the bitcrush: a new sample only at its rate, rounded to its bits
+  crush(x) {
+    const c = this.p.crush;
+    if ((this.cPh += c.step) >= 1) { this.cPh -= 1; this.cHold = Math.round(x * c.levels) / c.levels; }
+    return this.cHold;
   }
   setMood(intensity, tension) {
     const p = this.p;
@@ -576,6 +618,7 @@ class TrackBus {
       this.loud = loud;
     }
     if (p.body) x = chain(p.body.c, this.zBody, x) * p.body.gain;
+    if (p.wah) x = this.wah(x);
     if (p.driveG) x = this.drive(x);
 
     if (this.fenv > 0) this.fenv *= p.fenvCoef;
@@ -593,6 +636,7 @@ class TrackBus {
     this.ic1 = 2 * v1 - this.ic1;
     this.ic2 = 2 * v2 - this.ic2;
     let y = p.hp ? x - this.k * v1 - v2 : v2; // high or low pass
+    if (p.crush) y = this.crush(y);
     if (p.eq) y = chain(p.eq, this.zEq, y);
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
@@ -734,11 +778,12 @@ export class Synth {
       const poly = isDrum ? 6 : Math.max(1, Math.min(16, tr.poly || 1));
       let bus = this.tracks[tr.id];
       if (!bus || bus.voices.length !== poly || bus.isDrum !== isDrum) bus = new TrackBus(poly, isDrum);
-      bus.set(tr, p, this.sr);
+      bus.set(tr, p, this.sr, song.bpm / 60);
       next[tr.id] = bus;
     }
     this.tracks = next;
     this.list = Object.values(next);
+    this.bps = song.bpm / 60;
     const fx = song.fx;
     this.echo.set((fx.echo.beats * 60) / song.bpm, fx.echo.feedback, fx.echo.damp, fx.echo.lowcut);
     this.echoLevel = fx.echo.level;
@@ -790,7 +835,7 @@ export class Synth {
     if (json !== this.kbJson) {
       const p = compileInst(def, this.sr, this.samples), isDrum = p.type === 'drums';
       if (!this.kb || this.kb.isDrum !== isDrum) this.kb = new TrackBus(isDrum ? 6 : 8, isDrum);
-      this.kb.set({ volume, echo: 0.08, reverb: 0.25 }, p, this.sr);
+      this.kb.set({ volume, echo: 0.08, reverb: 0.25 }, p, this.sr, this.bps);
       this.kbJson = json;
       this.kbHeld = new Map();
     }
@@ -817,7 +862,7 @@ export class Synth {
     const voices = isDrum ? 6 : Math.max(1, Math.min(16, poly));
     if (!this.pv || this.pv.isDrum !== isDrum || this.pv.voices.length !== voices) this.pv = new TrackBus(voices, isDrum);
     this.pv.allOff();
-    this.pv.set({ volume, echo: 0.08, reverb: 0.25 }, p, this.sr);
+    this.pv.set({ volume, echo: 0.08, reverb: 0.25 }, p, this.sr, this.bps);
     this.pv.setMood(this.mood[0], this.mood[1]);
     this.pv.g = 1;
     const q = [];

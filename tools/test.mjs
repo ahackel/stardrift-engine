@@ -209,7 +209,7 @@ for (const ex of examples) {
   const moved = new Set();
   const sounds = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample'].flatMap((type) => [
     { type, env: { a: 0.01, d: 0.3, s: 0.6, r: 0.3 } },
-    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20, eq: { low: 0, mid: 0, midHz: 1000, high: 0 } },
+    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20, eq: { low: 0, mid: 0, midHz: 1000, high: 0 }, wah: { depth: 0.7 }, crush: { bits: 6 } },
   ]).concat([{ type: 'drums', kit: 'clean' }]);
   for (const snd of sounds) {
     for (let i = 0; i < 60; i++) {
@@ -433,7 +433,7 @@ for (const [file, sg] of toCheck) {
   ok(!badSrc.length, `fm and warm sources sound and stay finite${badSrc.length ? ` — ${badSrc}` : ''}`);
 }
 
-// 14b. The high pass filter and the EQ on a pulse stay finite and near its level; a flat EQ changes nothing, cuts make
+// 14b. The high pass filter, the wah, the bitcrush and the EQ on a pulse stay finite and near its level; a flat EQ changes nothing, cuts make
 // it quieter and a boost louder
 {
   const { renderPhrase } = await import('./lab/phrase.js');
@@ -452,7 +452,11 @@ for (const [file, sg] of toCheck) {
   if (!finite(cut) || cutDb > -3) off.push(`EQ cuts ${cutDb.toFixed(1)} dB`);
   const [boost, boostDb] = level({ eq: { low: 6, mid: 6, midHz: 800, high: 6 } });
   if (!finite(boost) || boostDb < 1 || boostDb > 12) off.push(`EQ boosts ${boostDb.toFixed(1)} dB`);
-  ok(!off.length, `the high pass filter and the EQ are healthy (EQ cut ${cutDb.toFixed(1)} dB, boost +${boostDb.toFixed(1)} dB)${off.length ? ` — ${off}` : ''}`);
+  for (const [name, x] of [['wah', { wah: {} }], ['wah on notes', { wah: { mode: 'note', resonance: 8 } }], ['bitcrush', { crush: { bits: 3, rate: 4000 } }]]) {
+    const [r, db] = level(x);
+    if (!finite(r) || db > 3 || db < -6) off.push(`${name} ${db.toFixed(1)} dB`);
+  }
+  ok(!off.length, `the high pass filter, the wah, the bitcrush and the EQ are healthy (EQ cut ${cutDb.toFixed(1)} dB, boost +${boostDb.toFixed(1)} dB)${off.length ? ` — ${off}` : ''}`);
 }
 
 // 15. Recorded sounds and the bowed string: samples play at the note's pitch, drum hits play their recording (and
