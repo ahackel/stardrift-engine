@@ -209,7 +209,7 @@ for (const ex of examples) {
   const moved = new Set();
   const sounds = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample'].flatMap((type) => [
     { type, env: { a: 0.01, d: 0.3, s: 0.6, r: 0.3 } },
-    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20 },
+    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20, eq: { low: 0, mid: 0, midHz: 1000, high: 0 } },
   ]).concat([{ type: 'drums', kit: 'clean' }]);
   for (const snd of sounds) {
     for (let i = 0; i < 60; i++) {
@@ -433,18 +433,26 @@ for (const [file, sg] of toCheck) {
   ok(!badSrc.length, `fm and warm sources sound and stay finite${badSrc.length ? ` — ${badSrc}` : ''}`);
 }
 
-// 14b. The filter's types: band and high pass on a pulse stay finite and near its level (a band keeps less)
+// 14b. The high pass filter and the EQ on a pulse stay finite and near its level; a flat EQ changes nothing, cuts make
+// it quieter and a boost louder
 {
   const { renderPhrase } = await import('./lab/phrase.js');
   const phrase = { bpm: 120, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0 . 2 . 4 . 7 . 0+2+4 - - - . . . .', beats: 4 } };
   const snd = { type: 'pulse', duty: 0.25, env: { a: 0.01, d: 0.3, s: 0.7, r: 0.2 } };
   const base = renderPhrase(phrase, snd, {}, { raw: true }).rms, off = [];
-  for (const [filter, cutoff, resonance] of [['band', 1200, 0.707], ['band', 1200, 4], ['high', 300, 0.707], ['high', 2000, 3]]) {
-    const r = renderPhrase(phrase, { ...snd, filter, cutoff, resonance }, {}, { raw: true });
-    const db = 20 * Math.log10(r.rms / base);
-    if (![...r.left, ...r.right].every(Number.isFinite) || db > 3 || db < -15) off.push(`${filter} ${cutoff} Hz ${db.toFixed(1)} dB`);
+  const level = (s) => { const r = renderPhrase(phrase, { ...snd, ...s }, {}, { raw: true }); return [r, 20 * Math.log10(r.rms / base)]; };
+  const finite = (r) => [...r.left, ...r.right].every(Number.isFinite);
+  for (const [cutoff, resonance] of [[300, 0.707], [2000, 3]]) {
+    const [r, db] = level({ filter: 'high', cutoff, resonance });
+    if (!finite(r) || db > 3 || db < -15) off.push(`high ${cutoff} Hz ${db.toFixed(1)} dB`);
   }
-  ok(!off.length, `band and high pass filters are healthy${off.length ? ` — ${off}` : ''}`);
+  const { compileInst } = await import('../src/engine/synth.js');
+  if (compileInst({ ...snd, eq: { low: 0, mid: 0, midHz: 1000, high: 0 } }, SR).eq !== null) off.push('a flat EQ is not left out');
+  const [cut, cutDb] = level({ eq: { low: -12, mid: -12, midHz: 1000, high: -12 } });
+  if (!finite(cut) || cutDb > -3) off.push(`EQ cuts ${cutDb.toFixed(1)} dB`);
+  const [boost, boostDb] = level({ eq: { low: 6, mid: 6, midHz: 800, high: 6 } });
+  if (!finite(boost) || boostDb < 1 || boostDb > 12) off.push(`EQ boosts ${boostDb.toFixed(1)} dB`);
+  ok(!off.length, `the high pass filter and the EQ are healthy (EQ cut ${cutDb.toFixed(1)} dB, boost +${boostDb.toFixed(1)} dB)${off.length ? ` — ${off}` : ''}`);
 }
 
 // 15. Recorded sounds and the bowed string: samples play at the note's pitch, drum hits play their recording (and

@@ -41,16 +41,20 @@ export const SOUND_PARAMS = [
   ['scoop', 0, 2, 0, { off: 'scoop', vary: [0, 0.8], when: melodic }],
   ['arp', 1, 60, 24, { step: 1, vary: [10, 40], when: (s) => !!s.arp }],
   // filter
-  // a high or band pass that moves far up leaves little: its variations stay lower
-  ['cutoff', 60, 16000, 16000, { log: true, vary: (s) => (s.filter === 'high' ? [60, 3000] : s.filter === 'band' ? [200, 6000] : [300, 16000]) }],
+  // a high pass that moves far up leaves little: its variations stay lower
+  ['cutoff', 60, 16000, 16000, { log: true, vary: (s) => (s.filter === 'high' ? [60, 3000] : [300, 16000]) }],
   ['resonance', 0.3, 6, 0.707, { log: true, vary: [0.5, 3] }],
   ['swell', 0, 3, 0, { off: 'swell', vary: [0, 1.5], when: melodic }],
   ['cutoffIntensity', -4000, 8000, 0, { step: 50, vary: [-1000, 4000] }],
   ['cutoffTension', -4000, 4000, 0, { step: 50, vary: [-1500, 1500] }],
   ['filterEnv.amount', 0, 5, 0, { off: 'filterEnv', vary: [0, 3] }],
   ['filterEnv.decay', 0.02, 2, 0.2, { log: true, vary: [0.04, 1], when: (s) => !!s.filterEnv }],
-  // drive, level
+  // drive, the EQ (varied only on a sound that has one), level
   ['drive', 0, 2, 0, { off: 'drive', vary: [0, 1], when: melodic }],
+  ['eq.low', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
+  ['eq.mid', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
+  ['eq.midHz', 200, 5000, 1000, { log: true, vary: [300, 3000], when: (s) => !!s.eq }],
+  ['eq.high', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
   ['gain', 0, 2, 1, { vary: [0.7, 1.3] }],
 ];
 // the settings that are a choice, not a number (compose.js varySound picks among them); the "plays" setting (one

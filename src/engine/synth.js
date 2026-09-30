@@ -1,6 +1,6 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, state-variable filter (low, band or high pass), ping-pong echo and a small Freeverb.
+// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, state-variable filter (low or high pass), a 3-band EQ, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -77,6 +77,11 @@ function biquads(list, sr) {
     let b0, b1, b2, a0, a1, a2;
     if (kind === 'lp') { b1 = 1 - cs; b0 = b2 = b1 / 2; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al; }
     else if (kind === 'hp') { b1 = -(1 + cs); b0 = b2 = (1 + cs) / 2; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al; }
+    else if (kind === 'ls' || kind === 'hs') { // shelves (RBJ): everything below (ls) or above (hs) f raised by db
+      const r = 2 * Math.sqrt(A) * al, s = kind === 'ls' ? 1 : -1, p = A + 1, m = A - 1;
+      b0 = A * (p - s * m * cs + r); b1 = 2 * s * A * (m - s * p * cs); b2 = A * (p - s * m * cs - r);
+      a0 = p + s * m * cs + r; a1 = -2 * s * (m + s * p * cs); a2 = p + s * m * cs - r;
+    }
     else { b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cs; a2 = 1 - al / A; }
     c.set([b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0], i * 5);
   });
@@ -158,6 +163,17 @@ function compileBody(spec, sr) {
   return { c, gain: 1 / Math.sqrt(pw / 24) };
 }
 
+// The EQ: a low shelf, a bell in the middle (its frequency the sound's own) and a high shelf, in dB. A sound's `eq` is
+// { low, mid, midHz, high }; bands at 0 dB are left out, so a flat EQ costs nothing.
+export const EQ_LOW = 250, EQ_HIGH = 4000, EQ_MID_Q = 0.9;
+export const eqBands = (eq) => eq ? [['ls', EQ_LOW, 0.707, eq.low || 0], ['peak', eq.midHz || 1000, EQ_MID_Q, eq.mid || 0], ['hs', EQ_HIGH, 0.707, eq.high || 0]].filter((b) => Math.abs(b[3]) > 0.01) : [];
+const compileEq = (eq, sr) => { const bands = eqBands(eq); return bands.length ? biquads(bands, sr) : null; };
+// the EQ's gain in dB at each frequency, for the editor's curve
+export function eqResponse(eq, sr = 48000) {
+  const c = compileEq(eq, sr);
+  return (f) => (c ? 20 * Math.log10(chainMag(c, sr, f)) : 0);
+}
+
 const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
 const WG_BUF = 4096, WG_MASK = WG_BUF - 1; // waveguides of the bowed string
@@ -185,9 +201,9 @@ export function compileInst(def = {}, sr, samples = {}) {
     mipLimits: levelLimits(sr),
     cutoff: def.cutoff ?? 16000, cutoffIntensity: def.cutoffIntensity || 0, cutoffTension: def.cutoffTension || 0,
     q: def.resonance ?? 0.707,
-    // the filter's type: low (default) lets the lows through, band a band around the cutoff, high the highs. One
-    // state-variable filter gives all three at once, so the type costs nothing
-    filter: def.filter === 'band' ? 1 : def.filter === 'high' ? 2 : 0,
+    // the filter's type: low pass (default) lets the lows through, `high` the highs. One state-variable filter gives
+    // both at once, so the type costs nothing
+    hp: def.filter === 'high',
     // filter envelope: each note opens the filter by `amount` octaves (scaled by velocity), closing over `decay` s
     fenvAmt: def.filterEnv?.amount || 0, fenvCoef: Math.exp(-4.6 / (Math.max(0.005, def.filterEnv?.decay ?? 0.2) * sr)),
     gain: def.gain ?? 1,
@@ -200,6 +216,7 @@ export function compileInst(def = {}, sr, samples = {}) {
     breath: def.breath > 0 ? 0.5 * Math.min(1, def.breath) ** 1.5 : Math.min(0.5, 0.8 * (def.noise || 0)),
     breathCoef: 1 - Math.exp(-1 / (0.02 * sr)), // how fast breath follows the tone's loudness
     body: compileBody(def.body, sr),
+    eq: compileEq(def.eq, sr), // after the filter
     // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
     // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
     // feedback roughens the modulator
@@ -464,6 +481,7 @@ class TrackBus {
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
     this.pump = Math.max(0, Math.min(1, tr.pump || 0)); // sidechain: dips on every kick
     if (p.body && this.zBody?.length !== p.body.c.length / 2.5) this.zBody = new Float64Array(p.body.c.length / 2.5);
+    if (p.eq && this.zEq?.length !== p.eq.length / 2.5) this.zEq = new Float64Array(p.eq.length / 2.5);
     if (p.amp && this.zPre?.length !== p.amp.pre.length / 2.5) this.zPre = new Float64Array(p.amp.pre.length / 2.5);
     if (p.amp && this.zPost?.length !== p.amp.post.length / 2.5) this.zPost = new Float64Array(p.amp.post.length / 2.5);
     // double tracking: a second take, a few ms late with a slowly wandering delay, on the other side;
@@ -508,7 +526,7 @@ class TrackBus {
     const g = Math.tan((Math.PI * Math.min(cut, this.sr * 0.45)) / this.sr);
     const k = 1 / Math.max(0.3, this.p.q);
     this.a1 = 1 / (1 + g * (g + k)); this.a2 = g * this.a1; this.a3 = g * this.a2;
-    this.k = k; this.bandG = Math.sqrt(k); // the band's peak: √Q, so resonance narrows it and lifts it a little
+    this.k = k;
   }
   noteOn(midis, vel, short) {
     const p = this.p, vs = this.voices;
@@ -574,7 +592,8 @@ class TrackBus {
     const v2 = this.ic2 + this.a2 * this.ic1 + this.a3 * v3;
     this.ic1 = 2 * v1 - this.ic1;
     this.ic2 = 2 * v2 - this.ic2;
-    const y = p.filter === 0 ? v2 : p.filter === 1 ? v1 * this.bandG : x - this.k * v1 - v2; // low, band, high
+    let y = p.hp ? x - this.k * v1 - v2 : v2; // high or low pass
+    if (p.eq) y = chain(p.eq, this.zEq, y);
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
       this.fade += this.fadeStep;
