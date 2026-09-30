@@ -57,13 +57,16 @@ export function foldDegree(deg, n) {
   return r;
 }
 
-// "i:8 IV(sus2):4 VII" -> [{degree, shape, shapeName, beats}]  (roman numerals or 1-based numbers)
+// "i:8 IV(sus2):4 .:4 VII" -> [{degree, shape, shapeName, beats}]  (roman numerals or 1-based numbers). "." is no
+// chord (N.C., nc: true): tracks rest their whole chords and play the rest over the home chord (degree 0).
 export function parseChords(str) {
   return String(str || '')
     .trim()
     .split(/\s+/)
     .filter(Boolean)
     .map((tok) => {
+      const nc = /^\.(?::(\d+(?:\.\d+)?))?$/.exec(tok);
+      if (nc) return { nc: true, degree: 0, shapeName: 'triad', shape: SHAPES.triad, beats: nc[1] ? Math.max(0.25, +nc[1]) : 4 };
       const m = /^([ivIV]+|\d+)(?:\((\w+)\))?(?::(\d+(?:\.\d+)?))?$/.exec(tok);
       if (!m) return null;
       const degree = /^\d+$/.test(m[1]) ? +m[1] - 1 : ROMAN.indexOf(m[1].toLowerCase());
@@ -102,14 +105,15 @@ export function romanNumeral(scale, deg, display = false) {
   return display ? base + (q === 'dim' ? '°' : q === 'aug' ? '+' : '') : base;
 }
 
-// [{degree, shapeName, beats}] -> "i:8 IV(sus2):4" (the inverse of parseChords)
+// [{degree, shapeName, beats}] -> "i:8 IV(sus2):4 .:4" (the inverse of parseChords)
 export function formatChords(scale, list) {
-  return list.map((c) => `${romanNumeral(scale, c.degree)}${c.shapeName !== 'triad' ? `(${c.shapeName})` : ''}:${c.beats}`).join(' ');
+  return list.map((c) => (c.nc ? `.:${c.beats}` : `${romanNumeral(scale, c.degree)}${c.shapeName !== 'triad' ? `(${c.shapeName})` : ''}:${c.beats}`)).join(' ');
 }
 
 // chord = {degree, shapeName}
 export function chordLabel(keyRoot, scale, chord) {
   if (!chord) return '–';
+  if (chord.nc) return 'N.C.';
   const d = chord.degree, name = noteName(keyRoot, scale, d);
   const q = { maj: '', min: 'm', dim: 'dim', aug: 'aug' }[chordQuality(scale, d)];
   switch (chord.shapeName) {

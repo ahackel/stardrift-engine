@@ -28,7 +28,7 @@ npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22
 
 - **Blocks** (clips in the editor) are 1–32 beats of pattern. A track lists the blocks it plays; notes are relative to the chord or scale, so every block fits every progression.
 - **Sections** (intro, calm, drift, tension, peak …) carry an intensity, a tension, a length and weighted `next` links: a graph the conductor walks.
-- **Progressions** are roman numerals, each in its own scale if it likes (lydian for wonder, phrygian for tension). The last beats of a section play a lead-in chord into the next.
+- **Progressions** are roman numerals, each in its own scale if it likes (lydian for wonder, phrygian for tension). The last beats of a section play a lead-in chord into the next. A `.` is no chord (N.C., e.g. `i:4 .:4`): whole chords rest and single lines play on over the home chord, for a break.
 - **The theme** is one melody in key degrees. Theme blocks play it in a form picked each time (whole, head, sequence, slow, shift, answer), fitted to the chord, so the endless music has a tune you remember.
 - **Variation over time**: blocks mutate when they loop, layers come and go, fills and drops mark transitions, and every so often the music thins to a breather. Everything is seeded: the same seed gives the same music.
 - **Stingers** react to game events: a short phrase from the next beat that borrows tracks, can bring its own chord and ducks the rest.

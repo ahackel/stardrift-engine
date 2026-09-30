@@ -291,7 +291,9 @@ export class Engine {
     if (st.t === REST) {
       if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; }
     } else if (st.t === HOLD) {
-      if (chordChanged && ts.sounding && (tr.follow || chordArp(tr))) this.play(tr, ts, ts.sounding, true, src);
+      // a held note follows the new chord (follow, an arpeggio of the chord); a whole chord stops for N.C.
+      const stop = this.chord.nc && this.restsNC(tr, src, ts.sounding?.atoms);
+      if (chordChanged && ts.sounding && (tr.follow || chordArp(tr) || stop)) this.play(tr, ts, ts.sounding, true, src);
     } else if (st.prob >= 1 || this.rng.next() < st.prob) {
       this.play(tr, ts, st, false, src);
     } else if (ts.sounding) {
@@ -303,11 +305,11 @@ export class Engine {
   // returns whether the chord changed
   setChord(chord) {
     const scaleName = this.prog ? this.prog.scaleName : this.song.scaleName;
-    const key = `${scaleName}:${chord.degree}:${chord.shapeName}`;
+    const key = chord.nc ? 'nc' : `${scaleName}:${chord.degree}:${chord.shapeName}`;
     if (key === this.chordKey) return false;
     this.chord = chord;
     this.chordKey = key;
-    this.emit({ type: 'chord', label: chordLabel(this.song.keyRoot, this.scaleNow(), chord), scale: scaleName, degree: chord.degree, shape: chord.shapeName });
+    this.emit({ type: 'chord', label: chordLabel(this.song.keyRoot, this.scaleNow(), chord), scale: scaleName, degree: chord.nc ? undefined : chord.degree, shape: chord.shapeName });
     return true;
   }
 
@@ -329,8 +331,11 @@ export class Engine {
       return;
     }
     let midis = this.resolve(tr, src, st.atoms);
-    if (!midis.length) return;
-    if (midis.length === 1 && chordArp(tr)) midis = this.chordFrom(midis[0]);
+    if (!midis.length) { // nothing to play: a whole chord under N.C. (held on, it comes back with the next chord)
+      if (isFollow) this.synth.release(tr.id);
+      return;
+    }
+    if (midis.length === 1 && chordArp(tr) && !this.chord.nc) midis = this.chordFrom(midis[0]);
     const short = st.short && !isFollow;
     this.at(isFollow ? 0 : this.lagOf(tr), () => this.synth.noteOn(tr.id, midis, vel, short));
     ts.sounding = st;
@@ -349,11 +354,19 @@ export class Engine {
     return out;
   }
 
+  modeOf(tr, block) { return block?.theme ? 'key' : (block && block.mode) || tr.mode || 'chord'; }
+  // With no chord (N.C.) a whole chord rests, and so does a stack built on the chord (chord or scale mode: a voicing);
+  // single notes and stacks in the key play on, over the home chord
+  restsNC(tr, block, atoms = []) {
+    return atoms.some((a) => a.kind === 'chord') || (this.modeOf(tr, block) !== 'key' && atoms.filter((a) => a.kind === 'num').length > 1);
+  }
+
   resolve(tr, block, atoms) {
     const s = this.song, scale = this.scaleNow(), L = scale.length;
     const chord = this.chord, shape = chord.shape, S = shape.length;
+    if (chord.nc && this.restsNC(tr, block, atoms)) return [];
     const base = 12 * ((tr.octave ?? 4) + 1) + s.keyRoot;
-    const mode = block?.theme ? 'key' : (block && block.mode) || tr.mode || 'chord';
+    const mode = this.modeOf(tr, block);
     const root = foldDegree(chord.degree, L);
     // fit: notes on a beat move to the nearest chord tone, so a melody in key degrees suits any chord
     const tones = mode !== 'chord' && (block?.fit ?? !!block?.theme) && this.step % s.spb === 0
@@ -731,7 +744,9 @@ export class Engine {
     this.leadIn = null;
     const beats = s.leadIn;
     if (!beats || !prog || next.breath || this.section.breath || this.progLock || this.liveChord) return;
-    const scale = this.scaleNow(), t = prog.chordList[0].degree;
+    const first = prog.chordList[0];
+    if (first.nc) return; // no chord to lead into
+    const scale = this.scaleNow(), t = first.degree;
     let a = t + 4;
     if (chordQuality(scale, a) !== 'maj' && chordQuality(scale, t - 1) === 'maj') a = t - 1;
     a = mod(a, scale.length);
