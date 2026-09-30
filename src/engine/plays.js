@@ -1,0 +1,109 @@
+// What plays in a section, in steps of 0 · 25 · 50 · 75 · 100 %:
+//   section.tracks { trackId: chance }   how likely a track plays in the section
+//   block.sections { sectionId: weight } how often a clip is picked on its track there, against the track's other
+//   progression.sections { … }           clips (or the other sequences)
+// Anything not listed is 1 (100 %): a new section, track, clip or sequence plays everywhere until told otherwise.
+//   mood.sections { sectionId: weight } where the music heads when the game asks for the mood, picked by weight; here
+//                                       not listed is 0, and a mood that lists none heads for its nearest section
+// Songs from before (tags, weights, intensity and tension ranges, track layers) are turned into these once:
+// migrateSong() works out what the old rules picked in each section and rounds it to a step.
+export const STEPS = [0, 0.25, 0.5, 0.75, 1];
+export const snap = (v) => Math.round(Math.min(1, Math.max(0, +v || 0)) * 4) / 4;
+
+// a clip's or sequence's weight in a section (a breather counts as the section it interrupts)
+export const weightIn = (item, sec) => item.sections?.[sec.base ?? sec.id] ?? 1;
+// how likely a track plays in a section
+export const chanceIn = (sec, trackId) => sec.tracks?.[trackId] ?? 1;
+
+// ---------------------------------------------------------------- songs from before
+const WOBBLE = [-0.04, -0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03, 0.04]; // how far the old conductor moved a section's mood
+const avg = (f) => WOBBLE.reduce((a, d) => a + f(d), 0) / WOBBLE.length;
+
+// A track's old layer ({ min, max, chance }: the intensities it played in, and how likely) as its chance in each
+// section: { sectionId: step }, the sections it always plays in left out. The library's sounds still describe new
+// tracks this way.
+export function layerChances(layer, sections) {
+  const l = layer || {}, on = l.chance ?? 1, out = {};
+  for (const sec of sections) {
+    const I = sec.intensity ?? 0.5; // it also tended to stay on: a bit more than its chance
+    const c = snap(avg((d) => (I + d < (l.min ?? 0) || I + d > (l.max ?? 1) ? 0 : on + (1 - on) * 0.5)));
+    if (c !== 1) out[sec.id] = c;
+  }
+  return out;
+}
+
+// The editor once kept a section's moods on the section (section.moods: names): they are the moods' sections now
+function migrateMoods(raw) {
+  if (!raw?.sections?.some((x) => Array.isArray(x.moods))) return raw;
+  const s = structuredClone(raw);
+  s.moods ||= {};
+  for (const sec of s.sections) {
+    for (const m of Array.isArray(sec.moods) ? sec.moods : []) if (s.moods[m]) (s.moods[m].sections ||= {})[sec.id] = 1;
+    delete sec.moods;
+  }
+  return s;
+}
+
+const LEGACY = (raw) => (raw.sections || []).some((x) => x.tags) || (raw.tracks || []).some((t) => t.layer)
+  || [...(raw.blocks || []), ...(raw.progressions || [])].some((x) => x.tags || x.weight != null || x.intensity || x.tension);
+
+function rangeFit(v, r) {
+  if (!r) return 1;
+  const lo = r[0] ?? 0, hi = r[1] ?? 1;
+  if (v >= lo && v <= hi) return 1;
+  const d = v < lo ? lo - v : v - hi;
+  return Math.max(0.01, Math.exp(-(d * d) / (2 * 0.07 * 0.07)));
+}
+
+// A copy of an older song with its tags, weights, ranges and layers turned into per-section steps; the song itself
+// when there is nothing to turn. Each section is weighed as the old conductor did around its intensity and tension
+// (it wobbled them by up to 0.04): clips that share a tag with it (or name no section) against each other, the one
+// picked most at 100.
+export function migrateSong(raw) {
+  raw = migrateMoods(raw);
+  if (!raw || !LEGACY(raw)) return raw;
+  const s = structuredClone(raw), secs = s.sections || [];
+  const known = new Set(secs.flatMap((x) => x.tags || []));
+  const isFill = (b) => !!b.fill || (b.tags || []).includes('fill');
+  const fitting = (list, want) => {
+    const fit = list.filter((x) => !(x.tags || []).some((t) => known.has(t)) || x.tags.some((t) => want.includes(t)));
+    return fit.length ? fit : list;
+  };
+  const overlap = (x, want) => (x.tags || []).filter((t) => t !== 'fill' && want.includes(t)).length;
+  // how often each was picked (weights wOf(x, d) at a wobble d) as steps, the one picked most at 100; into out[id][sec]
+  const put = (out, sec, list, wOf) => {
+    const share = list.map((x) => avg((d) => { const sum = list.reduce((a, y) => a + wOf(y, d), 0); return sum > 0 ? wOf(x, d) / sum : 0; }));
+    const max = Math.max(...share, 0);
+    list.forEach((x, i) => { const v = max > 0 ? snap(share[i] / max) : 0; (out[x.id] ||= {})[sec] = Math.max(out[x.id]?.[sec] ?? 0, v); });
+  };
+  const bw = {}, pw = {}, byId = Object.fromEntries((s.blocks || []).map((b) => [b.id, b]));
+  for (const sec of secs) {
+    const I = sec.intensity ?? 0.5, T = sec.tension ?? 0.3, want = sec.tags || [], tracks = {};
+    for (const tr of s.tracks || []) {
+      const c = sec.tracks?.[tr.id] ?? layerChances(tr.layer, [sec])[sec.id] ?? 1; // auto: from the track's layer
+      if (snap(c) !== 1) tracks[tr.id] = snap(c);
+      const clips = Array.isArray(tr.clips) ? tr.clips.map((id) => byId[id]).filter(Boolean) : (s.blocks || []).filter((b) => b.track === tr.id);
+      for (const fill of [false, true]) {
+        const pool = clips.filter((b) => isFill(b) === fill);
+        if (pool.length) put(bw, sec.id, fitting(pool, want), (b, d) => (b.weight ?? 1) * rangeFit(I + d, b.intensity) * rangeFit(T + d, b.tension) * (1 + 2 * overlap(b, want)));
+      }
+    }
+    if (Object.keys(tracks).length) sec.tracks = tracks; else delete sec.tracks;
+    const progs = s.progressions || [];
+    if (progs.length) put(pw, sec.id, fitting(progs, want), (p, d) => (p.weight ?? 1) * (1 + 3 * overlap(p, want)) * rangeFit(T + d, p.tension));
+  }
+  // the map, only where it says something other than 100
+  const settle = (x, w) => {
+    const m = Object.fromEntries(secs.map((sec) => [sec.id, w ? w[sec.id] ?? 0 : 1]).filter(([, v]) => v !== 1));
+    if (Object.keys(m).length) x.sections = m;
+    if (isFill(x)) x.fill = true;
+    delete x.tags; delete x.weight; delete x.intensity; delete x.tension;
+  };
+  for (const b of s.blocks || []) settle(b, bw[b.id]);
+  for (const p of s.progressions || []) settle(p, pw[p.id]);
+  // a breather kept the tracks that played from intensity 0: now it names them
+  if (s.breath && !s.breath.keep) s.breath = { ...s.breath, keep: (s.tracks || []).filter((t) => (t.layer?.min ?? 0) <= 0).map((t) => t.id) };
+  for (const t of s.tracks || []) delete t.layer;
+  for (const sec of secs) delete sec.tags;
+  return s;
+}

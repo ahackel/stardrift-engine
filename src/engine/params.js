@@ -91,9 +91,6 @@ export const TRACK_PARAMS = [
   ['reverb', 0, 1, 0, { vary: [0, 0.7] }],
   ['double', 0, 1, 0, { off: 'double', vary: [0, 0.6], when: trackMelodic }],
   ['pump', 0, 1, 0, { off: 'pump', vary: [0, 0.7], when: trackMelodic }],
-  ['layer.min', 0, 1, 0, { vary: [0, 0.7] }],
-  ['layer.max', 0, 1, 1, { vary: [0.4, 1] }],
-  ['layer.chance', 0, 1, 1, { vary: [0.4, 1] }],
   ['fade', 0, 4, autoFade, { step: 0.5, vary: [0, 2] }], // the default depends on the sound
 ];
 

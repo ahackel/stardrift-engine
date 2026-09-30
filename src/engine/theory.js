@@ -1,4 +1,5 @@
 // Music theory helpers: scales, diatonic chords, song preparation.
+import { migrateSong } from './plays.js';
 
 export const SCALES = {
   major: [0, 2, 4, 5, 7, 9, 11],
@@ -129,6 +130,7 @@ export function chordLabel(keyRoot, scale, chord) {
 // Normalises a raw song JSON into the runtime structure the engine uses.
 // The raw JSON is never mutated, so the editor can keep editing it.
 export function prepareSong(raw) {
+  const src = migrateSong(raw); // an older song: its tags, ranges and layers as per-section steps
   const s = {
     raw,
     name: raw.name || 'Untitled',
@@ -146,7 +148,7 @@ export function prepareSong(raw) {
     moodGlide: raw.moodGlide ?? 8,
     humanize: clamp01(raw.humanize ?? 0.1), // random velocity spread
     leadIn: raw.leadIn ?? 2, // beats of lead-in chord before a new section (0 = off)
-    breath: raw.breath || null, // { every: bars, bars: [min, max], keep?: [trackIds] }
+    breath: src.breath || null, // { every: bars, bars: [min, max], keep?: [trackIds] }
     transitBars: raw.transitBars ?? 2,
     master: { gain: 0.9, ...(raw.master || {}) },
     fx: {
@@ -155,35 +157,33 @@ export function prepareSong(raw) {
       echoToReverb: raw.fx?.echoToReverb ?? 0.3,
     },
     instruments: raw.instruments || {},
-    moods: raw.moods || {},
+    moods: src.moods || {},
   };
   s.scale = SCALES[s.scaleName];
   s.stepsPerBar = s.spb * s.bpb;
 
   // how many notes a track plays at once is its instrument's (poly; older songs had it on the track)
-  s.tracks = (raw.tracks || []).map((t) => {
+  s.tracks = (src.tracks || []).map((t) => {
     const inst = s.instruments[t.instrument] || { type: 'pulse' };
     return { ...t, inst, poly: inst.poly ?? t.poly };
   });
   s.trackMap = Object.fromEntries(s.tracks.map((t) => [t.id, t]));
 
-  s.progressions = (raw.progressions || []).map((p) => {
+  s.progressions = (src.progressions || []).map((p) => {
     const chordList = parseChords(p.chords);
     const scaleName = SCALES[p.scale] ? p.scale : s.scaleName;
     return { ...p, chordList, scaleName, scale: SCALES[scaleName], totalBeats: chordList.reduce((a, c) => a + c.beats, 0) };
   }).filter((p) => p.chordList.length);
   s.progMap = Object.fromEntries(s.progressions.map((p) => [p.id, p]));
 
-  s.sections = (raw.sections || []).map((x) => ({
+  s.sections = (src.sections || []).map((x) => ({
     ...x,
     bars: Array.isArray(x.bars) ? x.bars : [x.bars || 8],
     intensity: x.intensity ?? 0.5,
     tension: x.tension ?? 0.3,
-    tags: x.tags || [],
   }));
-  if (!s.sections.length) s.sections.push({ id: 'default', bars: [8], intensity: 0.5, tension: 0.3, tags: [] });
+  if (!s.sections.length) s.sections.push({ id: 'default', bars: [8], intensity: 0.5, tension: 0.3 });
   s.sectionMap = Object.fromEntries(s.sections.map((x) => [x.id, x]));
-  s.sectionTags = new Set(s.sections.flatMap((x) => x.tags)); // the tags that name sections (what "plays in" edits)
 
   // the song theme: one melody in key degrees that theme blocks restate in varied forms
   s.theme = raw.theme?.pattern ? { pattern: raw.theme.pattern, beats: Math.max(1, +raw.theme.beats || 8) } : null;
@@ -201,7 +201,7 @@ export function prepareSong(raw) {
 
   // blocks (clips) are a pool: a track lists the ones it plays (tracks[].clips), and one block can be on several
   // tracks. Older songs name the track on the block instead.
-  s.blocks = (raw.blocks || []).filter((b) => b && b.id);
+  s.blocks = (src.blocks || []).filter((b) => b && b.id);
   s.blockMap = Object.fromEntries(s.blocks.map((b) => [b.id, b]));
   s.blocksByTrack = {};
   for (const t of s.tracks) {

@@ -6,6 +6,7 @@ import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, cl
 import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD } from './pattern.js';
 import { Synth } from './synth.js';
 import { autoFade } from './params.js';
+import { weightIn, chanceIn } from './plays.js';
 
 const DEFAULT_CHORD = { degree: 0, shape: SHAPES.triad, shapeName: 'triad', beats: 4 };
 // an arpeggio that runs the chord on single notes (sound.arpChord), in one voice
@@ -18,23 +19,16 @@ function chordIn(list, beat) {
   }
   return list[list.length - 1];
 }
-const isFill = (b) => !!b.tags && b.tags.includes('fill');
+const isFill = (b) => !!b.fill;
 // the same notes (a copy or a renamed clip), whatever its name or colour
 const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && JSON.stringify(a.theme ?? null) === JSON.stringify(b.theme ?? null);
-
-function rangeFit(v, r) {
-  if (!r) return 1;
-  const lo = r[0] ?? 0, hi = r[1] ?? 1;
-  if (v >= lo && v <= hi) return 1;
-  const d = v < lo ? lo - v : v - hi;
-  return Math.max(0.01, Math.exp(-(d * d) / (2 * 0.07 * 0.07)));
-}
 
 export class Engine {
   constructor(sampleRate, song, seed = 1) {
     this.sr = sampleRate;
     this.target = { intensity: 0.3, tension: 0.2, influence: 0 };
     this.moodName = 'auto';
+    this.moodSec = null; // the section a named mood heads for (aimMood)
     this.locks = {};
     this.progLock = null;
     this.secLock = null;
@@ -109,22 +103,43 @@ export class Engine {
   // mood = name from song.moods, or {intensity, tension}. The change is always musical:
   // the current section finishes within `within` bars (at a bar line, with a fill), the conductor
   // walks the section graph toward the mood, and intensity/tension/filters glide over several bars.
+  // A named mood that lists sections (mood.sections { id: weight }) heads for one of them (aimMood).
   setMood(mood, { within = 2 } = {}) {
     if (mood === 'auto' || mood == null) {
       this.moodName = 'auto';
+      this.moodSec = null;
       this.target.influence = 0;
       this.log('mood → auto (autonomous drift)');
       return;
     }
     const m = typeof mood === 'string' ? this.song.moods[mood] : mood;
     if (!m) return;
+    const again = typeof mood === 'string' && mood === this.moodName && this.target.influence > 0;
     this.moodName = typeof mood === 'string' ? mood : 'custom';
     this.target.intensity = clamp01(m.intensity ?? this.target.intensity);
     this.target.tension = clamp01(m.tension ?? this.target.tension);
     this.target.influence = clamp01(m.influence ?? 1);
-    this.log(`mood → ${this.moodName} (I ${this.target.intensity.toFixed(2)}, T ${this.target.tension.toFixed(2)})`);
+    if (again && this.moodSec) this.aimAt(this.song.sectionMap[this.moodSec]); // asked again: keep where it heads
+    else this.aimMood();
+    this.log(`mood → ${this.moodName} (${this.moodSec ? `${this.moodSec}, ` : ''}I ${this.target.intensity.toFixed(2)}, T ${this.target.tension.toFixed(2)})`);
     this.hurry(within);
     this.emitState();
+  }
+
+  // The section a named mood heads for, picked by its weights (mood.sections; not listed: 0), again each time a section
+  // ends while the mood holds: the walk goes there as to the mood's own intensity and tension. A mood that lists no
+  // section heads for those (the section nearest them).
+  aimMood() {
+    const w = this.song.moods[this.moodName]?.sections, list = w ? this.song.sections.filter((x) => (w[x.id] ?? 0) > 0) : [];
+    this.moodSec = null;
+    if (list.length) this.aimAt(this.rng.weighted(list, list.map((x) => w[x.id])));
+  }
+
+  aimAt(sec) {
+    if (!sec) return;
+    this.moodSec = sec.id;
+    this.target.intensity = sec.intensity;
+    this.target.tension = sec.tension;
   }
 
   forceSection(id) {
@@ -469,7 +484,7 @@ export class Engine {
     const ts = this.trackState(tr), was = ts.active;
     ts.fill = null;
     const lock = this.locks[tr.id] && this.song.blockMap[this.locks[tr.id]];
-    let active = lock ? true : this.decideActive(tr, ts.active);
+    let active = lock ? true : this.decideActive(tr);
     if (active) {
       const b = lock || this.pickBlock(tr, ts);
       if (b) this.startBlock(tr, ts, b);
@@ -502,15 +517,8 @@ export class Engine {
   // play now, or `lag` samples from now
   at(lag, fn) { if (lag > 0) this.later.push({ t: this.clock + lag, fn }); else fn(); }
 
-  decideActive(tr, wasActive) {
-    const o = this.section.tracks && this.section.tracks[tr.id];
-    if (o !== undefined && o !== null) return this.rng.chance(+o);
-    const l = tr.layer || {};
-    if (this.goal.intensity < (l.min ?? 0) || this.goal.intensity > (l.max ?? 1)) return false;
-    let c = l.chance ?? 1;
-    if (wasActive) c += (1 - c) * 0.5; // continuity
-    return this.rng.chance(c);
-  }
+  // the track's chance in the section (section.tracks, else always)
+  decideActive(tr) { return this.rng.chance(chanceIn(this.section, tr.id)); }
 
   blockLen(b) { return Math.max(1, Math.round((b.beats || 4) * this.song.spb)); }
 
@@ -527,31 +535,19 @@ export class Engine {
     if (h.length > 4) h.shift();
   }
 
-  // Clips and progressions play in the sections they share a tag with ("plays in"); one that names no section plays
-  // in all of them. When none of the list plays in this section (want: its tags), all of it may.
-  fitting(list, want) {
-    const known = this.song.sectionTags;
-    const fit = list.filter((x) => !x.tags || !x.tags.some((t) => known.has(t)) || x.tags.some((t) => want.includes(t)));
-    return fit.length ? fit : list;
-  }
-
-  pickBlock(tr, ts, { fill = false, tags } = {}) {
-    const want = tags || this.section.tags;
-    const cands = this.fitting((this.song.blocksByTrack[tr.id] || []).filter((b) => isFill(b) === fill), want);
-    if (!cands.length) return null;
-    const I = this.goal.intensity, T = this.goal.tension;
-    const hist = this.history[tr.id] || [];
-    const weights = cands.map((b) => {
-      let w = b.weight ?? 1;
-      w *= rangeFit(I, b.intensity) * rangeFit(T, b.tension);
-      let ov = 0;
-      for (const t of b.tags || []) if (t !== 'fill' && want.includes(t)) ov++;
-      w *= 1 + 2 * ov; // the more tags it shares with the section, the likelier
+  // One of the track's clips by its weight in the section (a fill: in either of secs, the sections of a transition).
+  // None weighs anything there: null, the track rests.
+  pickBlock(tr, ts, { fill = false, secs = [this.section] } = {}) {
+    const hist = this.history[tr.id] || [], cands = [], weights = [];
+    for (const b of this.song.blocksByTrack[tr.id] || []) {
+      if (isFill(b) !== fill) continue;
+      let w = Math.max(...secs.map((sec) => weightIn(b, sec)));
+      if (!(w > 0)) continue;
       if (ts.block && b.id === ts.block.id) w *= tr.stickiness ?? 1.5;
       else if (hist.includes(b.id)) w *= 0.6;
-      return w;
-    });
-    return this.rng.weighted(cands, weights);
+      cands.push(b); weights.push(w);
+    }
+    return cands.length ? this.rng.weighted(cands, weights) : null;
   }
 
   onBlockLoop(tr, ts) {
@@ -584,7 +580,8 @@ export class Engine {
       const ts = this.tracks[tr.id];
       if (!ts || this.locks[tr.id]) continue;
       // occasional layer in/out every 4 bars keeps long sections alive
-      if (churn && !(this.section.tracks && tr.id in this.section.tracks) && rng.chance(s.layerChurn)) {
+      const c = chanceIn(this.section, tr.id);
+      if (churn && c > 0 && c < 1 && rng.chance(s.layerChurn)) { // a track that plays sometimes draws again
         const was = ts.active;
         this.setupTrack(tr);
         if (was !== ts.active) {
@@ -623,8 +620,7 @@ export class Engine {
       if (next !== this.section) p += 0.3;
       if (up > 0.15) p = 1;
       if (!rng.chance(p)) continue;
-      const tags = up < -0.1 ? next.tags : [...new Set([...this.section.tags, ...next.tags])];
-      const b = this.pickBlock(tr, ts, { fill: true, tags });
+      const b = this.pickBlock(tr, ts, { fill: true, secs: up < -0.1 ? [next] : [this.section, next] });
       if (!b) continue;
       const len = Math.min(this.blockLen(b), s.stepsPerBar);
       const end = this.step + s.stepsPerBar;
@@ -695,8 +691,8 @@ export class Engine {
     sg.pos++;
   }
 
-  // Breathers: every so often (song.breath.every bars) the music thins out to its ambient tracks
-  // (those that play from intensity 0) for a few bars, then grows back. Only while things are calm.
+  // Breathers: every so often (song.breath.every bars) the music thins out to its ambient tracks for a few bars, then
+  // grows back. Only while things are calm.
   shouldBreathe() {
     const b = this.song.breath;
     if (!b || !(b.every > 0) || this.section.breath || this.secLock) return false;
@@ -706,10 +702,12 @@ export class Engine {
     return this.intensity < 0.7 && (t.influence <= 0.5 || t.intensity < 0.5);
   }
 
-  // a track a breather keeps: breath.keep, else the ambient tracks (those that play from intensity 0)
+  // a track a breather keeps: breath.keep, else the ones that always play in the calmest section
   breathes(tr) {
-    const keep = this.song.breath?.keep;
-    return keep ? keep.includes(tr.id) : (tr.layer?.min ?? 0) <= 0;
+    const s = this.song, keep = s.breath?.keep;
+    if (keep) return keep.includes(tr.id);
+    const calm = s.sections.reduce((a, x) => (x.intensity < a.intensity ? x : a));
+    return chanceIn(calm, tr.id) >= 1;
   }
 
   // Already about as sparse as a breather (no drums, at most one track beyond those a breather keeps)?
@@ -729,7 +727,7 @@ export class Engine {
     for (const tr of s.tracks) tracks[tr.id] = this.breathes(tr) ? 1 : 0;
     this.log(`breather, then ${resume.id}`);
     return {
-      id: 'breather', breath: true, bars: s.breath.bars || [4, 8], tags: cur.tags, tracks,
+      id: 'breather', breath: true, bars: s.breath.bars || [4, 8], base: cur.base ?? cur.id, tracks, // its clips: those of the section it interrupts
       intensity: Math.min(0.12, cur.intensity), tension: cur.tension * 0.5,
       next: { ...(resume.next || {}), [resume.id]: 4 },
     };
@@ -760,6 +758,7 @@ export class Engine {
   chooseNext() {
     const s = this.song, cur = this.section;
     if (this.secLock && s.sectionMap[this.secLock]) return s.sectionMap[this.secLock];
+    if (this.target.influence > 0 && this.moodSec) this.aimMood();
     let list = Object.entries(cur.next || {}).filter(([id, w]) => s.sectionMap[id] && w > 0).map(([id, w]) => [s.sectionMap[id], +w]);
     if (!list.length) list = s.sections.map((x) => [x, 1]);
     const inf = this.target.influence;
@@ -788,19 +787,11 @@ export class Engine {
     const s = this.song;
     if (!s.progressions.length) return null;
     if (this.progLock && s.progMap[this.progLock]) return s.progMap[this.progLock];
-    const tags = sec.tags;
-    // tension the section will aim for (startSection sets goal the same way, minus the jitter)
-    const T = sec === this.section ? this.goal.tension : clamp01(sec.tension + (this.target.tension - sec.tension) * this.target.influence * 0.5);
-    const list = this.fitting(s.progressions, tags);
-    const w = list.map((p) => {
-      let x = p.weight ?? 1;
-      let ov = 0;
-      for (const t of p.tags || []) if (tags.includes(t)) ov++;
-      x *= 1 + 3 * ov;
-      x *= rangeFit(T, p.tension);
-      if (this.prog && p.id === this.prog.id) x *= s.progStickiness;
-      return x;
-    });
+    // by weight in the section; none weighs anything there: any of them (the chords have to come from somewhere)
+    let list = s.progressions.filter((p) => weightIn(p, sec) > 0);
+    const any = !list.length;
+    if (any) list = s.progressions;
+    const w = list.map((p) => (any ? 1 : weightIn(p, sec)) * (this.prog && p.id === this.prog.id ? s.progStickiness : 1));
     return this.rng.weighted(list, w);
   }
 
@@ -809,7 +800,7 @@ export class Engine {
     const s = this.song;
     const sec = s.sectionMap[this.section.id];
     if (sec) this.section = sec;
-    else if (!this.section.breath) { this.section = { ...this.section, tags: this.section.tags || [] }; this.sectionBars = this.sectionBar + 1; }
+    else if (!this.section.breath) { this.section = { ...this.section }; this.sectionBars = this.sectionBar + 1; }
     if (this.nextSection && !this.nextSection.breath) this.nextSection = s.sectionMap[this.nextSection.id] || null;
     this.upcoming = null; // progressions may have changed; startSection picks again
     this.leadIn = null;
@@ -851,7 +842,7 @@ export class Engine {
     for (const tr of s.tracks) {
       const ts = this.tracks[tr.id];
       tracks[tr.id] = ts
-        ? { active: ts.active, block: ts.block && ts.block.id, tags: (ts.block && ts.block.tags) || [], tokens: ts.tokens, locked: this.locks[tr.id] || null, fill: !!ts.fill }
+        ? { active: ts.active, block: ts.block && ts.block.id, tokens: ts.tokens, locked: this.locks[tr.id] || null, fill: !!ts.fill }
         : { active: false };
     }
     this.emit({
