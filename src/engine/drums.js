@@ -9,17 +9,9 @@
 // All times are exponential time constants in seconds, frequencies in Hz.
 // Simple per-hit knobs on top of that (all multipliers, default 1): pitch, decay, level.
 
-const TWO_PI = Math.PI * 2;
-const TRI4 = new Float32Array(32);
-for (let i = 0; i < 32; i++) TRI4[i] = (i < 16 ? 15 - i : i - 16) / 7.5 - 1;
-const METAL_HZ = [205.3, 304.4, 369.6, 522.7, 540, 800];
+import { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } from './dsp.js';
 
-// polyBLEP: smooths a square's jumps so its harmonics above Nyquist don't fold back as digital hash
-function blep(t, dt) {
-  if (t < dt) { t /= dt; return t + t - t * t - 1; }
-  if (t > 1 - dt) { t = (t - 1) / dt; return t * t + t + t + 1; }
-  return 0;
-}
+const METAL_HZ = [205.3, 304.4, 369.6, 522.7, 540, 800];
 
 export const KITS = {
   // Default: clean analog-style kit that sits well under chip melodies.
@@ -73,20 +65,17 @@ export const KITS = {
 
 const coef = (tc, sr) => Math.exp(-1 / (Math.max(0.0005, tc) * sr));
 
-function filterSpec(type, freq, q, sr) {
-  if (!type) return null;
-  const g = Math.tan((Math.PI * Math.min(freq || 1000, sr * 0.45)) / sr);
-  const k = 1 / Math.max(0.1, q || 0.707);
-  const a1 = 1 / (1 + g * (g + k));
-  return { type, k, a1, a2: g * a1, a3: g * g * a1 };
-}
+const filterSpec = (type, freq, q, sr) => (type ? svfSet({ mode: type === 'lp' ? LP : type === 'bp' ? BP : HP }, freq || 1000, 1 / Math.max(0.1, q || 0.707), sr) : null);
 
 // instrument def: { type: 'drums', kit: 'clean' | 'chip' | { s: {...override}, ... }, preset: 'clean' }
 // e.g. { type: 'drums', preset: 'clean', kit: { s: { pitch: 1.1, decay: 0.8 }, h: { level: 0.7 } } }
+// kitParts reads a kit as its preset and the hits it changes (the sound's own object), setKitParts writes it back
+export const kitParts = (def) => ({ preset: typeof def.kit === 'string' ? def.kit : def.preset || 'clean', over: def.kit && typeof def.kit === 'object' ? def.kit : {} });
+export function setKitParts(def, preset, over) {
+  if (Object.keys(over).length) { def.preset = preset; def.kit = over; } else { delete def.preset; def.kit = preset; }
+}
 export function compileKit(def, sr, samples = {}) {
-  const presetName = typeof def.kit === 'string' ? def.kit : def.preset || 'clean';
-  const preset = KITS[presetName] || KITS.clean;
-  const over = typeof def.kit === 'object' && def.kit ? def.kit : {};
+  const parts = kitParts(def), preset = KITS[parts.preset] || KITS.clean, over = parts.over;
   const out = {};
   for (const name of new Set([...Object.keys(preset), ...Object.keys(over)])) {
     const h = { ...(preset[name] || {}), ...(over[name] || {}) };
@@ -120,15 +109,6 @@ export function compileKit(def, sr, samples = {}) {
     };
   }
   return out;
-}
-
-function runFilter(f, st, x) {
-  const v3 = x - st.ic2;
-  const v1 = f.a1 * st.ic1 + f.a2 * v3;
-  const v2 = st.ic2 + f.a2 * st.ic1 + f.a3 * v3;
-  st.ic1 = 2 * v1 - st.ic1;
-  st.ic2 = 2 * v2 - st.ic2;
-  return f.type === 'lp' ? v2 : f.type === 'bp' ? f.k * v1 : x - f.k * v1 - v2;
 }
 
 export class DrumVoice {
@@ -200,7 +180,7 @@ export class DrumVoice {
         }
         x = this.lfsr & 1 ? 1 : -1;
       } else x = this.rand();
-      if (n.filter) x = runFilter(n.filter, this.nf, x);
+      if (n.filter) x = svf(n.filter, this.nf, x);
       const a = n.attack && this.t < n.attack ? this.t / n.attack : 1;
       out += x * this.nEnv * a;
       this.nEnv *= this.nDecay;
@@ -217,7 +197,7 @@ export class DrumVoice {
         this.metalPh[i] = ph;
         x += (ph < 0.5 ? 1 : -1) + blep(ph, dt) - blep(ph < 0.5 ? ph + 0.5 : ph - 0.5, dt);
       }
-      out += runFilter(m.filter, this.mf, x / 6) * this.mEnv;
+      out += svf(m.filter, this.mf, x / 6) * this.mEnv;
       this.mEnv *= this.mDecay;
     }
 

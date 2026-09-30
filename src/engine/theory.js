@@ -24,12 +24,22 @@ export const SHAPES = {
   six: [0, 2, 4, 5],
 };
 
+// a song's steps per beat, beats per bar and steps per bar
+export const songSteps = (s) => { const spb = s.stepsPerBeat || 4, bpb = s.beatsPerBar || 4; return { spb, bpb, stepsPerBar: spb * bpb }; };
+// the first of these scales that exists (a progression's, then the song's …), else minor
+export const scaleOf = (...names) => SCALES[names.find((n) => SCALES[n])] || SCALES.minor;
+
 export const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
 const NOTE_INDEX = { C: 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, F: 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11 };
 const ROMAN = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii'];
 
+// small helpers the engine and the editor share: a value kept in lo..hi, and the remainder that is never negative
+export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+export const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+export const mod = (d, n) => ((d % n) + n) % n;
+
 export function parseKey(k) {
-  if (typeof k === 'number') return ((k % 12) + 12) % 12;
+  if (typeof k === 'number') return mod(k, 12);
   return NOTE_INDEX[String(k || 'C').trim().toUpperCase()] ?? 0;
 }
 
@@ -42,7 +52,7 @@ export function degSemis(scale, deg) {
 
 // Keep chord roots near the tonic: in a 7-note scale V, VI, VII sit *below* the tonic.
 export function foldDegree(deg, n) {
-  let r = ((deg % n) + n) % n;
+  let r = mod(deg, n);
   if (r > n / 2) r -= n;
   return r;
 }
@@ -68,9 +78,9 @@ export function parseChords(str) {
 const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 const LETTER_PC = [0, 2, 4, 5, 7, 9, 11];
 export function noteName(keyRoot, scale, deg) {
-  const pc = (((keyRoot + degSemis(scale, deg)) % 12) + 12) % 12;
+  const pc = mod(keyRoot + degSemis(scale, deg), 12);
   if (scale.length !== 7) return NOTE_NAMES[pc];
-  const li = (LETTERS.indexOf(NOTE_NAMES[keyRoot][0]) + (((deg % 7) + 7) % 7)) % 7;
+  const li = (LETTERS.indexOf(NOTE_NAMES[keyRoot][0]) + mod(deg, 7)) % 7;
   let acc = pc - LETTER_PC[li];
   if (acc > 6) acc -= 12;
   if (acc < -6) acc += 12;
@@ -87,7 +97,7 @@ export function chordQuality(scale, deg) {
 
 // Roman numeral of a scale degree, upper case for major; display adds ° / + for dim / aug.
 export function romanNumeral(scale, deg, display = false) {
-  const q = chordQuality(scale, deg), n = ROMAN[((deg % 7) + 7) % 7];
+  const q = chordQuality(scale, deg), n = ROMAN[mod(deg, 7)];
   const base = q === 'maj' || q === 'aug' ? n.toUpperCase() : n;
   return display ? base + (q === 'dim' ? '°' : q === 'aug' ? '+' : '') : base;
 }
@@ -112,15 +122,13 @@ export function chordLabel(keyRoot, scale, chord) {
   }
 }
 
-export const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-
 // Normalises a raw song JSON into the runtime structure the engine uses.
 // The raw JSON is never mutated, so the editor can keep editing it.
 export function prepareSong(raw) {
   const s = {
     raw,
     name: raw.name || 'Untitled',
-    bpm: Math.max(30, Math.min(300, +raw.bpm || 90)),
+    bpm: clamp(+raw.bpm || 90, 30, 300),
     spb: Math.max(1, raw.stepsPerBeat || 4),
     bpb: Math.max(1, raw.beatsPerBar || 4),
     swing: clamp01(raw.swing || 0) * 0.5,

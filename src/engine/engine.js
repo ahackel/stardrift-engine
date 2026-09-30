@@ -2,14 +2,22 @@
 // It is a pure function of (song, seed, parameter calls) -> audio samples.
 
 import { Rng } from './rng.js';
-import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES } from './theory.js';
+import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, clamp01, mod } from './theory.js';
 import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD } from './pattern.js';
 import { Synth } from './synth.js';
+import { autoFade } from './params.js';
 
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const DEFAULT_CHORD = { degree: 0, shape: SHAPES.triad, shapeName: 'triad', beats: 4 };
 // an arpeggio that runs the chord on single notes (sound.arpChord), in one voice
 const chordArp = (tr) => !!(tr.inst.arpChord && tr.inst.arp && (tr.poly || 1) <= 1);
+// the chord that sounds `beat` beats into a list of chords (the last one past its end)
+function chordIn(list, beat) {
+  for (const c of list) {
+    if (beat < c.beats) return c;
+    beat -= c.beats;
+  }
+  return list[list.length - 1];
+}
 const isFill = (b) => !!b.tags && b.tags.includes('fill');
 // the same notes (a copy or a renamed clip), whatever its name or colour
 const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && JSON.stringify(a.theme ?? null) === JSON.stringify(b.theme ?? null);
@@ -215,17 +223,14 @@ export class Engine {
           if (this.stepTimer <= 0) { this.heldTick(); this.stepTimer += this.stepLen; }
           this.stepTimer -= 1;
         }
-        syn.renderSample();
-        outL[i] = syn.outL;
-        outR[i] = syn.outR;
-        continue;
+      } else {
+        if (this.stepTimer <= 0) {
+          this.tick();
+          const sw = this.song.swing;
+          this.stepTimer += this.stepLen * ((this.step - 1) % 2 === 0 ? 1 + sw : 1 - sw);
+        }
+        this.stepTimer -= 1;
       }
-      if (this.stepTimer <= 0) {
-        this.tick();
-        const sw = this.song.swing;
-        this.stepTimer += this.stepLen * ((this.step - 1) % 2 === 0 ? 1 + sw : 1 - sw);
-      }
-      this.stepTimer -= 1;
       syn.renderSample();
       outL[i] = syn.outL;
       outR[i] = syn.outR;
@@ -265,7 +270,7 @@ export class Engine {
       } else {
         if (ts.fill && this.step >= ts.fill.end) ts.fill = null;
         const rel = this.step - ts.start;
-        p = ((rel % steps.length) + steps.length) % steps.length;
+        p = mod(rel, steps.length);
         if (p === 0 && rel > 0) {
           this.onBlockLoop(tr, ts);
           steps = ts.steps;
@@ -338,7 +343,7 @@ export class Engine {
   // it, so the arpeggio starts on the melody and follows the harmony (a triad: three notes, a seventh chord: four)
   chordFrom(m) {
     const scale = this.scaleNow(), chord = this.chord, L = scale.length, root = foldDegree(chord.degree, L);
-    const pcs = new Set(chord.shape.map((o) => (((this.song.keyRoot + degSemis(scale, root + o)) % 12) + 12) % 12));
+    const pcs = new Set(chord.shape.map((o) => mod(this.song.keyRoot + degSemis(scale, root + o), 12)));
     const out = [m];
     for (let k = m + 1; k < m + 12 && out.length < chord.shape.length; k++) if (pcs.has(k % 12) && k < 128) out.push(k);
     return out;
@@ -352,7 +357,7 @@ export class Engine {
     const root = foldDegree(chord.degree, L);
     // fit: notes on a beat move to the nearest chord tone, so a melody in key degrees suits any chord
     const tones = mode !== 'chord' && (block?.fit ?? !!block?.theme) && this.step % s.spb === 0
-      ? shape.map((o) => (((root + o) % L) + L) % L) : null;
+      ? shape.map((o) => mod(root + o, L)) : null;
     const out = [];
     for (const a of atoms) {
       let degs;
@@ -378,12 +383,7 @@ export class Engine {
   chordAt(step) {
     const p = this.prog;
     if (!p) return DEFAULT_CHORD;
-    let beat = ((step - this.progStart) / this.song.spb) % p.totalBeats;
-    for (const c of p.chordList) {
-      if (beat < c.beats) return c;
-      beat -= c.beats;
-    }
-    return p.chordList[p.chordList.length - 1];
+    return chordIn(p.chordList, ((step - this.progStart) / this.song.spb) % p.totalBeats);
   }
 
   // ---------------------------------------------------------------- conductor
@@ -474,7 +474,7 @@ export class Engine {
   // how long a track takes to join or leave, in seconds: pads and other sustained sounds (chords, a slow attack) fade
   // over a bar, the rest start and stop on the beat; tr.fade (bars) sets it
   fadeSec(tr) {
-    const bars = tr.fade ?? (tr.inst.type !== 'drums' && ((tr.poly || 1) > 1 || (tr.inst.env?.a ?? 0) >= 0.15) ? 1 : 0);
+    const bars = tr.fade ?? autoFade(tr.inst, tr.poly);
     return (bars * this.song.stepsPerBar * this.stepLen) / this.sr;
   }
 
@@ -647,10 +647,10 @@ export class Engine {
 
   // A track the stinger borrowed picks its block up again: a note held across the stinger's end sounds again.
   resumeBlock(tr, ts) {
-    const n = ts.steps.length, p = (((this.step - ts.start) % n) + n) % n;
+    const n = ts.steps.length, p = mod(this.step - ts.start, n);
     if (ts.steps[p].t !== HOLD) return;
     for (let i = 1; i < n; i++) {
-      const st = ts.steps[(p - i + n) % n];
+      const st = ts.steps[mod(p - i, n)];
       if (st.t === REST) return;
       if (st.t !== HOLD) { this.play(tr, ts, st, true, ts.block); return; }
     }
@@ -659,12 +659,7 @@ export class Engine {
   stingChord() {
     const sg = this.curSting;
     if (!sg || !sg.chords) return null;
-    let beat = sg.pos / this.song.spb;
-    for (const c of sg.chords) {
-      if (beat < c.beats) return c;
-      beat -= c.beats;
-    }
-    return sg.chords[sg.chords.length - 1];
+    return chordIn(sg.chords, sg.pos / this.song.spb);
   }
 
   // held (editor audition): only the stinger's parts play, over the chord the song stopped on
@@ -732,7 +727,7 @@ export class Engine {
     const scale = this.scaleNow(), t = prog.chordList[0].degree;
     let a = t + 4;
     if (chordQuality(scale, a) !== 'maj' && chordQuality(scale, t - 1) === 'maj') a = t - 1;
-    a = ((a % scale.length) + scale.length) % scale.length;
+    a = mod(a, scale.length);
     const dominant7 = a === ((t + 4) % scale.length) && degSemis(scale, a + 6) - degSemis(scale, a) === 10;
     const shapeName = dominant7 ? '7' : 'triad';
     const start = this.step - (this.step % s.stepsPerBar) + s.stepsPerBar - Math.round(beats * s.spb);

@@ -73,17 +73,15 @@ export const SOUND_PARAMS = [
   ['eq.high', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
   ['gain', 0, 2, 1, { vary: [0.7, 1.3] }],
 ];
-// the settings that are a choice, not a number (compose.js varySound picks among them); the "plays" setting (one
-// note, chords, arpeggio) is not varied: it changes what the clips play
-export const SOUND_CHOICES = ['type', 'wave', 'smooth', 'amp', 'body', 'sample', 'kit', 'pads', 'filter'];
 // the oscillator types a variation may switch between (the others need their own settings to sound right)
 export const SWAP_TYPES = ['pulse', 'triangle', 'wave', 'fm'];
 // a drum pad's pitch, decay and level: multipliers on the kit's
 export const PAD_PARAMS = [['pitch', 0.5, 2, 1, { log: true, vary: [0.75, 1.35] }], ['decay', 0.25, 4, 1, { log: true, vary: [0.5, 2] }], ['level', 0.05, 2, 1, { log: true, vary: [0.6, 1.4] }]];
 export const PAD_NAMES = ['k', 's', 'h', 'o', 'c', 't', 'm'];
+export const PAD_LABELS = { k: 'kick', s: 'snare', h: 'hat', o: 'open hat', c: 'crash', t: 'tom', m: 'tick' };
 
-// the fade a track gets unless it sets one (as Engine.fadeSec decides): sustained sounds fade over a bar
-export const autoFade = (sound) => (sound?.type !== 'drums' && ((sound?.poly || 1) > 1 || (sound?.env?.a ?? 0) >= 0.15) ? 1 : 0);
+// the fade a track gets unless it sets one (Engine.fadeSec): sustained sounds (chords, a slow attack) fade over a bar
+export const autoFade = (sound, poly = sound?.poly) => (sound?.type !== 'drums' && ((poly || 1) > 1 || (sound?.env?.a ?? 0) >= 0.15) ? 1 : 0);
 
 const trackMelodic = (s) => s?.type !== 'drums';
 export const TRACK_PARAMS = [
@@ -98,7 +96,6 @@ export const TRACK_PARAMS = [
   ['layer.chance', 0, 1, 1, { vary: [0.4, 1] }],
   ['fade', 0, 4, autoFade, { step: 0.5, vary: [0, 2] }], // the default depends on the sound
 ];
-// a choice: the octave (melodic tracks), one up or down
 
 export const SONG_PARAMS = [
   ['swing', 0, 0.6, 0, { vary: [0, 0.35] }],
@@ -113,6 +110,11 @@ export const MODE_ALIAS = { aeolian: 'minor', ionian: 'major' };
 
 // ---------------------------------------------------------------- reading and writing a setting (a path: 'env.a')
 export const getAt = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+// where v sits in min..max as 0..1 (log: on an exponential range), and back
+export const toUnit = (v, min, max, log) => (log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min));
+export const fromUnit = (t, min, max, log) => (log ? min * (max / min) ** t : min + t * (max - min));
+// a sound's setting, or its default when it has none
+export const soundAt = (s, path) => getAt(s, path) ?? SOUND[path][3];
 export function setAt(o, path, v) {
   const ks = path.split('.');
   let x = o;
