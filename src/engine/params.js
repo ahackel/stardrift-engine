@@ -66,7 +66,7 @@ export const SOUND_PARAMS = [
   ['autopan.depth', 0.05, 1, 0.7, { vary: [0.3, 1], when: (s) => !!s.autopan }],
   ['autopan.beats', 0.125, 16, 2, { log: true, vary: [0.5, 8], when: (s) => !!s.autopan }],
   // drive, the EQ (varied only on a sound that has one), level
-  ['drive', 0, 2, 0, { off: 'drive', vary: [0, 1], when: melodic }],
+  ['drive', 0, 2, 0, { off: 'drive', vary: [0, 1], when: (s) => melodic(s) || !!s.drive }], // a kit's only once it has some
   ['eq.low', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
   ['eq.mid', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
   ['eq.midHz', 200, 5000, 1000, { log: true, vary: [300, 3000], when: (s) => !!s.eq }],
