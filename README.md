@@ -65,7 +65,7 @@ A song is plain JSON (`songs/*.json`). The parts:
                  "parts": [{ "track": "arp", "pattern": "* -*15" }] }] }
 ```
 
-Song-wide: `swing`, `humanize` (timing and loudness spread), `leadIn`, `breath` (breathers), `master.glue` (the compressor), `fx.echo` and `fx.reverb`. A track has `volume pan echo reverb`, `double` (a second take either side), `pump` (sidechain on the kick), `fade` (bars to join or leave) and `layer { min max chance }` (the intensities it plays in).
+Song-wide: `swing`, `humanize` (timing and loudness spread), `leadIn`, `breath` (breathers), `master.glue` (the compressor), `fx.echo` and `fx.reverb`. A track has `volume pan echo reverb`, `double` (a second take either side), `pump` (sidechain on the kick), `fade` (bars to join or leave) and `layer { min max chance }` (the intensities it plays in). A block or progression whose `tags` name sections plays only in the sections that share one (the editor's *plays in*); without any, it plays everywhere. A section's `tracks` (`{ id: chance }`) overrides the layer: 0 leaves the track out.
 
 ### Instruments
 

@@ -514,10 +514,18 @@ export class Engine {
     if (h.length > 4) h.shift();
   }
 
+  // Clips and progressions play in the sections they share a tag with ("plays in"); one that names no section plays
+  // in all of them. When none of the list plays in this section (want: its tags), all of it may.
+  fitting(list, want) {
+    const known = this.song.sectionTags;
+    const fit = list.filter((x) => !x.tags || !x.tags.some((t) => known.has(t)) || x.tags.some((t) => want.includes(t)));
+    return fit.length ? fit : list;
+  }
+
   pickBlock(tr, ts, { fill = false, tags } = {}) {
-    const cands = (this.song.blocksByTrack[tr.id] || []).filter((b) => isFill(b) === fill);
-    if (!cands.length) return null;
     const want = tags || this.section.tags;
+    const cands = this.fitting((this.song.blocksByTrack[tr.id] || []).filter((b) => isFill(b) === fill), want);
+    if (!cands.length) return null;
     const I = this.goal.intensity, T = this.goal.tension;
     const hist = this.history[tr.id] || [];
     const weights = cands.map((b) => {
@@ -525,8 +533,7 @@ export class Engine {
       w *= rangeFit(I, b.intensity) * rangeFit(T, b.tension);
       let ov = 0;
       for (const t of b.tags || []) if (t !== 'fill' && want.includes(t)) ov++;
-      const own = (b.tags || []).filter((t) => t !== 'fill').length;
-      w *= ov ? 1 + 2 * ov : own ? 0.12 : 1;
+      w *= 1 + 2 * ov; // the more tags it shares with the section, the likelier
       if (ts.block && b.id === ts.block.id) w *= tr.stickiness ?? 1.5;
       else if (hist.includes(b.id)) w *= 0.6;
       return w;
@@ -769,16 +776,17 @@ export class Engine {
     const tags = sec.tags;
     // tension the section will aim for (startSection sets goal the same way, minus the jitter)
     const T = sec === this.section ? this.goal.tension : clamp01(sec.tension + (this.target.tension - sec.tension) * this.target.influence * 0.5);
-    const w = s.progressions.map((p) => {
+    const list = this.fitting(s.progressions, tags);
+    const w = list.map((p) => {
       let x = p.weight ?? 1;
       let ov = 0;
       for (const t of p.tags || []) if (tags.includes(t)) ov++;
-      x *= ov ? 1 + 3 * ov : (p.tags || []).length ? 0.03 : 1;
+      x *= 1 + 3 * ov;
       x *= rangeFit(T, p.tension);
       if (this.prog && p.id === this.prog.id) x *= s.progStickiness;
       return x;
     });
-    return this.rng.weighted(s.progressions, w);
+    return this.rng.weighted(list, w);
   }
 
   // Re-link runtime state after a hot song edit.

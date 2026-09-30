@@ -179,6 +179,7 @@ export function prepareSong(raw) {
   }));
   if (!s.sections.length) s.sections.push({ id: 'default', bars: [8], intensity: 0.5, tension: 0.3, tags: [] });
   s.sectionMap = Object.fromEntries(s.sections.map((x) => [x.id, x]));
+  s.sectionTags = new Set(s.sections.flatMap((x) => x.tags)); // the tags that name sections (what "plays in" edits)
 
   // the song theme: one melody in key degrees that theme blocks restate in varied forms
   s.theme = raw.theme?.pattern ? { pattern: raw.theme.pattern, beats: Math.max(1, +raw.theme.beats || 8) } : null;
