@@ -1,6 +1,6 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, ping-pong echo and a small Freeverb.
+// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -179,12 +179,27 @@ export function eqResponse(eq, sr = 48000) {
 // envelope wah). The bitcrush keeps `bits` of each sample and holds it at `rate` Hz: the grit of early samplers.
 export const WAH_LO = 350, WAH_OCT = 3;
 const WAH_GAIN = 1.3; // the band's level back near the dry sound's
-function compileWah(w) {
+function compileWah(w, drums) {
   if (!w) return null;
   const q = Math.max(1, Math.min(10, w.resonance ?? 4));
-  return { note: w.mode === 'note', beats: Math.max(0.125, w.beats ?? 1), span: WAH_OCT * Math.max(0, Math.min(1, w.depth ?? 0.7)), k: 1 / q, gain: Math.sqrt(q) * WAH_GAIN };
+  // a drum kit has no note's loudness to follow: its wah sweeps with the tempo
+  return { note: w.mode === 'note' && !drums, beats: Math.max(0.125, w.beats ?? 1), span: WAH_OCT * Math.max(0, Math.min(1, w.depth ?? 0.7)), k: 1 / q, gain: Math.sqrt(q) * WAH_GAIN };
 }
 const compileCrush = (c, sr) => (c ? { levels: 2 ** (Math.max(2, Math.min(16, Math.round(c.bits ?? 6))) - 1), step: Math.min(1, Math.max(500, c.rate ?? 11025) / sr) } : null);
+
+// Modulation after the EQ, each on a slow wave in time with the song (once every `beats`): a phaser (four all-pass
+// stages whose frequency sweeps up from PHASER_LO, mixed with the dry sound so notches move through it; feedback
+// deepens them), a chorus (a copy delayed 12 to 24 ms and wandering, mixed in) or a flanger (the same, 1 to 6 ms, fed
+// back: the jet sweep) and a tremolo (the level pulses by depth).
+export const PHASER_LO = 200;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const compilePhaser = (ph) => (ph ? { span: 4 * clamp01(ph.depth ?? 0.7), beats: Math.max(0.125, ph.beats ?? 4), fb: Math.max(0, Math.min(0.9, ph.feedback ?? 0.5)) } : null);
+function compileChorus(c) {
+  if (!c) return null;
+  const depth = clamp01(c.depth ?? 0.5), beats = Math.max(0.125, c.beats ?? 4);
+  return c.mode === 'flanger' ? { base: 0.001, width: 0.005 * depth, fb: 0.5, norm: 0.5, beats } : { base: 0.012, width: 0.012 * depth, fb: 0, norm: Math.SQRT1_2, beats };
+}
+const compileTremolo = (t) => (t ? { depth: clamp01(t.depth ?? 0.5), beats: Math.max(1 / 32, t.beats ?? 0.25) } : null);
 
 const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
@@ -229,8 +244,9 @@ export function compileInst(def = {}, sr, samples = {}) {
     breathCoef: 1 - Math.exp(-1 / (0.02 * sr)), // how fast breath follows the tone's loudness
     body: compileBody(def.body, sr),
     eq: compileEq(def.eq, sr), // after the filter
-    wah: compileWah(def.wah), // before the drive, as a pedal in front of an amp
+    wah: compileWah(def.wah, def.type === 'drums'), // before the drive, as a pedal in front of an amp
     crush: compileCrush(def.crush, sr), // after the filter, so the filter doesn't smooth the grit away
+    phaser: compilePhaser(def.phaser), chorus: compileChorus(def.chorus), tremolo: compileTremolo(def.tremolo), // after the EQ
     // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
     // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
     // feedback roughens the modulator
@@ -487,6 +503,9 @@ class TrackBus {
     this.peak = 0; // the loudest sample since the meters last looked (Synth.takePeaks)
     this.w1 = 0; this.w2 = 0; this.wT = 0; this.wPh = 0; // the wah's filter state, its countdown to new coefficients, its sweep
     this.cPh = 1; this.cHold = 0; // the bitcrush: its sample clock and the sample it holds
+    this.pT = 0; this.pPh = 0; this.pa = 0; this.pz = new Float64Array(4); this.pLast = 0; // the phaser
+    this.chPh = 0; this.chI = 0; this.chBuf = null; // the chorus: its wave, where it writes, its delay line
+    this.tPh = 0; // the tremolo's wave
   }
   // bps: the song's beats per second (the wah sweeps with them)
   set(tr, p, sr, bps = 2) {
@@ -499,6 +518,7 @@ class TrackBus {
     this.pump = Math.max(0, Math.min(1, tr.pump || 0)); // sidechain: dips on every kick
     if (p.body && this.zBody?.length !== p.body.c.length / 2.5) this.zBody = new Float64Array(p.body.c.length / 2.5);
     if (p.eq && this.zEq?.length !== p.eq.length / 2.5) this.zEq = new Float64Array(p.eq.length / 2.5);
+    if (p.chorus && !this.chBuf) this.chBuf = new Float32Array(Math.ceil(sr * 0.03) + 2);
     if (p.amp && this.zPre?.length !== p.amp.pre.length / 2.5) this.zPre = new Float64Array(p.amp.pre.length / 2.5);
     if (p.amp && this.zPost?.length !== p.amp.post.length / 2.5) this.zPost = new Float64Array(p.amp.post.length / 2.5);
     // double tracking: a second take, a few ms late with a slowly wandering delay, on the other side;
@@ -559,6 +579,39 @@ class TrackBus {
     const c = this.p.crush;
     if ((this.cPh += c.step) >= 1) { this.cPh -= 1; this.cHold = Math.round(x * c.levels) / c.levels; }
     return this.cHold;
+  }
+  // the phaser: every 16 samples the all-passes move, then the sound through them (with feedback) and the dry sound
+  phase(x) {
+    const ph = this.p.phaser;
+    if (--this.pT <= 0) {
+      this.pT = 16;
+      this.pPh = (this.pPh + (16 * this.bps) / (ph.beats * this.sr)) % 1;
+      const f = PHASER_LO * Math.pow(2, ph.span * (0.5 - 0.5 * Math.cos(TWO_PI * this.pPh)));
+      const t = Math.tan((Math.PI * Math.min(f, this.sr * 0.45)) / this.sr);
+      this.pa = (t - 1) / (t + 1);
+    }
+    const a = this.pa, z = this.pz;
+    let y = x + ph.fb * this.pLast;
+    for (let i = 0; i < 4; i++) { const o = a * y + z[i]; z[i] = y - a * o; y = o; }
+    this.pLast = y;
+    return (x + y) * Math.SQRT1_2;
+  }
+  // the chorus or flanger: a copy from a delay line that wanders, mixed with the dry sound
+  chorus(x) {
+    const c = this.p.chorus, buf = this.chBuf, n = buf.length;
+    this.chPh = (this.chPh + this.bps / (c.beats * this.sr)) % 1;
+    let r = this.chI - this.sr * (c.base + c.width * (0.5 - 0.5 * Math.cos(TWO_PI * this.chPh)));
+    if (r < 0) r += n;
+    const i = Math.floor(r), f = r - i, y = buf[i] + (buf[(i + 1) % n] - buf[i]) * f;
+    buf[this.chI] = x + c.fb * y;
+    if (++this.chI >= n) this.chI = 0;
+    return (x + y) * c.norm;
+  }
+  // the tremolo: the level dips by depth once every `beats`
+  trem(x) {
+    const t = this.p.tremolo;
+    this.tPh = (this.tPh + this.bps / (t.beats * this.sr)) % 1;
+    return x * (1 - t.depth * (0.5 - 0.5 * Math.cos(TWO_PI * this.tPh)));
   }
   setMood(intensity, tension) {
     const p = this.p;
@@ -638,6 +691,9 @@ class TrackBus {
     let y = p.hp ? x - this.k * v1 - v2 : v2; // high or low pass
     if (p.crush) y = this.crush(y);
     if (p.eq) y = chain(p.eq, this.zEq, y);
+    if (p.phaser) y = this.phase(y);
+    if (p.chorus) y = this.chorus(y);
+    if (p.tremolo) y = this.trem(y);
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
       this.fade += this.fadeStep;

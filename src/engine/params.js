@@ -55,6 +55,14 @@ export const SOUND_PARAMS = [
   ['wah.resonance', 1, 10, 4, { log: true, vary: [2, 7], when: (s) => !!s.wah }],
   ['crush.bits', 2, 12, 6, { step: 1, vary: [3, 10], when: (s) => !!s.crush }],
   ['crush.rate', 1000, 48000, 11025, { log: true, vary: [3000, 24000], when: (s) => !!s.crush }],
+  // the phaser, chorus and tremolo (varied only on a sound that has one)
+  ['phaser.depth', 0.05, 1, 0.7, { vary: [0.3, 1], when: (s) => !!s.phaser }],
+  ['phaser.beats', 0.25, 16, 4, { log: true, vary: [1, 8], when: (s) => !!s.phaser }],
+  ['phaser.feedback', 0, 0.9, 0.5, { vary: [0.2, 0.8], when: (s) => !!s.phaser }],
+  ['chorus.depth', 0.05, 1, 0.5, { vary: [0.2, 0.9], when: (s) => !!s.chorus }],
+  ['chorus.beats', 0.25, 16, 4, { log: true, vary: [1, 8], when: (s) => !!s.chorus }],
+  ['tremolo.depth', 0.05, 1, 0.5, { vary: [0.2, 0.9], when: (s) => !!s.tremolo }],
+  ['tremolo.beats', 0.0625, 4, 0.25, { log: true, vary: [0.125, 1], when: (s) => !!s.tremolo }],
   // drive, the EQ (varied only on a sound that has one), level
   ['drive', 0, 2, 0, { off: 'drive', vary: [0, 1], when: melodic }],
   ['eq.low', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
