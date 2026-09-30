@@ -1,6 +1,6 @@
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, ping-pong echo and a small Freeverb.
+// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, auto-pan, ping-pong echo and a small Freeverb.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 import { DrumVoice, compileKit } from './drums.js';
@@ -200,6 +200,8 @@ function compileChorus(c) {
   return c.mode === 'flanger' ? { base: 0.001, width: 0.005 * depth, fb: 0.5, norm: 0.5, beats } : { base: 0.012, width: 0.012 * depth, fb: 0, norm: Math.SQRT1_2, beats };
 }
 const compileTremolo = (t) => (t ? { depth: clamp01(t.depth ?? 0.5), beats: Math.max(1 / 32, t.beats ?? 0.25) } : null);
+// auto-pan: the track swings from its pan to either side by `depth`, once every `beats` (Synth.renderSample pans it)
+const compileAutopan = (a) => (a ? { depth: clamp01(a.depth ?? 0.7), beats: Math.max(1 / 16, a.beats ?? 2) } : null);
 
 const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
@@ -247,6 +249,7 @@ export function compileInst(def = {}, sr, samples = {}) {
     wah: compileWah(def.wah, def.type === 'drums'), // before the drive, as a pedal in front of an amp
     crush: compileCrush(def.crush, sr), // after the filter, so the filter doesn't smooth the grit away
     phaser: compilePhaser(def.phaser), chorus: compileChorus(def.chorus), tremolo: compileTremolo(def.tremolo), // after the EQ
+    autopan: compileAutopan(def.autopan), // last: where the track sits
     // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
     // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
     // feedback roughens the modulator
@@ -506,14 +509,13 @@ class TrackBus {
     this.pT = 0; this.pPh = 0; this.pa = 0; this.pz = new Float64Array(4); this.pLast = 0; // the phaser
     this.chPh = 0; this.chI = 0; this.chBuf = null; // the chorus: its wave, where it writes, its delay line
     this.tPh = 0; // the tremolo's wave
+    this.apT = 0; this.apPh = 0; // the auto-pan: its countdown to new pan gains, its wave
   }
   // bps: the song's beats per second (the wah sweeps with them)
   set(tr, p, sr, bps = 2) {
     this.p = p; this.sr = sr; this.bps = bps;
     this.vol = (tr.volume ?? 0.3) * p.gain;
-    const pan = Math.max(-1, Math.min(1, tr.pan || 0));
-    this.pl = Math.cos(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
-    this.pr = Math.sin(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
+    this.pan = Math.max(-1, Math.min(1, tr.pan || 0));
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
     this.pump = Math.max(0, Math.min(1, tr.pump || 0)); // sidechain: dips on every kick
     if (p.body && this.zBody?.length !== p.body.c.length / 2.5) this.zBody = new Float64Array(p.body.c.length / 2.5);
@@ -524,12 +526,20 @@ class TrackBus {
     // double tracking: a second take, a few ms late with a slowly wandering delay, on the other side;
     // the two sit at pan ± double
     this.dbl = Math.max(0, Math.min(1, tr.double || 0));
-    if (this.dbl) {
-      const at = (x) => Math.max(-1, Math.min(1, x)), a = ((at(pan - this.dbl) + 1) * Math.PI) / 4, b = ((at(pan + this.dbl) + 1) * Math.PI) / 4;
-      this.pl = Math.cos(a); this.pr = Math.sin(a); this.ql = Math.cos(b); this.qr = Math.sin(b);
-      if (!this.dBuf) { this.dBuf = new Float32Array(Math.ceil(sr * 0.03)); this.dI = 0; this.dT = 0; }
-    }
+    if (this.dbl && !this.dBuf) { this.dBuf = new Float32Array(Math.ceil(sr * 0.03)); this.dI = 0; this.dT = 0; }
+    this.place(0);
     this.updateCoefs();
+  }
+  // the gains that put the track at its pan moved by off (auto-pan), and the double's two takes either side of it
+  place(off) {
+    const at = (x) => Math.max(-1, Math.min(1, x)), pan = at(this.pan + off);
+    if (this.dbl) {
+      const a = ((at(pan - this.dbl) + 1) * Math.PI) / 4, b = ((at(pan + this.dbl) + 1) * Math.PI) / 4;
+      this.pl = Math.cos(a); this.pr = Math.sin(a); this.ql = Math.cos(b); this.qr = Math.sin(b);
+    } else {
+      this.pl = Math.cos(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
+      this.pr = Math.sin(((pan + 1) * Math.PI) / 4) * Math.SQRT2;
+    }
   }
   // the second take: 14 ms late, the delay drifting by about a millisecond (a few cents of pitch, like a player)
   double(x) {
@@ -694,6 +704,11 @@ class TrackBus {
     if (p.phaser) y = this.phase(y);
     if (p.chorus) y = this.chorus(y);
     if (p.tremolo) y = this.trem(y);
+    if (p.autopan && --this.apT <= 0) { // the pan gains move every 16 samples
+      this.apT = 16;
+      this.apPh = (this.apPh + (16 * this.bps) / (p.autopan.beats * this.sr)) % 1;
+      this.place(p.autopan.depth * Math.sin(TWO_PI * this.apPh));
+    }
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
       this.fade += this.fadeStep;
@@ -962,14 +977,14 @@ export class Synth {
       // once the preview has played out, drop its bus so it costs nothing (the echo/reverb tails live on the master)
       if ((++this.pvT & 4095) === 0 && this.pvI === this.pvQ.length && pv.idle()) this.pv = null;
       const x = pv.render();
-      l += x; r += x; e += x * pv.echo; v += x * pv.rev;
+      l += x * pv.pl; r += x * pv.pr; e += x * pv.echo; v += x * pv.rev; // centred, unless its sound pans itself
     }
     const kb = this.kb;
     if (kb) {
       // idle and no key down: drop the bus so it costs nothing
       if ((++this.kbT & 4095) === 0 && !this.kbHeld.size && kb.idle()) { this.kb = null; this.kbJson = null; }
       const x = kb.render();
-      l += x; r += x; e += x * kb.echo; v += x * kb.rev;
+      l += x * kb.pl; r += x * kb.pr; e += x * kb.echo; v += x * kb.rev;
     }
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;

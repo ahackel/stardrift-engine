@@ -209,7 +209,7 @@ for (const ex of examples) {
   const moved = new Set();
   const sounds = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample'].flatMap((type) => [
     { type, env: { a: 0.01, d: 0.3, s: 0.6, r: 0.3 } },
-    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20, eq: { low: 0, mid: 0, midHz: 1000, high: 0 }, wah: { depth: 0.7 }, crush: { bits: 6 }, phaser: { depth: 0.7 }, chorus: { depth: 0.5 }, tremolo: { depth: 0.5 } },
+    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20, eq: { low: 0, mid: 0, midHz: 1000, high: 0 }, wah: { depth: 0.7 }, crush: { bits: 6 }, phaser: { depth: 0.7 }, chorus: { depth: 0.5 }, tremolo: { depth: 0.5 }, autopan: { depth: 0.7 } },
   ]).concat([{ type: 'drums', kit: 'clean' }]);
   for (const snd of sounds) {
     for (let i = 0; i < 60; i++) {
