@@ -4,9 +4,11 @@
 //   progression.sections { … }           clips (or the other sequences)
 // Anything not listed is 1 (100 %): a new section, track, clip or sequence plays everywhere until told otherwise.
 //   mood.sections { sectionId: weight } where the music heads when the game asks for the mood, picked by weight; here
-//                                       not listed is 0, and a mood that lists none heads for its nearest section
-// Songs from before (tags, weights, intensity and tension ranges, track layers) are turned into these once:
-// migrateSong() works out what the old rules picked in each section and rounds it to a step.
+//                                       not listed is 0, and a mood that lists none leads nowhere (the music walks on)
+//   section.next { sectionId: weight }  the sections that may follow it, picked by weight; not listed is 0, and a
+//                                       section that lists none goes on to any
+// Songs from before (tags, weights, intensity and tension, track layers) are turned into these once: migrateSong()
+// works out what the old rules picked in each section and rounds it to a step.
 export const STEPS = [0, 0.25, 0.5, 0.75, 1];
 export const snap = (v) => Math.round(Math.min(1, Math.max(0, +v || 0)) * 4) / 4;
 
@@ -20,9 +22,8 @@ const WOBBLE = [-0.04, -0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03, 0.04]; // how f
 const avg = (f) => WOBBLE.reduce((a, d) => a + f(d), 0) / WOBBLE.length;
 
 // A track's old layer ({ min, max, chance }: the intensities it played in, and how likely) as its chance in each
-// section: { sectionId: step }, the sections it always plays in left out. The library's sounds still describe new
-// tracks this way.
-export function layerChances(layer, sections) {
+// section: { sectionId: step }, the sections it always plays in left out
+function layerChances(layer, sections) {
   const l = layer || {}, on = l.chance ?? 1, out = {};
   for (const sec of sections) {
     const I = sec.intensity ?? 0.5; // it also tended to stay on: a bit more than its chance
@@ -44,6 +45,48 @@ function migrateMoods(raw) {
   return s;
 }
 
+// Links between sections (section.next) once weighed 0–3 in tenths: each section's, by its strongest, as steps (a link
+// stays at least 25 %). Only the ratios count, so this changes little beyond the rounding.
+function migrateNext(raw) {
+  if (!raw?.sections?.some((x) => Object.values(x.next || {}).some((w) => w !== snap(w)))) return raw;
+  const s = structuredClone(raw);
+  for (const sec of s.sections) {
+    const max = Math.max(0, ...Object.values(sec.next || {}));
+    for (const [k, w] of Object.entries(sec.next || {})) if (w > 0) sec.next[k] = Math.max(0.25, snap(w / max)); else delete sec.next[k];
+  }
+  return s;
+}
+
+// Sections and moods once had an intensity and a tension: a mood headed for the section nearest its own, and a sound's
+// filter opened with them (cutoffIntensity, cutoffTension). A mood without sections now names that nearest section;
+// a filter stays where it was at about half intensity and a little tension.
+export function upgradeFilter(sound) {
+  if (!sound || (sound.cutoffIntensity == null && sound.cutoffTension == null)) return sound;
+  const f = (sound.cutoff ?? 16000) + 0.5 * (sound.cutoffIntensity || 0) + 0.3 * (sound.cutoffTension || 0);
+  sound.cutoff = Math.round(Math.min(16000, Math.max(60, f)));
+  delete sound.cutoffIntensity; delete sound.cutoffTension;
+  return sound;
+}
+function dropLevels(raw) {
+  const has = (o, ...keys) => o && typeof o === 'object' && keys.some((k) => k in o);
+  if (!raw || !((raw.sections || []).some((x) => has(x, 'intensity', 'tension')) || Object.values(raw.moods || {}).some((m) => has(m, 'intensity', 'tension', 'influence'))
+    || Object.values(raw.instruments || {}).some((d) => has(d, 'cutoffIntensity', 'cutoffTension')))) return raw;
+  const s = structuredClone(raw), secs = s.sections || [];
+  // of the sections the music can get to (a section without links goes on to any)
+  const led = secs.some((x) => !Object.values(x.next || {}).some((w) => w > 0)) ? secs : secs.filter((x) => secs.some((y) => y.next?.[x.id] > 0));
+  for (const m of Object.values(s.moods || {})) {
+    if (!m || typeof m !== 'object') continue;
+    if (!m.sections && led.length && (m.intensity != null || m.tension != null)) {
+      const d = (x) => Math.hypot((x.intensity ?? 0.5) - (m.intensity ?? 0.5), (x.tension ?? 0.3) - (m.tension ?? 0.3));
+      m.sections = { [led.reduce((a, x) => (d(x) < d(a) ? x : a)).id]: 1 };
+    }
+    delete m.intensity; delete m.tension; delete m.influence;
+  }
+  for (const sec of secs) { delete sec.intensity; delete sec.tension; }
+  for (const d of Object.values(s.instruments || {})) upgradeFilter(d);
+  return s;
+}
+
 const LEGACY = (raw) => (raw.sections || []).some((x) => x.tags) || (raw.tracks || []).some((t) => t.layer)
   || [...(raw.blocks || []), ...(raw.progressions || [])].some((x) => x.tags || x.weight != null || x.intensity || x.tension);
 
@@ -60,8 +103,10 @@ function rangeFit(v, r) {
 // (it wobbled them by up to 0.04): clips that share a tag with it (or name no section) against each other, the one
 // picked most at 100.
 export function migrateSong(raw) {
-  raw = migrateMoods(raw);
-  if (!raw || !LEGACY(raw)) return raw;
+  raw = migrateNext(migrateMoods(raw));
+  return dropLevels(raw && LEGACY(raw) ? migrateLegacy(raw) : raw);
+}
+function migrateLegacy(raw) {
   const s = structuredClone(raw), secs = s.sections || [];
   const known = new Set(secs.flatMap((x) => x.tags || []));
   const isFill = (b) => !!b.fill || (b.tags || []).includes('fill');

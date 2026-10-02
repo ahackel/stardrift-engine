@@ -12,7 +12,6 @@
   "fillChance": 0.45,
   "layerChurn": 0.12,
   "progStickiness": 1.5,
-  "moodGlide": 8,
   "transitBars": 2,
   "humanize": 0.1,
   "leadIn": 2,
@@ -27,12 +26,12 @@
   },
 
   "moods": {
-    "relaxed":   { "intensity": 0.18, "tension": 0.05 },
-    "wonder":    { "intensity": 0.32, "tension": 0.02 },
-    "exploring": { "intensity": 0.45, "tension": 0.18 },
-    "tension":   { "intensity": 0.45, "tension": 0.8 },
-    "danger":    { "intensity": 0.75, "tension": 0.65 },
-    "action":    { "intensity": 0.88, "tension": 0.35 }
+    "relaxed": { "sections": { "calm": 1 } },
+    "wonder": { "sections": { "wonder": 1 } },
+    "exploring": { "sections": { "drift": 1 } },
+    "tension": { "sections": { "tension": 1 } },
+    "danger": { "sections": { "danger": 1 } },
+    "action": { "sections": { "peak": 1 } }
   },
 
   "stingers": [
@@ -51,12 +50,12 @@
   ],
 
   "instruments": {
-    "pad":   { "poly": 10, "type": "wave", "wave": "soft", "smooth": true, "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 650, "cutoffIntensity": 2200, "cutoffTension": -200, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
+    "pad":   { "poly": 10, "type": "wave", "wave": "soft", "smooth": true, "unison": 3, "detune": 12, "env": { "a": 1.2, "d": 2, "s": 0.75, "r": 3.2 }, "cutoff": 1690, "resonance": 0.8, "vibrato": { "depth": 0.04, "rate": 0.25 } },
     "bass":  { "type": "triangle", "env": { "a": 0.005, "d": 0.4, "s": 0.85, "r": 0.12 }, "cutoff": 3000 },
-    "arp":   { "type": "pulse", "duty": 0.125, "env": { "a": 0.002, "d": 0.18, "s": 0.2, "r": 0.15 }, "cutoff": 1200, "cutoffIntensity": 3500, "filterEnv": { "amount": 2, "decay": 0.12 }, "arp": 24 },
-    "lead":  { "type": "pulse", "duty": 0.25, "pwm": { "depth": 0.12, "rate": 0.3 }, "env": { "a": 0.04, "d": 0.5, "s": 0.65, "r": 0.5 }, "vibrato": { "depth": 0.18, "rate": 5.2, "delay": 0.3 }, "glide": 0.05, "cutoff": 2200, "cutoffIntensity": 3000, "filterEnv": { "amount": 1, "decay": 0.3 } },
+    "arp":   { "type": "pulse", "duty": 0.125, "env": { "a": 0.002, "d": 0.18, "s": 0.2, "r": 0.15 }, "cutoff": 2950, "filterEnv": { "amount": 2, "decay": 0.12 }, "arp": 24 },
+    "lead":  { "type": "pulse", "duty": 0.25, "pwm": { "depth": 0.12, "rate": 0.3 }, "env": { "a": 0.04, "d": 0.5, "s": 0.65, "r": 0.5 }, "vibrato": { "depth": 0.18, "rate": 5.2, "delay": 0.3 }, "glide": 0.05, "cutoff": 3700, "filterEnv": { "amount": 1, "decay": 0.3 } },
     "stars": { "type": "pulse", "duty": 0.5, "env": { "a": 0.001, "d": 0.5, "s": 0, "r": 0.4 }, "cutoff": 4500 },
-    "kit":   { "type": "drums", "kit": "clean", "cutoff": 12000, "cutoffIntensity": 4000 }
+    "kit":   { "type": "drums", "kit": "clean", "cutoff": 14000 }
   },
 
   "tracks": [
@@ -69,15 +68,15 @@
   ],
 
   "sections": [
-    { "id": "intro", "intensity": 0.15, "tension": 0.05, "bars": [4], "tracks": { "bass": 0.5, "arp": 0, "lead": 0, "drums": 0 }, "next": { "calm": 1 } },
-    { "id": "calm", "intensity": 0.2, "tension": 0.1, "bars": [8, 16], "tracks": { "arp": 0.25, "lead": 0, "drums": 0 }, "next": { "calm": 0.6, "drift": 1.5, "wonder": 1, "tension": 0.5 } },
-    { "id": "wonder", "intensity": 0.32, "tension": 0.05, "bars": [8], "tracks": { "lead": 0.75, "drums": 0.25 }, "next": { "calm": 1, "drift": 1 } },
-    { "id": "drift", "intensity": 0.45, "tension": 0.2, "bars": [8, 16], "tracks": { "lead": 0.75 }, "next": { "drift": 0.6, "calm": 0.8, "build": 1, "wonder": 0.6, "tension": 0.6 } },
-    { "id": "tension", "intensity": 0.45, "tension": 0.8, "bars": [8], "tracks": { "lead": 0.75 }, "next": { "tension": 0.5, "build": 1, "danger": 0.6, "release": 1 } },
-    { "id": "build", "intensity": 0.65, "tension": 0.55, "bars": [4], "tracks": { "lead": 0.75, "stars": 0 }, "next": { "peak": 2.5, "danger": 1, "tension": 0.3 } },
-    { "id": "danger", "intensity": 0.78, "tension": 0.7, "bars": [8], "tracks": { "lead": 0.75, "stars": 0 }, "next": { "danger": 0.5, "peak": 0.8, "tension": 0.6, "release": 0.6 } },
-    { "id": "peak", "intensity": 0.85, "tension": 0.35, "bars": [8, 16], "tracks": { "lead": 0.75, "stars": 0 }, "next": { "peak": 0.5, "danger": 0.5, "release": 1.2, "drift": 0.6 } },
-    { "id": "release", "intensity": 0.3, "tension": 0.15, "bars": [4, 8], "tracks": { "lead": 0.25, "drums": 0 }, "next": { "calm": 1, "drift": 0.8, "wonder": 0.6 } }
+    { "id": "intro", "bars": [4], "tracks": { "bass": 0.5, "arp": 0, "lead": 0, "drums": 0 }, "next": { "calm": 1 } },
+    { "id": "calm", "bars": [8, 16], "tracks": { "arp": 0.25, "lead": 0, "drums": 0 }, "next": { "calm": 0.5, "drift": 1, "wonder": 0.75, "tension": 0.25 } },
+    { "id": "wonder", "bars": [8], "tracks": { "lead": 0.75, "drums": 0.25 }, "next": { "calm": 1, "drift": 1 } },
+    { "id": "drift", "bars": [8, 16], "tracks": { "lead": 0.75 }, "next": { "drift": 0.5, "calm": 0.75, "build": 1, "wonder": 0.5, "tension": 0.5 } },
+    { "id": "tension", "bars": [8], "tracks": { "lead": 0.75 }, "next": { "tension": 0.5, "build": 1, "danger": 0.5, "release": 1 } },
+    { "id": "build", "bars": [4], "tracks": { "lead": 0.75, "stars": 0 }, "next": { "peak": 1, "danger": 0.5, "tension": 0.25 } },
+    { "id": "danger", "bars": [8], "tracks": { "lead": 0.75, "stars": 0 }, "next": { "danger": 0.75, "peak": 1, "tension": 0.75, "release": 0.75 } },
+    { "id": "peak", "bars": [8, 16], "tracks": { "lead": 0.75, "stars": 0 }, "next": { "peak": 0.5, "danger": 0.5, "release": 1, "drift": 0.5 } },
+    { "id": "release", "bars": [4, 8], "tracks": { "lead": 0.25, "drums": 0 }, "next": { "calm": 1, "drift": 0.75, "wonder": 0.5 } }
   ],
 
   "progressions": [

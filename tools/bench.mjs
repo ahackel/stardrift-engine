@@ -22,8 +22,7 @@ if (!files.length) for (const f of readdirSync('songs').sort()) if (f.endsWith('
 
 const { sr, secs, warm, block } = opt;
 const budget = (block / sr) * 1000; // ms the audio callback may take per block
-const MOODS = ['relaxed', 'action']; // calm and busy; songs without these moods fall back to intensity/tension
-const MOOD_PARAMS = { relaxed: { intensity: 0.25, tension: 0.1 }, action: { intensity: 0.9, tension: 0.4 } };
+const MOODS = ['relaxed', 'action']; // calm and busy; songs without these moods walk on their own
 
 // patch(engine) switches parts off for the breakdown
 function run(song, mood, patch) {
@@ -32,7 +31,6 @@ function run(song, mood, patch) {
   e.setSamples(SAMPLES);
   const load = performance.now() - t0;
   if (song.moods?.[mood]) e.setMood(mood, { within: 0 });
-  else e.setMood(MOOD_PARAMS[mood], { within: 0 });
   patch?.(e);
   const L = new Float32Array(block), R = new Float32Array(block);
   let cold = 0; // slowest block while the code is still being compiled

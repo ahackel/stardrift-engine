@@ -170,7 +170,7 @@ export function eqResponse(eq, sr = 48000) {
   const c = compileEq(eq, sr);
   return (f) => (c ? 20 * Math.log10(chainMag(c, sr, f)) : 0);
 }
-// where the track's filter can go (TrackBus.setMood), and its gain in dB at each frequency for a cutoff, for the
+// where the track's filter can go, and its gain in dB at each frequency for a cutoff, for the
 // editor's curve: the state-variable filter answers as the analog one at the prewarped frequency, low or high pass
 export const clampCutoff = (f, sr) => Math.min(sr * 0.45, Math.max(40, f));
 export function filterResponse(cut, q, high, sr = 48000) {
@@ -239,7 +239,7 @@ export function compileInst(def = {}, sr, samples = {}) {
     arpPeriod: def.arp ? 1 / def.arp : 0,
     mips: def.type === 'wave' || def.type === 'triangle' ? waveTables(def) : null,
     mipLimits: levelLimits(sr),
-    cutoff: def.cutoff ?? 16000, cutoffIntensity: def.cutoffIntensity || 0, cutoffTension: def.cutoffTension || 0,
+    cutoff: def.cutoff ?? 16000,
     q: def.resonance ?? 0.707,
     // the filter's type: low pass (default) lets the lows through, `high` the highs. One state-variable filter gives
     // both at once, so the type costs nothing
@@ -641,10 +641,6 @@ class TrackBus {
     if ((this.tPh += this.tInc) >= 1) this.tPh -= 1;
     return x * (1 - t.depth * hump(this.tPh));
   }
-  setMood(intensity, tension) {
-    const p = this.p;
-    this.cutTarget = clampCutoff(p.cutoff + p.cutoffIntensity * intensity + p.cutoffTension * tension, this.sr);
-  }
   updateCoefs(cut = this.cut) {
     svfSet(this.flt, cut, 1 / Math.max(0.3, this.p.q), this.sr).mode = this.p.hp ? HP : LP;
   }
@@ -845,7 +841,6 @@ export class Synth {
     this.outL = 0; this.outR = 0;
     this.peakL = 0; this.peakR = 0; // the master's loudest samples since the meters last looked (takePeaks)
     this.mutes = {}; this.solos = {};
-    this.mood = [0.2, 0.1];
     this.pv = null; this.pvQ = []; this.pvI = 0; this.pvT = 0;
     this.kb = null; this.kbJson = null; this.kbHeld = new Map(); this.kbT = 0;
     this.duck = null;
@@ -857,13 +852,13 @@ export class Synth {
     const p = compileInst(def, this.sr, this.samples), isDrum = p.type === 'drums', n = isDrum ? 6 : clamp(poly || 1, 1, 16);
     if (!bus || bus.voices.length !== n || bus.isDrum !== isDrum) bus = new TrackBus(n, isDrum);
     bus.p = p;
+    bus.cutTarget = clampCutoff(p.cutoff, this.sr); // a new cutoff glides there
     return bus;
   }
-  // the editor's own buses (the keyboard, the preview): centred, a little echo and reverb, the song's mood, heard now
+  // the editor's own buses (the keyboard, the preview): centred, a little echo and reverb, heard now
   audition(bus, def, poly, volume) {
     bus = this.busFor(bus, def, poly);
     bus.set({ volume, echo: 0.08, reverb: 0.25 }, bus.p, this.sr, this.bps);
-    bus.setMood(this.mood[0], this.mood[1]);
     bus.g = 1;
     return bus;
   }
@@ -887,11 +882,6 @@ export class Synth {
     this.master = song.master.gain;
     this.bus.set(song.master.glue ?? 0.5);
     this.updateGains();
-  }
-  setMood(intensity, tension) {
-    this.mood = [intensity, tension];
-    for (const b of this.list) b.setMood(intensity, tension);
-    this.pv?.setMood(intensity, tension);
   }
   setMute(id, on) { this.mutes[id] = !!on; this.updateGains(); }
   setSolo(id, on) { this.solos[id] = !!on; this.updateGains(); }
@@ -931,7 +921,6 @@ export class Synth {
       this.kbHeld = new Map();
     }
     const kb = this.kb;
-    kb.setMood(this.mood[0], this.mood[1]);
     kb.g = 1;
     if (kb.isDrum) return void kb.drum([note], vel);
     this.keyOff(note);

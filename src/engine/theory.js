@@ -130,7 +130,7 @@ export function chordLabel(keyRoot, scale, chord) {
 // Normalises a raw song JSON into the runtime structure the engine uses.
 // The raw JSON is never mutated, so the editor can keep editing it.
 export function prepareSong(raw) {
-  const src = migrateSong(raw); // an older song: its tags, ranges and layers as per-section steps
+  const src = migrateSong(raw); // an older song: its tags, levels and layers as per-section steps
   const s = {
     raw,
     name: raw.name || 'Untitled',
@@ -145,7 +145,6 @@ export function prepareSong(raw) {
     fillChance: raw.fillChance ?? 0.5,
     layerChurn: raw.layerChurn ?? 0.1,
     progStickiness: raw.progStickiness ?? 1.5,
-    moodGlide: raw.moodGlide ?? 8,
     humanize: clamp01(raw.humanize ?? 0.1), // random velocity spread
     leadIn: raw.leadIn ?? 2, // beats of lead-in chord before a new section (0 = off)
     breath: src.breath || null, // { every: bars, bars: [min, max], keep?: [trackIds] }
@@ -156,7 +155,7 @@ export function prepareSong(raw) {
       reverb: { size: 0.86, damp: 0.4, level: 0.4, predelay: 0.02, lowcut: 200, ...(raw.fx?.reverb || {}) },
       echoToReverb: raw.fx?.echoToReverb ?? 0.3,
     },
-    instruments: raw.instruments || {},
+    instruments: src.instruments || {},
     moods: src.moods || {},
   };
   s.scale = SCALES[s.scaleName];
@@ -176,13 +175,8 @@ export function prepareSong(raw) {
   }).filter((p) => p.chordList.length);
   s.progMap = Object.fromEntries(s.progressions.map((p) => [p.id, p]));
 
-  s.sections = (src.sections || []).map((x) => ({
-    ...x,
-    bars: Array.isArray(x.bars) ? x.bars : [x.bars || 8],
-    intensity: x.intensity ?? 0.5,
-    tension: x.tension ?? 0.3,
-  }));
-  if (!s.sections.length) s.sections.push({ id: 'default', bars: [8], intensity: 0.5, tension: 0.3 });
+  s.sections = (src.sections || []).map((x) => ({ ...x, bars: Array.isArray(x.bars) ? x.bars : [x.bars || 8] }));
+  if (!s.sections.length) s.sections.push({ id: 'default', bars: [8] });
   s.sectionMap = Object.fromEntries(s.sections.map((x) => [x.id, x]));
 
   // the song theme: one melody in key degrees that theme blocks restate in varied forms

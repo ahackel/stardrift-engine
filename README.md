@@ -27,7 +27,7 @@ npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22
 ```
 
 - **Blocks** (clips in the editor) are 1–32 beats of pattern. A track lists the blocks it plays; notes are relative to the chord or scale, so every block fits every progression.
-- **Sections** (intro, calm, drift, tension, peak …) carry an intensity, a tension, a length and weighted `next` links: a graph the conductor walks. A mood leads it to one of the mood's sections, picked by weight, or, if the mood lists none, to the section nearest its intensity and tension.
+- **Sections** (intro, calm, drift, tension, peak …) carry a length and weighted `next` links (0–100 % like the rest; none: any section may follow): a graph the conductor walks. A mood leads it to one of the mood's sections, picked by weight, the shortest way along the links. How lively a section is (for fills, drops and crashes) follows from what plays there.
 - **What plays in a section** is set in steps of 0, 25, 50, 75 and 100 %: how likely each track plays there, and how often it picks each of its blocks, against its others (the progressions likewise). The editor's *Plays in* view shows it all as a grid.
 - **Progressions** are roman numerals, each in its own scale if it likes (lydian for wonder, phrygian for tension). The last beats of a section play a lead-in chord into the next. A `.` is no chord (N.C., e.g. `i:4 .:4`): whole chords rest and single lines play on over the home chord, for a break.
 - **The theme** is one melody in key degrees. Theme blocks play it in a form picked each time (whole, head, sequence, slow, shift, answer), fitted to the chord, so the endless music has a tune you remember.
@@ -39,14 +39,12 @@ npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22
 ```js
 music.setMood('relaxed');                 // named moods live in song.moods
 music.setMood('tension', { within: 0 });  // start moving at the next bar line
-music.setMood({ intensity: 0.7, tension: 0.9 });
-music.setMood('auto');                    // drift on its own again
-music.setParams({ intensity, tension, influence, urgent });
+music.setMood('auto');                    // walk on its own again
 music.sting('alert');                     // a stinger, from the next beat
 music.sting('reward', { at: 'step' });    // … or right away
 ```
 
-A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), the conductor walks the graph toward the mood with shortened bridge sections, and cutoffs and levels glide over a few bars. All songs share the mood names (`relaxed wonder exploring tension danger action`) and stinger names (`discovery alert jump reward`), so a game can switch songs without changing its calls.
+A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), and the conductor takes the shortest way along the links to the mood's sections, with shortened bridge sections the first time. All songs share the mood names (`relaxed wonder exploring tension danger action`) and stinger names (`discovery alert jump reward`), so a game can switch songs without changing its calls.
 
 The player loads the sample library (`library/`) in the background; `init({ library: url })` points it elsewhere, other hosts call `engine.setSamples()`.
 
@@ -59,7 +57,8 @@ A song is plain JSON (`songs/*.json`). The parts:
   "instruments": { "lead": { "type": "pulse", "duty": 0.25, "env": { "a": 0.01, "d": 0.3, "s": 0.6, "r": 0.3 } } },
   "tracks": [{ "id": "lead", "name": "Lead", "instrument": "lead", "octave": 5, "clips": ["pulse"] }],
   "blocks": [{ "id": "pulse", "beats": 4, "sections": { "drift": 0.25, "peak": 0 }, "pattern": "0 - - . 0 - . . 0 - - . -1 - . ." }],
-  "sections": [{ "id": "calm", "intensity": 0.3, "tension": 0.1, "bars": [8], "tracks": { "lead": 0.5 }, "next": { "drift": 2 } }],
+  "sections": [{ "id": "calm", "bars": [8], "tracks": { "lead": 0.5 }, "next": { "drift": 1, "calm": 0.5 } }],
+  "moods": { "relaxed": { "sections": { "calm": 1 } } },
   "progressions": [{ "id": "home", "chords": "i:8 IV:4 VII:4" }],
   "theme": { "beats": 16, "pattern": "4 -*5 3 - 2 -*7 …" },
   "stingers": [{ "id": "discovery", "at": "beat", "beats": 4, "chords": "IV", "duck": 0.45,
@@ -68,7 +67,7 @@ A song is plain JSON (`songs/*.json`). The parts:
 
 Song-wide: `swing`, `humanize` (timing and loudness spread), `leadIn`, `breath` (breathers), `master.glue` (the compressor), `fx.echo` and `fx.reverb`. A track has `volume pan echo reverb`, `double` (a second take either side), `pump` (sidechain on the kick) and `fade` (bars to join or leave).
 
-What plays where, in steps of 0 · 0.25 · 0.5 · 0.75 · 1: a section's `tracks` (`{ id: chance }`) and a block's or progression's `sections` (`{ id: weight }`: picked by weight against the others in that section). Anything not listed is 1, so a new section, track, block or progression plays everywhere. A track whose blocks all weigh 0 in a section rests there; a section with no progression picks any. `"fill": true` marks a drum fill for the bar before a section change. A mood's `sections` (`{ id: weight }`) are where it leads the music, picked again each time a section ends; here anything not listed is 0, and a mood without them heads for the section nearest its `intensity` and `tension`. Older songs (tags, weights, intensity and tension ranges, track layers) are turned into these steps when they load.
+What plays where, in steps of 0 · 0.25 · 0.5 · 0.75 · 1: a section's `tracks` (`{ id: chance }`) and a block's or progression's `sections` (`{ id: weight }`: picked by weight against the others in that section). Anything not listed is 1, so a new section, track, block or progression plays everywhere. A track whose blocks all weigh 0 in a section rests there; a section with no progression picks any. `"fill": true` marks a drum fill for the bar before a section change. A mood's `sections` (`{ id: weight }`) are where it leads the music, picked again each time a section ends; here anything not listed is 0, and a mood without them leads nowhere (the music walks on). Older songs (tags, weights, intensity and tension, track layers) are turned into these when they load.
 
 ### Instruments
 
@@ -87,7 +86,7 @@ Several tracks can play one instrument. Every setting and its range is listed on
 | `wah { beats depth resonance mode }` | a sweeping peak, with the tempo or (`note`) with each note |
 | `drive`, `amp` | distortion 0–2, inside a `guitar` or `bass` amp |
 | `cutoff`, `resonance`, `filter` | low pass, or `high` |
-| `cutoffIntensity`, `cutoffTension`, `swell`, `filterEnv { amount decay }` | the filter follows the mood, the note's loudness, or opens on each note |
+| `swell`, `filterEnv { amount decay }` | the filter follows the note's loudness, or opens on each note |
 | `crush { bits rate }` | bitcrush |
 | `eq { low mid midHz high }` | 3-band EQ in dB |
 | `phaser`, `chorus` (`mode: flanger`), `tremolo`, `autopan` | `{ beats depth }` in time with the song (phaser: `feedback`) |
@@ -102,7 +101,7 @@ Block `mode`: `chord` (0 root, 1 third, 2 fifth, 3 root an octave up …), `scal
 
 ## The editor
 
-Open a song, click a chip, track, section or sequence to edit it; the **Info** panel explains whatever the pointer is on. The **Plays in** view, shown instead of the arrangement, is a grid of what plays in every section: how often each mood leads there, how likely each track plays and how often each block and progression is picked. The game input on the right sends moods and stingers the way a game would and shows the calls. The editor keeps songs in the browser and exports the `.json` your game loads (and a WAV). New songs start empty, from the starter, or in a style (a hand-written example song with a new key, theme and variations). **Vary** makes a variation of what is selected, by a little or a lot.
+Open a song, click a chip, track, section or sequence to edit it; the **Info** panel explains whatever the pointer is on. The **Plays in** view, shown instead of the arrangement, is a grid of what plays in every section: how often each mood leads there and which sections follow it, how likely each track plays and how often each block and progression is picked. The game input on the right sends moods and stingers the way a game would and shows the calls. The editor keeps songs in the browser and exports the `.json` your game loads (and a WAV). New songs start empty, from the starter, or in a style (a hand-written example song with a new key, theme and variations). **Vary** makes a variation of what is selected, by a little or a lot.
 
 ## Files
 

@@ -28,7 +28,6 @@ class StardriftProcessor extends AudioWorkletProcessor {
       const e = this.engine;
       if (!e) return;
       switch (m.type) {
-        case 'params': e.setParams(m.params); break;
         case 'mood': e.setMood(m.mood, m.options); break;
         case 'lock': e.lock(m.track, m.block); break;
         case 'lockProg': e.lockProgression(m.id); break;

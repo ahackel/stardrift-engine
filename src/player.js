@@ -6,8 +6,7 @@ import { fetchSamples } from './samples.js';
 //   await music.init();                       // must follow a user gesture (init({ library: url }) if library/ is elsewhere)
 //   await music.loadUrl('songs/deep-space.json');
 //   music.play();
-//   music.setMood('relaxed');                 // or 'tension', 'danger', 'wonder', 'auto', {intensity, tension}
-//   music.setParams({ intensity: 0.8 });      // fine-grained continuous control
+//   music.setMood('relaxed');                 // or 'tension', 'danger', 'wonder' … (the song's moods), 'auto'
 //   music.sting('discovery');                 // a short phrase for a game event, in key and on the beat
 //
 export class StardriftPlayer {
@@ -160,7 +159,6 @@ export class StardriftPlayer {
   }
 
   setMood(mood, options) { this.send({ type: 'mood', mood, options }); }
-  setParams(params) { this.send({ type: 'params', params }); }
   lockBlock(track, block) { this.send({ type: 'lock', track, block: block || null }); }
   lockProgression(id) { this.send({ type: 'lockProg', id: id || null }); } // null = back to automatic
   // 'levels' events about 30 times a second: { tracks: { id: peak }, l, r } (the master before its soft clip)

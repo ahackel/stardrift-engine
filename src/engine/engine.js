@@ -2,8 +2,8 @@
 // It is a pure function of (song, seed, parameter calls) -> audio samples.
 
 import { Rng } from './rng.js';
-import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, clamp01, mod } from './theory.js';
-import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD } from './pattern.js';
+import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod } from './theory.js';
+import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD, NOTE } from './pattern.js';
 import { Synth } from './synth.js';
 import { autoFade } from './params.js';
 import { weightIn, chanceIn } from './plays.js';
@@ -20,15 +20,26 @@ function chordIn(list, beat) {
   return list[list.length - 1];
 }
 const isFill = (b) => !!b.fill;
+// how many notes a clip plays per beat (at most 4; a theme clip: about 2 a bar)
+const densities = new Map();
+function density(b, spb) {
+  if (b.theme) return 0.5;
+  const k = `${spb}|${b.pattern}`;
+  if (!densities.has(k)) {
+    const st = parseTokens(expandTokens(b.pattern));
+    densities.set(k, st.length ? Math.min(4, (st.filter((x) => x.t === NOTE).length / st.length) * spb) : 0);
+  }
+  return densities.get(k);
+}
 // the same notes (a copy or a renamed clip), whatever its name or colour
 const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && JSON.stringify(a.theme ?? null) === JSON.stringify(b.theme ?? null);
 
 export class Engine {
   constructor(sampleRate, song, seed = 1) {
     this.sr = sampleRate;
-    this.target = { intensity: 0.3, tension: 0.2, influence: 0 };
     this.moodName = 'auto';
     this.moodSec = null; // the section a named mood heads for (aimMood)
+    this.arrived = false; // the music got to one of the mood's sections since it was asked for
     this.locks = {};
     this.progLock = null;
     this.secLock = null;
@@ -63,9 +74,6 @@ export class Engine {
     this.curSting = null; // {id, pos, len, parts: {trackId: {mode, steps}}, chords}
     this.nextSting = null; // {def, q}: starts on the next step divisible by q
     this.chordKey = '';
-    this.intensity = 0.2;
-    this.tension = 0.1;
-    this.goal = { intensity: 0.2, tension: 0.1 };
     this.tracks = {};
     this.history = {};
     this.synth.allOff();
@@ -78,68 +86,47 @@ export class Engine {
   setSamples(samples) {
     this.synth.samples = samples || {};
     this.synth.configure(this.song);
-    this.synth.setMood(this.intensity, this.tension);
   }
 
   // Hot-swap the song (editor edits) without losing the musical position.
   setSong(raw) {
     this.song = prepareSong(raw);
     this.synth.configure(this.song);
-    this.synth.setMood(this.intensity, this.tension);
     this.stepLen = (this.sr * 60) / this.song.bpm / this.song.spb;
     if (this.section) this.refresh();
   }
 
-  // Low-level: continuous game parameters. influence 0 = fully autonomous, 1 = follow target.
-  setParams({ intensity, tension, influence, urgent, within } = {}) {
-    const t = this.target;
-    if (intensity !== undefined) t.intensity = clamp01(+intensity);
-    if (tension !== undefined) t.tension = clamp01(+tension);
-    if (influence !== undefined) t.influence = clamp01(+influence);
-    if (urgent) this.hurry(within ?? 1);
-  }
-
-  // High-level: "now make it relaxed" / "now there is tension".
-  // mood = name from song.moods, or {intensity, tension}. The change is always musical:
-  // the current section finishes within `within` bars (at a bar line, with a fill), the conductor
-  // walks the section graph toward the mood, and intensity/tension/filters glide over several bars.
-  // A named mood that lists sections (mood.sections { id: weight }) heads for one of them (aimMood).
+  // "Now make it relaxed" / "now there is tension": a name from song.moods, or 'auto'. The change is always musical:
+  // the current section finishes within `within` bars (at a bar line, with a fill), then the music follows the
+  // sections' links the shortest way to one of the mood's sections (mood.sections, by weight) and stays among them
+  // while the mood holds. A mood without sections leads nowhere: the music walks on.
   setMood(mood, { within = 2 } = {}) {
     if (mood === 'auto' || mood == null) {
       this.moodName = 'auto';
       this.moodSec = null;
-      this.target.influence = 0;
-      this.log('mood → auto (autonomous drift)');
+      this.log('mood → auto (the music walks on its own)');
+      this.emitState();
       return;
     }
-    const m = typeof mood === 'string' ? this.song.moods[mood] : mood;
-    if (!m) return;
-    const again = typeof mood === 'string' && mood === this.moodName && this.target.influence > 0;
-    this.moodName = typeof mood === 'string' ? mood : 'custom';
-    this.target.intensity = clamp01(m.intensity ?? this.target.intensity);
-    this.target.tension = clamp01(m.tension ?? this.target.tension);
-    this.target.influence = clamp01(m.influence ?? 1);
-    if (again && this.moodSec) this.aimAt(this.song.sectionMap[this.moodSec]); // asked again: keep where it heads
-    else this.aimMood();
-    this.log(`mood → ${this.moodName} (${this.moodSec ? `${this.moodSec}, ` : ''}I ${this.target.intensity.toFixed(2)}, T ${this.target.tension.toFixed(2)})`);
-    this.hurry(within);
+    if (!this.song.moods[mood]) return;
+    const again = mood === this.moodName;
+    this.moodName = mood;
+    if (!(again && this.moodSec)) { this.aimMood(); this.arrived = !!this.section && this.inMood(this.section); } // asked again: keep where it heads
+    this.log(`mood → ${mood} (${this.moodSec || 'leads nowhere'})`);
+    if (this.moodSec) this.hurry(within);
     this.emitState();
   }
 
   // The section a named mood heads for, picked by its weights (mood.sections; not listed: 0), again each time a section
-  // ends while the mood holds: the walk goes there as to the mood's own intensity and tension. A mood that lists no
-  // section heads for those (the section nearest them).
+  // ends while the mood holds
   aimMood() {
     const w = this.song.moods[this.moodName]?.sections, list = w ? this.song.sections.filter((x) => (w[x.id] ?? 0) > 0) : [];
-    this.moodSec = null;
-    if (list.length) this.aimAt(this.rng.weighted(list, list.map((x) => w[x.id])));
+    this.moodSec = list.length ? this.rng.weighted(list, list.map((x) => w[x.id])).id : null;
   }
 
-  aimAt(sec) {
-    if (!sec) return;
-    this.moodSec = sec.id;
-    this.target.intensity = sec.intensity;
-    this.target.tension = sec.tension;
+  // is this one of the sections the mood leads to?
+  inMood(sec) {
+    return (this.song.moods[this.moodName]?.sections?.[sec.id] ?? 0) > 0;
   }
 
   forceSection(id) {
@@ -423,7 +410,6 @@ export class Engine {
       this.forced = null;
       this.startSection(next);
     } else {
-      this.glideMood();
       this.midSectionBar();
     }
     if (this.sectionBar === this.sectionBars - 1) this.prepareTransition();
@@ -435,31 +421,18 @@ export class Engine {
     }
   }
 
-  // intensity/tension approach the section goal gradually -> smooth brightness & block choices
-  glideMood() {
-    const k = 1 / Math.max(1, this.song.moodGlide / 4);
-    this.intensity += (this.goal.intensity - this.intensity) * k;
-    this.tension += (this.goal.tension - this.tension) * k;
-    this.synth.setMood(this.intensity, this.tension);
-  }
-
   startSection(sec) {
     const s = this.song, rng = this.rng;
-    const first = !this.section;
+    const prev = this.section, first = !prev;
     this.section = sec;
     this.sectionBar = 0;
     this.sectionBars = Math.max(1, rng.pick(sec.bars) | 0);
     this.nextSection = null;
-    // still on the way to a requested mood? keep bridging sections short
-    if (!this.secLock && this.target.influence > 0.5 && this.distToTarget(sec) > 0.25) {
+    // on the way to a mood's sections, the first time: keep the ones in between short
+    if (this.moodSec && this.inMood(sec)) this.arrived = true;
+    if (!this.secLock && this.moodSec && !this.arrived) {
       this.sectionBars = Math.min(this.sectionBars, Math.max(1, this.song.transitBars));
     }
-
-    const inf = this.target.influence;
-    this.goal.intensity = clamp01(sec.intensity + (this.target.intensity - sec.intensity) * inf * 0.5 + rng.range(-0.04, 0.04));
-    this.goal.tension = clamp01(sec.tension + (this.target.tension - sec.tension) * inf * 0.5 + rng.range(-0.04, 0.04));
-    if (first) { this.intensity = this.goal.intensity; this.tension = this.goal.tension; this.synth.setMood(this.intensity, this.tension); }
-    else this.glideMood();
 
     this.prog = this.upcoming?.sec === sec && this.upcoming.prog ? this.upcoming.prog : this.pickProgression();
     this.progStart = this.step;
@@ -469,7 +442,7 @@ export class Engine {
 
     for (const tr of s.tracks) this.setupTrack(tr);
 
-    if (!first && this.intensity > 0.68) {
+    if (!first && this.energy(sec) >= 0.7 && this.energy(sec) >= this.energy(prev)) { // into a lively section: a crash
       for (const tr of s.tracks) if (tr.inst.type === 'drums' && this.tracks[tr.id]?.active) this.synth.drum(tr.id, ['c'], 0.7);
     }
     this.log(`▶ ${sec.id} · ${this.sectionBars} bars · ${this.prog ? this.prog.id : '—'}`);
@@ -607,7 +580,7 @@ export class Engine {
     if (!this.forced && this.shouldBreathe()) next = this.makeBreath(next);
     this.nextSection = next;
     this.prepareLeadIn(next);
-    const up = next.intensity - this.section.intensity;
+    const up = this.energy(next) - this.energy(this.section);
     for (const tr of s.tracks) {
       const ts = this.tracks[tr.id];
       if (tr.inst.type !== 'drums' || !ts || !ts.active || this.locks[tr.id]) continue;
@@ -698,15 +671,35 @@ export class Engine {
     if (!b || !(b.every > 0) || this.section.breath || this.secLock) return false;
     if (!this.breathAt) this.breathAt = Math.round(b.every * this.rng.range(0.75, 1.25));
     if (this.barsSinceBreath < this.breathAt) return false;
-    const t = this.target;
-    return this.intensity < 0.7 && (t.influence <= 0.5 || t.intensity < 0.5);
+    return this.energy(this.section) < 0.7 && (!this.moodSec || this.inMood(this.section)); // not on the way to a mood
+  }
+
+  // How lively a section is, 0–1 (the song's liveliest: 1): the notes per beat its tracks play there, by their chance
+  // and their clips' weights, drums counting more. Going up: a fill or a crash; going down, the drums may drop out.
+  energy(sec) {
+    let e = this.energies;
+    if (e?.song !== this.song) {
+      const by = new Map(this.song.sections.map((x) => [x, this.notesIn(x)]));
+      e = this.energies = { song: this.song, by, max: Math.max(1e-9, ...by.values()) };
+    }
+    return (e.by.get(sec) ?? this.notesIn(sec)) / e.max;
+  }
+
+  notesIn(sec) {
+    const s = this.song;
+    return s.tracks.reduce((a, tr) => {
+      const loops = (s.blocksByTrack[tr.id] || []).filter((b) => !b.fill && weightIn(b, sec) > 0);
+      const w = loops.reduce((q, b) => q + weightIn(b, sec), 0);
+      const d = w ? loops.reduce((q, b) => q + weightIn(b, sec) * density(b, s.spb), 0) / w : 0;
+      return a + chanceIn(sec, tr.id) * d * (tr.inst.type === 'drums' ? 1.5 : 1);
+    }, 0);
   }
 
   // a track a breather keeps: breath.keep, else the ones that always play in the calmest section
   breathes(tr) {
     const s = this.song, keep = s.breath?.keep;
     if (keep) return keep.includes(tr.id);
-    const calm = s.sections.reduce((a, x) => (x.intensity < a.intensity ? x : a));
+    const calm = s.sections.reduce((a, x) => (this.energy(x) < this.energy(a) ? x : a));
     return chanceIn(calm, tr.id) >= 1;
   }
 
@@ -728,7 +721,6 @@ export class Engine {
     this.log(`breather, then ${resume.id}`);
     return {
       id: 'breather', breath: true, bars: s.breath.bars || [4, 8], base: cur.base ?? cur.id, tracks, // its clips: those of the section it interrupts
-      intensity: Math.min(0.12, cur.intensity), tension: cur.tension * 0.5,
       next: { ...(resume.next || {}), [resume.id]: 4 },
     };
   }
@@ -755,28 +747,41 @@ export class Engine {
     this.leadIn = { sec: next, start, chord: { degree: a, shapeName, shape: SHAPES[shapeName], beats } };
   }
 
+  // the links out of a section: [section, weight]; a section with none goes on to any
+  linksOf(sec) {
+    const s = this.song;
+    const list = Object.entries(sec.next || {}).filter(([id, w]) => s.sectionMap[id] && w > 0).map(([id, w]) => [s.sectionMap[id], +w]);
+    return list.length ? list : s.sections.map((x) => [x, 1]);
+  }
+
+  // how many sections it takes from each section to `goal` along the links (goal: 0; no way there: not in the map)
+  stepsTo(goal) {
+    if (this.routes?.goal === goal) return this.routes.d;
+    const d = new Map([[goal, 0]]);
+    for (let k = 0, grew = true; grew; k++) {
+      grew = false;
+      for (const x of this.song.sections) if (!d.has(x) && this.linksOf(x).some(([y]) => d.get(y) === k)) { d.set(x, k + 1); grew = true; }
+    }
+    this.routes = { goal, d };
+    return d;
+  }
+
   chooseNext() {
     const s = this.song, cur = this.section;
     if (this.secLock && s.sectionMap[this.secLock]) return s.sectionMap[this.secLock];
-    if (this.target.influence > 0 && this.moodSec) this.aimMood();
-    let list = Object.entries(cur.next || {}).filter(([id, w]) => s.sectionMap[id] && w > 0).map(([id, w]) => [s.sectionMap[id], +w]);
-    if (!list.length) list = s.sections.map((x) => [x, 1]);
-    const inf = this.target.influence;
-    if (inf <= 0) return this.rng.weighted(list.map((x) => x[0]), list.map((x) => x[1]));
-    const d2 = list.map(([sec]) => (sec.intensity - this.target.intensity) ** 2 + (sec.tension - this.target.tension) ** 2);
-    const min = Math.min(...d2);
-    const w = list.map(([, w0], i) => w0 * (1 - inf + inf * Math.exp(-(d2[i] - min) / (2 * 0.08 * 0.08))));
-    return this.rng.weighted(list.map((x) => x[0]), w);
+    if (this.moodSec) this.aimMood(); // while a mood holds, it picks again among its sections
+    const list = this.linksOf(cur), goal = this.moodSec && s.sectionMap[this.moodSec];
+    if (!goal) return this.rng.weighted(list.map((x) => x[0]), list.map((x) => x[1]));
+    // on the way to a mood: the links that take the fewest sections to get there (by weight); none gets there: straight there
+    const d = this.stepsTo(goal), best = Math.min(...list.map(([x]) => d.get(x) ?? Infinity));
+    if (best === Infinity) return goal;
+    const near = list.filter(([x]) => d.get(x) === best);
+    return this.rng.weighted(near.map((x) => x[0]), near.map((x) => x[1]));
   }
 
-  // If the current section is far from where the game wants to be, end it within `within` bars.
-  distToTarget(sec) {
-    return Math.hypot(sec.intensity - this.target.intensity, sec.tension - this.target.tension);
-  }
-
+  // A mood asked for while the music is elsewhere: end the current section within `within` bars
   hurry(within) {
-    if (!this.section || this.secLock) return;
-    if (this.distToTarget(this.section) < 0.2 && this.target.influence > 0) return;
+    if (!this.section || this.secLock || this.inMood(this.section)) return;
     const end = this.sectionBar + 1 + Math.max(0, within | 0);
     if (end < this.sectionBars) this.sectionBars = end;
     if (this.sectionBar === this.sectionBars - 1) { this.nextSection = this.chooseNext(); this.prepareLeadIn(this.nextSection); }
@@ -858,11 +863,9 @@ export class Engine {
       livePending: this.livePending ? (this.livePending.off ? -1 : this.livePending.degree) : null, // -1 = release pending
       chords: this.prog ? this.prog.chordList.map((c) => chordLabel(s.keyRoot, this.prog.scale, c)) : [],
       scale: this.prog ? this.prog.scaleName : s.scaleName,
-      intensity: this.intensity,
-      tension: this.tension,
-      goal: { ...this.goal },
-      target: { ...this.target },
+      energy: this.section ? this.energy(this.section) : 0,
       mood: this.moodName,
+      heading: this.moodSec,
       tracks,
     });
   }

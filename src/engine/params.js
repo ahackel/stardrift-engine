@@ -45,8 +45,6 @@ export const SOUND_PARAMS = [
   ['cutoff', 60, 16000, 16000, { log: true, vary: (s) => (s.filter === 'high' ? [60, 3000] : [300, 16000]) }],
   ['resonance', 0.3, 6, 0.707, { log: true, vary: [0.5, 3] }],
   ['swell', 0, 3, 0, { off: 'swell', vary: [0, 1.5], when: melodic }],
-  ['cutoffIntensity', -4000, 8000, 0, { step: 50, vary: [-1000, 4000] }],
-  ['cutoffTension', -4000, 4000, 0, { step: 50, vary: [-1500, 1500] }],
   ['filterEnv.amount', 0, 5, 0, { off: 'filterEnv', vary: [0, 3] }],
   ['filterEnv.decay', 0.02, 2, 0.2, { log: true, vary: [0.04, 1], when: (s) => !!s.filterEnv }],
   // the wah and the bitcrush (varied only on a sound that has one)
