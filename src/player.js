@@ -171,6 +171,7 @@ export class StardriftPlayer {
   setMute(track, on) { this.send({ type: 'mute', track, on }); }
   setSolo(track, on) { this.send({ type: 'solo', track, on }); }
   forceSection(id) { this.send({ type: 'section', id }); }
+  forceProgression(id) { this.send({ type: 'prog', id }); } // once, from the next bar line
   requestState() { this.send({ type: 'state' }); }
 
   setVolume(v, fadeSeconds = 0.5) {

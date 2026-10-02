@@ -136,24 +136,35 @@ export function mutateTokens(tokens, rng, isDrum, amount = 1) {
   return out;
 }
 
-// Song theme: one motif (key degrees) that theme blocks restate in varied forms, so the music has a melody
-// you recognise. Every form keeps the theme's opening or its rhythm, which is what the ear holds on to.
-//   whole     the theme                      head    first half, then space
+// Forms: how a clip restates its notes (block.forms; one is picked when it starts and, half the time, when it loops),
+// so a melody comes back recognisable but not the same. Every form keeps the opening or the rhythm, which is what the
+// ear holds on to. A clip can play another clip's notes (block.from): one melody, quoted by several clips and tracks.
+//   whole     as written                     head    first half, then space
 //   sequence  first half, then again a step or two higher/lower
-//   slow      first half at half speed       shift   the whole theme a step or two higher/lower
-//   answer    space, then the first half (a canon against a track playing the whole theme)
-export const THEME_FORMS = ['whole', 'head', 'sequence', 'slow', 'shift', 'answer'];
+//   slow      first half at half speed       shift   all of it a step or two higher/lower
+//   answer    space, then the first half (a canon against a track playing it whole)
+export const FORMS = ['whole', 'head', 'sequence', 'slow', 'shift', 'answer'];
 
 const moveToken = (t, k) => t.replace(/(^|\+)(-?\d+)/g, (_, pre, n) => pre + (+n + k));
 
-export function themeTokens(theme, form, rng) {
-  const n = theme.length, h = n >> 1, head = theme.slice(0, h), space = Array(n - h).fill('.');
+export function formTokens(notes, form, rng) {
+  const n = notes.length, h = n >> 1, head = notes.slice(0, h), space = Array(n - h).fill('.');
   switch (form) {
     case 'head': return [...head, ...space];
     case 'sequence': { const k = rng.pick([-2, -1, 1, 2]); return [...head, ...head.map((t) => moveToken(t, k))]; }
     case 'slow': return head.flatMap((t) => [t, t === '.' ? '.' : '-']);
-    case 'shift': { const k = rng.pick([-2, -1, 1, 2]); return theme.map((t) => moveToken(t, k)); }
+    case 'shift': { const k = rng.pick([-2, -1, 1, 2]); return notes.map((t) => moveToken(t, k)); }
     case 'answer': return [...space, ...head];
-    default: return theme.slice();
+    default: return notes.slice();
   }
+}
+
+// the forms a clip may play in (block.forms; none: as written), and the clip whose notes it plays (block.from: another
+// clip's, if that one has notes of its own; null if it is gone; else its own). blocks: the song's blocks by id, or a
+// function from id to block. Shared by the engine and the editor.
+export const formsOf = (b) => (Array.isArray(b?.forms) ? b.forms.filter((f) => FORMS.includes(f)) : []);
+export const variesForm = (b) => formsOf(b).some((f) => f !== 'whole');
+export function notesOf(b, blocks) {
+  const src = b?.from && (typeof blocks === 'function' ? blocks(b.from) : blocks[b.from]);
+  return src && !src.from && src !== b ? src : b?.from ? null : b;
 }

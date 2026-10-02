@@ -33,6 +33,46 @@ function layerChances(layer, sections) {
   return out;
 }
 
+// A song once had one theme (song.theme: { beats, pattern }, in key degrees) that theme clips played (block.theme: true
+// for any form, or a list of forms). Now any clip can play another clip's notes (block.from) in forms (block.forms):
+// the theme's notes go to a theme clip as long as the theme (the one playing every form if there is one), and the other
+// theme clips play its notes. With none as long, a clip of their own holds them: on the first theme clip's track (else
+// the first melodic one), at 0 % in every section, so it never plays itself. Theme clips with no theme stay silent.
+const ALL_FORMS = ['whole', 'head', 'sequence', 'slow', 'shift', 'answer'];
+function migrateTheme(raw) {
+  if (!raw || !(raw.theme || (raw.blocks || []).some((b) => b.theme))) return raw;
+  const s = structuredClone(raw), th = s.theme?.pattern ? s.theme : null, blocks = (s.blocks ||= []), tracks = s.tracks || [];
+  delete s.theme;
+  const idsOf = (t) => (Array.isArray(t.clips) ? t.clips : blocks.filter((b) => b.track === t.id).map((b) => b.id));
+  const order = tracks.flatMap(idsOf), at = (b) => (order.includes(b.id) ? order.indexOf(b.id) : order.length);
+  const themed = blocks.filter((b) => b.theme).sort((a, b) => at(a) - at(b));
+  const formsOf = (b) => (Array.isArray(b.theme) ? b.theme.filter((f) => ALL_FORMS.includes(f)) : ALL_FORMS);
+  const setForms = (b) => {
+    const f = formsOf(b);
+    delete b.theme;
+    if (f.length && !(f.length === 1 && f[0] === 'whole')) b.forms = [...f];
+  };
+  if (!th) { themed.forEach(setForms); return s; }
+  const beats = Math.max(1, +th.beats || 8), long = themed.filter((b) => (b.beats || 4) === beats);
+  let src = long.find((b) => b.theme === true) || long.find((b) => formsOf(b).includes('whole')) || long[0];
+  if (src) {
+    setForms(src);
+    delete src.mode; delete src.from;
+  } else {
+    const drums = (t) => s.instruments?.[t.instrument]?.type === 'drums';
+    const host = (themed[0] && tracks.find((t) => idsOf(t).includes(themed[0].id))) || tracks.find((t) => !drums(t));
+    if (!host) { themed.forEach(setForms); return s; }
+    let id = 'theme_notes';
+    for (let n = 2; blocks.some((b) => b.id === id); n++) id = `theme_notes_${n}`;
+    src = { id, beats, sections: Object.fromEntries((s.sections || []).map((x) => [x.id, 0])) };
+    blocks.push(src);
+    if (Array.isArray(host.clips)) host.clips.push(id); else src.track = host.id;
+  }
+  Object.assign(src, { pattern: th.pattern, mode: 'key', fit: src.fit ?? true });
+  for (const b of themed) if (b !== src) { setForms(b); delete b.pattern; delete b.mode; b.from = src.id; }
+  return s;
+}
+
 // The editor once kept a section's moods on the section (section.moods: names): they are the moods' sections now
 function migrateMoods(raw) {
   if (!raw?.sections?.some((x) => Array.isArray(x.moods))) return raw;
@@ -103,7 +143,7 @@ function rangeFit(v, r) {
 // (it wobbled them by up to 0.04): clips that share a tag with it (or name no section) against each other, the one
 // picked most at 100.
 export function migrateSong(raw) {
-  raw = migrateNext(migrateMoods(raw));
+  raw = migrateTheme(migrateNext(migrateMoods(raw)));
   return dropLevels(raw && LEGACY(raw) ? migrateLegacy(raw) : raw);
 }
 function migrateLegacy(raw) {

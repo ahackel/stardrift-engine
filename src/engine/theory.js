@@ -179,9 +179,6 @@ export function prepareSong(raw) {
   if (!s.sections.length) s.sections.push({ id: 'default', bars: [8] });
   s.sectionMap = Object.fromEntries(s.sections.map((x) => [x.id, x]));
 
-  // the song theme: one melody in key degrees that theme blocks restate in varied forms
-  s.theme = raw.theme?.pattern ? { pattern: raw.theme.pattern, beats: Math.max(1, +raw.theme.beats || 8) } : null;
-
   // stingers: short phrases for game events; each part borrows a track for the stinger's length
   s.stingers = (raw.stingers || []).filter((x) => x && x.id).map((x) => ({
     ...x,

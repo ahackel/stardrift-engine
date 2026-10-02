@@ -30,7 +30,7 @@ npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22
 - **Sections** (intro, calm, drift, tension, peak …) carry a length and weighted `next` links (0–100 % like the rest; none: any section may follow): a graph the conductor walks. A mood leads it to one of the mood's sections, picked by weight, the shortest way along the links. How lively a section is (for fills, drops and crashes) follows from what plays there.
 - **What plays in a section** is set in steps of 0, 25, 50, 75 and 100 %: how likely each track plays there, and how often it picks each of its blocks, against its others (the progressions likewise). The editor's *Plays in* view shows it all as a grid.
 - **Progressions** are roman numerals, each in its own scale if it likes (lydian for wonder, phrygian for tension). The last beats of a section play a lead-in chord into the next. A `.` is no chord (N.C., e.g. `i:4 .:4`): whole chords rest and single lines play on over the home chord, for a break.
-- **The theme** is one melody in key degrees. Theme blocks play it in a form picked each time (whole, head, sequence, slow, shift, answer), fitted to the chord, so the endless music has a tune you remember.
+- **Themes**: a block can play another block's notes (`from`), at its own length, and any block can restate its notes in **forms** picked each time it starts (as written, head, sequence, slow, shift, answer). One melody in key degrees, fitted to the chord and quoted by blocks on several tracks, gives the endless music a tune you remember.
 - **Variation over time**: blocks mutate when they loop, tracks that play sometimes come and go, fills and drops mark transitions, and every so often the music thins to a breather. Everything is seeded: the same seed gives the same music.
 - **Stingers** react to game events: a short phrase from the next beat that borrows tracks, can bring its own chord and ducks the rest.
 
@@ -56,11 +56,12 @@ A song is plain JSON (`songs/*.json`). The parts:
 { "bpm": 92, "key": "D", "scale": "dorian",
   "instruments": { "lead": { "type": "pulse", "duty": 0.25, "env": { "a": 0.01, "d": 0.3, "s": 0.6, "r": 0.3 } } },
   "tracks": [{ "id": "lead", "name": "Lead", "instrument": "lead", "octave": 5, "clips": ["pulse"] }],
-  "blocks": [{ "id": "pulse", "beats": 4, "sections": { "drift": 0.25, "peak": 0 }, "pattern": "0 - - . 0 - . . 0 - - . -1 - . ." }],
+  "blocks": [{ "id": "pulse", "beats": 4, "sections": { "drift": 0.25, "peak": 0 }, "pattern": "0 - - . 0 - . . 0 - - . -1 - . ." },
+             { "id": "theme", "beats": 16, "mode": "key", "fit": true, "pattern": "4 -*5 3 - 2 -*7 …" },
+             { "id": "theme_head", "beats": 16, "from": "theme", "forms": ["head", "slow", "answer"] }],
   "sections": [{ "id": "calm", "bars": [8], "tracks": { "lead": 0.5 }, "next": { "drift": 1, "calm": 0.5 } }],
   "moods": { "relaxed": { "sections": { "calm": 1 } } },
   "progressions": [{ "id": "home", "chords": "i:8 IV:4 VII:4" }],
-  "theme": { "beats": 16, "pattern": "4 -*5 3 - 2 -*7 …" },
   "stingers": [{ "id": "discovery", "at": "beat", "beats": 4, "chords": "IV", "duck": 0.45,
                  "parts": [{ "track": "arp", "pattern": "* -*15" }] }] }
 ```
@@ -97,7 +98,9 @@ The chain runs in that order: pitch → source → envelope → breath → body 
 
 `.` rest · `-` hold · `0 1 2` note · `*` whole chord (or arpeggio) · `0+4+8` stack · `k s h o c t m` drums · `'` `,` octave up/down · `#` `b` semitone · `!` accent · `?` / `?30` chance · `T*n` repeat · `|` bar line.
 
-Block `mode`: `chord` (0 root, 1 third, 2 fifth, 3 root an octave up …), `scale` (steps above the chord root) or `key` (degrees of the key).
+Block `mode`: `chord` (0 root, 1 third, 2 fifth, 3 root an octave up …), `scale` (steps above the chord root) or `key` (degrees of the key). `fit`: notes on the beat move to the nearest chord tone (for melodies in `key`).
+
+Block `from`: play that block's notes (its `pattern`, `mode` and `fit`) instead of a pattern of its own, cut or padded to this block's `beats`; the block named must have notes of its own. `forms`: the forms one is picked from when the block starts and, half the time, when it loops — `whole` (as written), `head` (first half, then space), `sequence` (first half, then again a step or two up or down), `slow` (first half at half speed), `shift` (all of it a step or two up or down), `answer` (space, then the first half). None: as written. Songs from before kept one `theme` that `theme` blocks played: it becomes a block they take their notes `from` when the song loads.
 
 ## The editor
 
@@ -109,7 +112,7 @@ Open a song, click a chip, track, section or sequence to edit it; the **Info** p
 |---|---|
 | `src/engine/engine.js` | conductor and sequencer |
 | `src/engine/synth.js`, `drums.js`, `dsp.js`, `wavetable.js` | voices, effects, drum kits, shared filters, band-limited wavetables |
-| `src/engine/pattern.js`, `theory.js`, `rng.js` | patterns and theme forms, scales and chords, seeded RNG |
+| `src/engine/pattern.js`, `theory.js`, `rng.js` | patterns and their forms, scales and chords, seeded RNG |
 | `src/engine/params.js`, `compose.js` | every setting with its range; variations and new themes |
 | `src/player.js`, `src/worklet.js` | the web player: main-thread API and AudioWorklet host |
 | `src/editor/` | the editor: Lit panels (`vendor/lit.js`, no build step), one file per panel |
@@ -121,6 +124,7 @@ Open a song, click a chip, track, section or sequence to edit it; the **Info** p
 
 - No Web Audio nodes: everything is per-sample math in `Engine.process(outL, outR, n)`, which maps to `OnAudioFilterRead`.
 - The song format is plain JSON, so the web editor is the authoring tool for Unity too.
+- Songs the editor saves are in the current format; a port needs `migrateSong` (`src/engine/plays.js`) only to load older files (e.g. a song-wide `theme`).
 - The RNG is integer mulberry32 (`Math.imul` → `uint` multiply), so a port can be checked against `tools/render.mjs` with the same seed.
 - Game calls only set targets; the audio thread applies them at the next bar, so a small message queue is all the locking needed.
 - `Math.random` is used only for sound detail (voice start phases, string plucks, breath noise), which is inaudible to replace.

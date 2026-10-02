@@ -17,7 +17,6 @@
   "leadIn": 2,
   "breath": { "every": 64, "bars": [4, 8], "keep": ["pad", "stars"] },
   "startSection": "intro",
-  "theme": { "beats": 16, "pattern": "4 -*5 3 - 2 -*7 | . . . . 4 - 5 - 7 -*7 | 6 -*5 4 - 2 -*7 | 1 -*3 0 -*7 . . . ." },
   "master": { "gain": 1.1 },
   "fx": {
     "echo": { "beats": 0.75, "feedback": 0.42, "damp": 0.35, "level": 0.55 },
@@ -115,15 +114,15 @@
     { "id": "build", "beats": 4, "sections": { "intro": 0, "calm": 0, "wonder": 0, "drift": 0, "tension": 0, "danger": 0, "peak": 0, "release": 0 }, "pattern": "0 2 0 2 1 3 1 3 2 4 2 4 3 5 3 5" },
     { "id": "chip", "beats": 4, "sections": { "intro": 0, "calm": 0, "wonder": 0, "tension": 0, "release": 0 }, "pattern": "* -*3 . . * - * -*3 . . . ." },
 
-    { "id": "theme_head", "beats": 16, "sections": { "tension": 0, "build": 0, "danger": 0, "peak": 0 }, "theme": ["head", "slow", "answer"] },
-    { "id": "theme_seq", "beats": 16, "sections": { "intro": 0, "calm": 0, "wonder": 0, "tension": 0, "build": 0, "release": 0 }, "theme": ["sequence", "head", "shift"] },
-    { "id": "theme", "beats": 16, "sections": { "intro": 0.25, "calm": 0.5, "tension": 0, "build": 0, "danger": 0, "peak": 0 }, "theme": true },
-    { "id": "theme_peak", "beats": 16, "sections": { "intro": 0, "calm": 0, "wonder": 0, "drift": 0, "tension": 0, "build": 0, "release": 0 }, "theme": ["whole", "sequence", "shift"] },
+    { "id": "theme_head", "beats": 16, "sections": { "tension": 0, "build": 0, "danger": 0, "peak": 0 }, "from": "theme", "forms": ["head", "slow", "answer"] },
+    { "id": "theme_seq", "beats": 16, "sections": { "intro": 0, "calm": 0, "wonder": 0, "tension": 0, "build": 0, "release": 0 }, "from": "theme", "forms": ["sequence", "head", "shift"] },
+    { "id": "theme", "beats": 16, "mode": "key", "fit": true, "sections": { "intro": 0.25, "calm": 0.5, "tension": 0, "build": 0, "danger": 0, "peak": 0 }, "forms": ["whole", "head", "sequence", "slow", "shift", "answer"], "pattern": "4 -*5 3 - 2 -*7 | . . . . 4 - 5 - 7 -*7 | 6 -*5 4 - 2 -*7 | 1 -*3 0 -*7 . . . ." },
+    { "id": "theme_peak", "beats": 16, "sections": { "intro": 0, "calm": 0, "wonder": 0, "drift": 0, "tension": 0, "build": 0, "release": 0 }, "from": "theme", "forms": ["whole", "sequence", "shift"] },
     { "id": "lead_tension", "beats": 16, "sections": { "intro": 0, "calm": 0, "wonder": 0, "drift": 0, "build": 0, "peak": 0, "release": 0 }, "mode": "key", "pattern": "0 -*7 1 -*7 | 0 -*15 | .*16 | . . 1 -*5 0 -*7" },
     { "id": "call", "beats": 8, "sections": { "intro": 0, "calm": 0, "wonder": 0, "drift": 0, "tension": 0, "release": 0 }, "mode": "key", "pattern": "7 - 6 - 4 - 6 - 7 -*7 | 9 - 8 - 7 - 4 - 6 -*7" },
 
     { "id": "scatter", "beats": 8, "sections": { "tension": 0, "build": 0.75, "danger": 0, "peak": 0 }, "mode": "chord", "pattern": "6? .*5 5? .*9 | 3? .*7 6? .*7" },
-    { "id": "stars_theme", "beats": 16, "sections": { "intro": 0.5, "drift": 0, "tension": 0, "build": 0, "danger": 0, "peak": 0 }, "theme": ["head", "slow", "answer"] },
+    { "id": "stars_theme", "beats": 16, "sections": { "intro": 0.5, "drift": 0, "tension": 0, "build": 0, "danger": 0, "peak": 0 }, "from": "theme", "forms": ["head", "slow", "answer"] },
     { "id": "twinkle", "beats": 8, "sections": { "drift": 0, "tension": 0, "build": 0, "danger": 0, "peak": 0, "release": 0.5 }, "pattern": "4 .*7 2 .*7 | 3 .*11 1 .*3" },
     { "id": "stars_tension", "beats": 8, "sections": { "intro": 0, "calm": 0, "wonder": 0, "drift": 0, "release": 0 }, "mode": "scale", "pattern": "1 .*11 0 .*3 | .*8 1? .*7" },
 

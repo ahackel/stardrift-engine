@@ -3,7 +3,7 @@
 
 import { Rng } from './rng.js';
 import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod } from './theory.js';
-import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, themeTokens, THEME_FORMS, REST, HOLD, NOTE } from './pattern.js';
+import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } from './pattern.js';
 import { Synth } from './synth.js';
 import { autoFade } from './params.js';
 import { weightIn, chanceIn } from './plays.js';
@@ -20,19 +20,22 @@ function chordIn(list, beat) {
   return list[list.length - 1];
 }
 const isFill = (b) => !!b.fill;
-// how many notes a clip plays per beat (at most 4; a theme clip: about 2 a bar)
+const notesKey = (b) => (b ? `${b.beats || 4}:${b.pattern}:${b.mode || ''}` : '');
+// how many notes a clip plays per beat (at most 4; a clip playing another's notes: that one's)
 const densities = new Map();
-function density(b, spb) {
-  if (b.theme) return 0.5;
-  const k = `${spb}|${b.pattern}`;
+function density(b, spb, blocks) {
+  const n = notesOf(b, blocks);
+  if (!n) return 0;
+  const k = `${spb}|${n.pattern}`;
   if (!densities.has(k)) {
-    const st = parseTokens(expandTokens(b.pattern));
+    const st = parseTokens(expandTokens(n.pattern));
     densities.set(k, st.length ? Math.min(4, (st.filter((x) => x.t === NOTE).length / st.length) * spb) : 0);
   }
   return densities.get(k);
 }
 // the same notes (a copy or a renamed clip), whatever its name or colour
-const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && JSON.stringify(a.theme ?? null) === JSON.stringify(b.theme ?? null);
+const sameNotes = (a, b) => a.pattern === b.pattern && (a.beats || 4) === (b.beats || 4) && (a.mode || '') === (b.mode || '') && (a.from || '') === (b.from || '')
+  && formsOf(a).join() === formsOf(b).join();
 
 export class Engine {
   constructor(sampleRate, song, seed = 1) {
@@ -62,6 +65,7 @@ export class Engine {
     this.sectionBars = 0;
     this.nextSection = null;
     this.forced = null;
+    this.forcedProg = null;
     this.prog = null;
     this.progStart = 0;
     this.chord = DEFAULT_CHORD;
@@ -147,6 +151,12 @@ export class Engine {
       ? { off: true }
       : { degree: degree | 0, shapeName: SHAPES[shapeName] ? shapeName : 'triad', shape: SHAPES[shapeName] || SHAPES.triad, beats: 4 };
     this.emitState();
+  }
+
+  // Switch to a chord progression at the next bar line, once: the next section picks its own again. A held one wins.
+  forceProgression(id) {
+    this.forcedProg = this.song.progMap[id] || null;
+    if (this.forcedProg) this.log(`forced → ${id} (next bar line)`);
   }
 
   // Hold one chord progression (editor audition / game override). It takes over at the next bar line.
@@ -356,7 +366,10 @@ export class Engine {
     return out;
   }
 
-  modeOf(tr, block) { return block?.theme ? 'key' : (block && block.mode) || tr.mode || 'chord'; }
+  // how a clip's notes follow the harmony: the mode of the clip whose notes it plays, else its own, else the track's
+  modeOf(tr, block) { return (block && (notesOf(block, this.song.blockMap)?.mode || block.mode)) || tr.mode || 'chord'; }
+  // fit: notes on the beat move to the nearest chord tone (the clip's own setting, else the one whose notes it plays)
+  fitOf(block) { return !!block && !!(block.fit ?? notesOf(block, this.song.blockMap)?.fit); }
   // With no chord (N.C.) a whole chord rests, and so does a stack built on the chord (chord or scale mode: a voicing);
   // single notes and stacks in the key play on, over the home chord
   restsNC(tr, block, atoms = []) {
@@ -371,7 +384,7 @@ export class Engine {
     const mode = this.modeOf(tr, block);
     const root = foldDegree(chord.degree, L);
     // fit: notes on a beat move to the nearest chord tone, so a melody in key degrees suits any chord
-    const tones = mode !== 'chord' && (block?.fit ?? !!block?.theme) && this.step % s.spb === 0
+    const tones = mode !== 'chord' && this.fitOf(block) && this.step % s.spb === 0
       ? shape.map((o) => mod(root + o, L)) : null;
     const out = [];
     for (const a of atoms) {
@@ -418,7 +431,11 @@ export class Engine {
       this.prog = this.song.progMap[this.progLock];
       this.progStart = this.step;
       this.emitState();
+    } else if (this.forcedProg && !this.progLock) {
+      if (this.prog !== this.forcedProg) { this.prog = this.forcedProg; this.progStart = this.step; }
+      this.emitState();
     }
+    this.forcedProg = null;
   }
 
   startSection(sec) {
@@ -500,7 +517,7 @@ export class Engine {
     ts.start = this.step;
     ts.loop = 0;
     const len = this.blockLen(b);
-    ts.base = b.theme ? this.themeFor(tr, b, len) : expandTokens(b.pattern, len);
+    ts.base = this.notesFor(tr, b, len);
     ts.tokens = ts.base;
     ts.steps = parseTokens(ts.tokens);
     const h = (this.history[tr.id] ||= []);
@@ -526,23 +543,24 @@ export class Engine {
   onBlockLoop(tr, ts) {
     ts.loop++;
     const b = ts.block;
-    if (b.theme && this.rng.chance(0.5)) ts.base = this.themeFor(tr, b, ts.base.length);
+    if (variesForm(b) && this.rng.chance(0.5)) ts.base = this.notesFor(tr, b, ts.base.length);
     const v = this.section.variation ?? this.song.variation;
     ts.tokens = (b.mutate ?? 1) > 0 && this.rng.chance(v) ? mutateTokens(ts.base, this.rng, tr.inst.type === 'drums', b.mutate ?? 1) : ts.base;
     ts.steps = parseTokens(ts.tokens);
     this.emit({ type: 'tokens', track: tr.id, tokens: ts.tokens });
   }
 
-  // Theme blocks play the song theme in one of their forms (b.theme = true or a list of forms), picked anew
-  // when the block starts and, half the time, when it loops.
-  themeFor(tr, b, len) {
-    const th = this.song.theme;
-    if (!th) return fitLength([], len);
-    const forms = Array.isArray(b.theme) ? b.theme.filter((f) => THEME_FORMS.includes(f)) : [];
-    const form = this.rng.pick(forms.length ? forms : THEME_FORMS);
-    this.log(`♪ theme ${form} on ${tr.id}`);
-    this.trackState(tr).theme = `${th.beats}:${th.pattern}`; // a theme edit re-plays it (refresh)
-    return fitLength(themeTokens(expandTokens(th.pattern, Math.round(th.beats * this.song.spb)), form, this.rng), len);
+  // A clip's notes: its own, or another clip's (b.from), in one of its forms (b.forms), picked anew when the clip
+  // starts and, half the time, when it loops. A clip playing them as written plays its pattern as before.
+  notesFor(tr, b, len) {
+    const src = notesOf(b, this.song.blockMap);
+    this.trackState(tr).notesKey = notesKey(src); // an edit of those notes plays them again (refresh)
+    if (!src) return fitLength([], len);
+    const varies = variesForm(b);
+    if (src === b && !varies) return expandTokens(b.pattern, len);
+    const forms = formsOf(b), form = varies ? this.rng.pick(forms) : 'whole';
+    this.log(`♪ ${form}${src !== b ? ` of ${src.id}` : ''} on ${tr.id}`);
+    return fitLength(formTokens(expandTokens(src.pattern, this.blockLen(src)), form, this.rng), len);
   }
 
   midSectionBar() {
@@ -690,7 +708,7 @@ export class Engine {
     return s.tracks.reduce((a, tr) => {
       const loops = (s.blocksByTrack[tr.id] || []).filter((b) => !b.fill && weightIn(b, sec) > 0);
       const w = loops.reduce((q, b) => q + weightIn(b, sec), 0);
-      const d = w ? loops.reduce((q, b) => q + weightIn(b, sec) * density(b, s.spb), 0) / w : 0;
+      const d = w ? loops.reduce((q, b) => q + weightIn(b, sec) * density(b, s.spb, s.blockMap), 0) / w : 0;
       return a + chanceIn(sec, tr.id) * d * (tr.inst.type === 'drums' ? 1.5 : 1);
     }, 0);
   }
@@ -825,7 +843,7 @@ export class Engine {
       }
       const len = this.blockLen(b);
       ts.block = b;
-      if (b.theme) { if (!ts.base || ts.base.length !== len || ts.theme !== (s.theme && `${s.theme.beats}:${s.theme.pattern}`)) ts.base = this.themeFor(tr, b, len); }
+      if (b.from || variesForm(b)) { if (!ts.base || ts.base.length !== len || ts.notesKey !== notesKey(notesOf(b, s.blockMap))) ts.base = this.notesFor(tr, b, len); }
       else ts.base = expandTokens(b.pattern, len);
       ts.tokens = ts.base;
       ts.steps = parseTokens(ts.tokens);

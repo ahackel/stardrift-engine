@@ -17,7 +17,6 @@
   "leadIn": 2,
   "breath": { "every": 64, "bars": [4, 8], "keep": ["pad", "twinkle"] },
   "startSection": "intro",
-  "theme": { "beats": 16, "pattern": "4 . 2 . 4 . 7 - - . 6 . 4 . . . | 5 . 3 . 5 . 8 - 7 . 6 . 7 - - - | 9 . 8 . 7 . 4 - 5 . 6 . 7 - 9 - | 8 . . 6 . . 4 4# 5 . 4 . 7 - - -" },
   "master": { "gain": 1.15 },
   "fx": {
     "echo": { "beats": 0.5, "feedback": 0.25, "damp": 0.45, "level": 0.3 },
@@ -109,16 +108,16 @@
     { "id": "build", "beats": 4, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "underground": 0, "castle": 0, "star": 0 }, "pattern": "* . * . * . * . * * * * * * * *" },
     { "id": "tension", "beats": 4, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "run": 0, "star": 0, "flagpole": 0 }, "pattern": ". . . . * . . . . . . . * . . ." },
 
-    { "id": "theme", "beats": 16, "sections": { "underground": 0, "castle": 0, "run": 0, "star": 0, "flagpole": 0 }, "theme": true },
-    { "id": "theme_star", "beats": 16, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "underground": 0, "castle": 0.5, "run": 0, "flagpole": 0 }, "theme": ["whole", "sequence", "shift"] },
-    { "id": "theme_hop", "beats": 16, "sections": { "bonus": 0.5, "underground": 0, "castle": 0, "run": 0, "star": 0, "flagpole": 0 }, "theme": ["head", "sequence", "slow"] },
+    { "id": "theme", "beats": 16, "mode": "key", "fit": true, "sections": { "underground": 0, "castle": 0, "run": 0, "star": 0, "flagpole": 0 }, "forms": ["whole", "head", "sequence", "slow", "shift", "answer"], "pattern": "4 . 2 . 4 . 7 - - . 6 . 4 . . . | 5 . 3 . 5 . 8 - 7 . 6 . 7 - - - | 9 . 8 . 7 . 4 - 5 . 6 . 7 - 9 - | 8 . . 6 . . 4 4# 5 . 4 . 7 - - -" },
+    { "id": "theme_star", "beats": 16, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "underground": 0, "castle": 0.5, "run": 0, "flagpole": 0 }, "from": "theme", "forms": ["whole", "sequence", "shift"] },
+    { "id": "theme_hop", "beats": 16, "sections": { "bonus": 0.5, "underground": 0, "castle": 0, "run": 0, "star": 0, "flagpole": 0 }, "from": "theme", "forms": ["head", "sequence", "slow"] },
     { "id": "creep", "beats": 4, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "castle": 0.5, "run": 0, "star": 0, "flagpole": 0 }, "mode": "scale", "pattern": "0 . 0# . 1 . . . 0 . 0# . 1 . . ." },
     { "id": "lead_castle", "beats": 4, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "underground": 0, "run": 0, "star": 0, "flagpole": 0 }, "mode": "scale", "pattern": "4 3# 4 3# 4 3# 4 3# 2 1# 2 1# 2 1# 2 1#" },
     { "id": "climb", "beats": 4, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "underground": 0, "castle": 0, "star": 0, "flagpole": 0 }, "pattern": "0 1 2 3 1 2 3 4 2 3 4 5 3 4 5 6" },
     { "id": "fanfare", "beats": 4, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "underground": 0, "castle": 0, "run": 0, "star": 0 }, "pattern": "0 . 1 . 2 . 3 -*9" },
 
     { "id": "scatter", "beats": 8, "sections": { "underground": 0, "castle": 0, "run": 0.75, "star": 0 }, "mode": "chord", "pattern": "5? .*7 5? .*3 7? .*3 | .*4 5? .*11" },
-    { "id": "twinkle_theme", "beats": 16, "sections": { "intro": 0.5, "overworld": 0, "underground": 0, "castle": 0, "run": 0.25, "star": 0 }, "theme": ["head", "slow", "answer"] },
+    { "id": "twinkle_theme", "beats": 16, "sections": { "intro": 0.5, "overworld": 0, "underground": 0, "castle": 0, "run": 0.25, "star": 0 }, "from": "theme", "forms": ["head", "slow", "answer"] },
     { "id": "coins", "beats": 8, "sections": { "intro": 0.5, "overworld": 0, "underground": 0, "castle": 0, "run": 0, "star": 0, "flagpole": 0 }, "pattern": "2 4 - - .*12 | .*8 3 5 - - .*4" },
     { "id": "drip", "beats": 8, "sections": { "intro": 0, "meadow": 0, "bonus": 0, "overworld": 0, "flagpole": 0 }, "mode": "scale", "pattern": "4 .*10 3 .*4 | .*16" },
 
