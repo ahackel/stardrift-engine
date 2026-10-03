@@ -1,4 +1,4 @@
-import { fetchSamples } from './samples.js';
+import { fetchSamples, soundSamples, songSamples } from './samples.js';
 
 // Main-thread API. This is what a (web) game uses:
 //
@@ -42,11 +42,25 @@ export class StardriftPlayer {
     this.send({ type: 'hold', on: this.holding });
     if (this.meters) this.send({ type: 'meters', on: true });
     if (this.song) this.send({ type: 'load', song: this.song, seed: this.seed, restart: true });
-    // recorded sounds load in the background: sample sounds join when they arrive, cymbals are synthesized until then
-    this.samples = fetchSamples(library).then((samples) => {
+    this.library = library;
+    this.requested = new Set();
+    if (this.song) this.need(songSamples(this.song));
+  }
+
+  // Recorded sounds load in the background, only the ones the song (or a preview) plays: sample sounds join when they
+  // arrive, cymbals are synthesized until then. The promise is there for whoever wants to wait for them.
+  need(names) {
+    if (!this.node) return;
+    names = names.filter((n) => !this.requested.has(n));
+    if (!names.length) return;
+    for (const n of names) this.requested.add(n);
+    this.samples = Promise.all([this.samples, fetchSamples(this.library, names).then((samples) => {
       const buffers = Object.values(samples).flat().map((z) => z.data.buffer);
       this.node?.port.postMessage({ type: 'samples', samples }, buffers);
-    }).catch((err) => this.emit('error', { type: 'error', text: `could not load the sample library: ${err.message}` }));
+    }).catch((err) => {
+      for (const n of names) this.requested.delete(n);
+      this.emit('error', { type: 'error', text: `could not load the sample library: ${err.message}` });
+    })]);
   }
 
   on(type, fn) { (this.listeners[type] ||= []).push(fn); return () => this.off(type, fn); }
@@ -66,6 +80,7 @@ export class StardriftPlayer {
     const fresh = !this.song || restart;
     this.song = JSON.parse(JSON.stringify(song));
     this.send({ type: 'load', song: this.song, seed: this.seed, restart: fresh });
+    this.need(songSamples(this.song));
   }
 
   restart(seed = this.seed) {
@@ -120,6 +135,7 @@ export class StardriftPlayer {
     if (!this.ctx) return;
     const end = Math.max(0, ...events.map((e) => (e.t || 0) + (e.dur || 0)));
     await this.audition(end + (inst.env?.r ?? 0.2) + 2.5); // + release + echo/reverb
+    this.need(soundSamples(inst));
     this.send({ type: 'preview', inst, events, options });
   }
 
@@ -131,6 +147,7 @@ export class StardriftPlayer {
     if (!this.ctx) return;
     this.keysDown = (this.keysDown || 0) + 1;
     await this.audition(600);
+    this.need(soundSamples(inst));
     this.send({ type: 'keyOn', inst, note, options });
   }
   keyOff(note) {

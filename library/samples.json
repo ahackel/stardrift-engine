@@ -125,6 +125,220 @@
         "file": "samples/cymbal_swell.wav",
         "source": "https://github.com/sgossner/VCSL/blob/master/Idiophones/Struck Idiophones/Suspended Cymbal 1/susCymb1_cresc_2s.wav"
       }
+    ],
+    "flute": [
+      {
+        "file": "samples/flute-69.wav",
+        "root": 69,
+        "loop": [
+          57636,
+          140807
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav"
+      },
+      {
+        "file": "samples/flute-76.wav",
+        "root": 75.99,
+        "loop": [
+          57640,
+          140802
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_1.wav"
+      },
+      {
+        "file": "samples/flute-84.wav",
+        "root": 83.97,
+        "loop": [
+          57609,
+          140828
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav"
+      },
+      {
+        "file": "samples/flute-93.wav",
+        "root": 92.99,
+        "loop": [
+          57613,
+          140804
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Woodwinds/Flute/susvib/LDFlute_susvib_A5_v1_1.wav"
+      },
+      {
+        "file": "samples/flute-96.wav",
+        "root": 96,
+        "loop": [
+          57605,
+          140805
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Woodwinds/Flute/susvib/LDFlute_susvib_C6_v1_1.wav"
+      }
+    ],
+    "violins": [
+      {
+        "file": "samples/violins-62.wav",
+        "root": 62.01,
+        "loop": [
+          57609,
+          140823
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/susVib/VlnEns_susVib_D3_v1.wav"
+      },
+      {
+        "file": "samples/violins-69.wav",
+        "root": 69,
+        "loop": [
+          57610,
+          140816
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/susVib/VlnEns_susVib_A3_v1.wav"
+      },
+      {
+        "file": "samples/violins-76.wav",
+        "root": 76,
+        "loop": [
+          57608,
+          140812
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/susVib/VlnEns_susVib_E4_v1.wav"
+      },
+      {
+        "file": "samples/violins-83.wav",
+        "root": 83,
+        "loop": [
+          57606,
+          140805
+        ],
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/susVib/VlnEns_susVib_B4_v1.wav"
+      }
+    ],
+    "violins_pizz": [
+      {
+        "file": "samples/violins_pizz-62.wav",
+        "root": 61.9,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/Pizz/VlnEns_Pizz_D3_v2_rr1.wav"
+      },
+      {
+        "file": "samples/violins_pizz-69.wav",
+        "root": 69,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/Pizz/VlnEns_Pizz_A3_v2_rr1.wav"
+      },
+      {
+        "file": "samples/violins_pizz-76.wav",
+        "root": 75.9,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Violin Section/Pizz/VlnEns_Pizz_E4_v2_rr1.wav"
+      }
+    ],
+    "bass_pizz": [
+      {
+        "file": "samples/bass_pizz-28.wav",
+        "root": 27.94,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Solo Contrabass/Pizz/BKCtbss_Pizz_E0_v3_rr1.wav"
+      },
+      {
+        "file": "samples/bass_pizz-36.wav",
+        "root": 35.92,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/pizzT/pizzT_C1_v2_RR1.wav"
+      },
+      {
+        "file": "samples/bass_pizz-43.wav",
+        "root": 42.99,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/pizzT/pizzT_G1_v2_RR1.wav"
+      },
+      {
+        "file": "samples/bass_pizz-50.wav",
+        "root": 50.03,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/pizzT/pizzT_D2_v2_RR1.wav"
+      },
+      {
+        "file": "samples/bass_pizz-57.wav",
+        "root": 56.97,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/pizzT/pizzT_A2_v2_RR1.wav"
+      },
+      {
+        "file": "samples/bass_pizz-64.wav",
+        "root": 64,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Strings/Cello Section/pizzT/pizzT_E3_v2_RR1.wav"
+      }
+    ],
+    "glockenspiel": [
+      {
+        "file": "samples/glockenspiel-79.wav",
+        "root": 79.1,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Glock/glock_medium_G4.wav"
+      },
+      {
+        "file": "samples/glockenspiel-91.wav",
+        "root": 91.1,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Glock/glock_medium_G5.wav"
+      },
+      {
+        "file": "samples/glockenspiel-103.wav",
+        "root": 103.15,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Glock/glock_medium_G6.wav"
+      },
+      {
+        "file": "samples/glockenspiel-108.wav",
+        "root": 108.25,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Glock/glock_medium_C7.wav"
+      }
+    ],
+    "xylophone": [
+      {
+        "file": "samples/xylophone-79.wav",
+        "root": 79.15,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Xylo/Xylo_Medium_G4_ff_01_far.wav"
+      },
+      {
+        "file": "samples/xylophone-91.wav",
+        "root": 91.15,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Xylo/Xylo_Medium_G5_ff_01_far.wav"
+      },
+      {
+        "file": "samples/xylophone-103.wav",
+        "root": 103.2,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Xylo/Xylo_Medium_G6_ff_01_far.wav"
+      },
+      {
+        "file": "samples/xylophone-108.wav",
+        "root": 108.15,
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Xylo/Xylo_Medium_C7_ff_01_far.wav"
+      }
+    ],
+    "timpani": [
+      {
+        "file": "samples/timpani.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/Percussion/Timpani/Timpani3_Hit_v3_rr1_Sum.wav"
+      }
+    ],
+    "bass_drum": [
+      {
+        "file": "samples/bass_drum.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/drums/bass/bdrum_muted_ff_1.wav"
+      }
+    ],
+    "snare": [
+      {
+        "file": "samples/snare.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/drums/snare/drum1/snare1_f_1.wav"
+      }
+    ],
+    "shaker": [
+      {
+        "file": "samples/shaker.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/varWood/Camo's Shaker/shake1.wav"
+      }
+    ],
+    "triangle": [
+      {
+        "file": "samples/triangle.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/varMetal/triangle/1/triangle1_hit_mp.wav"
+      }
+    ],
+    "claves": [
+      {
+        "file": "samples/claves.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/varWood/claves_mf.wav"
+      }
     ]
   }
 }

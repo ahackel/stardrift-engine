@@ -7,7 +7,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
     this.engine = null;
     this.hold = false;
     this.meters = false; // levels events for the editor's meters
-    this.samples = null; // the sample library, once the main thread has loaded it
+    this.samples = null; // the sample library, as the main thread loads it (what the song needs)
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
@@ -22,7 +22,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
         this.engine.setHold(this.hold);
         return;
       }
-      if (m.type === 'samples') { this.samples = m.samples; this.engine?.setSamples(m.samples); return; }
+      if (m.type === 'samples') { this.samples = { ...this.samples, ...m.samples }; this.engine?.setSamples(this.samples); return; } // more of them
       if (m.type === 'hold') { this.hold = !!m.on; this.engine?.setHold(this.hold); return; }
       if (m.type === 'meters') { this.meters = !!m.on; this.engine?.setMeters(this.meters); return; }
       const e = this.engine;
