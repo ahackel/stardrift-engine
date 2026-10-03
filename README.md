@@ -149,3 +149,7 @@ Block `from`: play that block's notes (its `pattern`, `mode` and `fit`) instead 
 - `Math.random` is used only for sound detail (voice start phases, string plucks, breath noise), which is inaudible to replace.
 
 For WebGL builds the JS engine can also run through a `.jslib` plugin.
+
+## License
+
+MIT (see `LICENSE`). The sample library in `library/samples/` is CC0 (public domain) recordings by Versilian Studios.
