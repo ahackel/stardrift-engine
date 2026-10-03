@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(process.argv[2] || '.');
-const port = +(process.env.PORT || 8321);
+const port = +(process.env.PORT || 8322);
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
@@ -24,4 +24,4 @@ http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404, { 'Content-Type': 'text/plain' }).end('not found');
   }
-}).listen(port, () => console.log(`Stardrift dev server → http://localhost:${port}`));
+}).listen(port, () => console.log(`Stardrift engine dev server → http://localhost:${port}`));

@@ -2,26 +2,30 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { degSemis, foldDegree, prepareSong } from '../src/engine/theory.js';
-import { starterSong, addTrack, removeTrack, songLike, varySong, emptySong, upgradeSong, playInstrument, copySound } from '../src/editor/library.js';
-import { weightOf, chanceOf, setWeight, setChance, renameSectionIn, dropSectionIn, copySectionIn, moodWeight, setMoodWeight, nextWeight, setNext } from '../src/editor/weights.js';
 import { migrateSong } from '../src/engine/plays.js';
-import { songParts, insertPart, clipTarget } from '../src/editor/parts.js';
-import { stacksNotes, copyName, uniqueId } from '../src/editor/util.js';
-import { clipsOf, tracksOf, linkClips, putClip, takeClip, renameClip, themes } from '../src/editor/clips.js';
-import { diskSamples } from './load-samples.mjs';
+import { diskSamples } from '../src/disk-samples.js';
 import { KITS } from '../src/engine/drums.js';
 import { expandTokens } from '../src/engine/pattern.js';
-import { varyBlock, varyProgression, varySound, varyTrack, varyFeel } from '../src/engine/compose.js';
-import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_PARAMS } from '../src/engine/params.js';
 
 const SAMPLES = await diskSamples();
 // an engine with the sample library loaded, as the player has it
 const newEngine = (sr, song, seed) => { const e = new Engine(sr, song, seed); e.setSamples(SAMPLES); return e; };
 
-const song = JSON.parse(readFileSync(new URL('../songs/deep-space.json', import.meta.url), 'utf8'));
+const readJson = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
+const song = readJson('../songs/deep-space.json');
 const SR = 44100;
 let failed = 0;
 const ok = (cond, msg) => { console.log(`${cond ? '✓' : '✗'} ${msg}`); if (!cond) failed++; };
+
+// two sounds for the synth checks (the editor's library has them as "Power chord guitar" and "String ensemble")
+const POWER_CHORDS = {
+  sound: { type: 'string', string: { decay: 3, bright: 0.7, mute: 0.6 }, drive: 0.85, env: { a: 0.001, d: 1, s: 1, r: 0.06 }, cutoff: 12000, resonance: 0.7, amp: 'guitar', poly: 3 },
+  track: { octave: 3, volume: 0.19, pan: -0.25, echo: 0.05, reverb: 0.2 },
+};
+const STRINGS = {
+  sound: { type: 'wave', wave: 'saw', smooth: true, unison: 3, detune: 10, env: { a: 0.35, d: 1, s: 0.85, r: 0.9 }, vibrato: { depth: 0.06, rate: 5, delay: 0.3 }, cutoff: 3300, breath: 0.1, body: 'strings', ensemble: 0.8, swell: 0.8, poly: 10 },
+  track: { octave: 3, volume: 0.17, pan: 0, echo: 0.05, reverb: 0.6, follow: true },
+};
 
 function run(engine, secs, onBlock) { // onBlock(seconds, engine) before each 128-sample block
   const L = new Float32Array(128), R = new Float32Array(128);
@@ -130,21 +134,6 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   const e = newEngine(SR, sg, 2), seen = new Set();
   run(e, 40, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'log' && ev.text.startsWith('♪')) seen.add(ev.text.split(' ').slice(1, 4).join(' ')); });
   ok([...seen].some((x) => x.endsWith('of whole')) && [...seen].some((x) => !x.includes(' of ')), `clips play the theme clip's notes (${[...seen].slice(0, 4).join('; ')})`);
-  // renamed, the clips playing it follow; gone, they keep its notes
-  const ed = structuredClone(m);
-  renameClip(ed, 'whole', 'tune');
-  ok(ed.blocks.filter((b) => b.from === 'tune').length === 2, 'a theme clip renamed: the clips playing its notes follow');
-  takeClip(ed, ed.tracks[0], 'tune');
-  const head = ed.blocks.find((b) => b.id === 'head'), echo = ed.blocks.find((b) => b.id === 'echo');
-  ok(!ed.blocks.some((b) => b.id === 'tune') && !head.from && head.mode === 'key' && head.fit && head.pattern.startsWith('0 - 2 - 4') && JSON.stringify(head.forms) === '["head","slow"]'
-    && expandTokens(echo.pattern).length === 64, 'a theme clip gone: the clips that played its notes keep them, at their own length');
-  // into the library: a clip playing another's notes takes them along; a track keeps its own links
-  const parts = songParts(m), bell = parts.track.find((p) => p.id === 'bell'), lead = parts.track.find((p) => p.id === 'lead');
-  ok(!bell.clips[0].from && bell.clips[0].pattern && parts.clip.every((p) => !p.clip.from) && lead.clips.find((c) => c.id === 'head').from === 'whole', 'parts: notes written out where the clip they come from stays behind');
-  const into = structuredClone(m);
-  insertPart(into, lead);
-  const added = into.tracks.at(-1), ids = new Set(added.clips);
-  ok(into.blocks.filter((b) => ids.has(b.id) && b.from).every((b) => ids.has(b.from) && b.from !== 'whole'), 'a track part keeps its clips playing each other\'s notes, under their new names');
 }
 
 // 3b. A held section: the music moves there at a bar line and stays, whatever mood is asked for; released, it moves on
@@ -247,129 +236,17 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   ok(onBeat > 10 && fits === onBeat, `theme notes on the beat are chord tones (${fits}/${onBeat})`);
 }
 
-// 9. Every song in songs/ and the starter song: healthy audio, each mood reached, each stinger plays, its themes come back
-const readJson = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
-const lib = readJson('../library/instruments.json');
+// 9. Every song in songs/ and the examples: healthy audio, each mood reached, each stinger plays, its themes come back
 const toCheck = readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json')).map((f) => [f, readJson(`../songs/${f}`)]);
-toCheck.push(['starter song', starterSong(readJson('../library/starter-song.json'), lib, { name: 'test', key: 'E', scale: 'dorian', bpm: 110 })]);
-// styles: a new song like every example (library.js songLike)
-const { Rng: SeedRng } = await import('../src/engine/rng.js');
-const examples = readJson('../library/examples.json').examples;
-for (const ex of examples) {
-  const src = readJson(`../${ex.song}`);
-  toCheck.push([`like ${ex.id}`, songLike(src, lib, new SeedRng(11), { ex })]);
-  ok(Object.keys(ex.sounds || {}).every((id) => src.tracks.some((t) => t.id === id)) && Object.values(ex.sounds || {}).flat().every((id) => lib.instruments.some((e) => e.id === id)),
-    `example ${ex.id}: its sound lists name its tracks and library sounds`);
-}
-{
-  const ex = examples[0], src = readJson(`../${ex.song}`), a = songLike(src, lib, new SeedRng(5), { ex }), b = songLike(src, lib, new SeedRng(5), { ex });
-  ok(JSON.stringify(a) === JSON.stringify(b) && JSON.stringify(a) !== JSON.stringify(songLike(src, lib, new SeedRng(6), { ex })), 'songs like an example: same seed, same song');
-  // how different, and what may change
-  const keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'], i = keys.indexOf(src.key);
-  const little = songLike(src, lib, new SeedRng(7), { ex, change: 0.15 });
-  ok(i < 0 || [keys[(i + 5) % 12], keys[(i + 7) % 12]].includes(little.key), `a little different: a key a fifth away (${src.key} → ${little.key})`);
-  const only = songLike(src, lib, new SeedRng(8), { ex, change: 1, vary: ['chords'] });
-  ok(only.key === src.key && only.bpm === src.bpm && JSON.stringify(only.blocks) === JSON.stringify(src.blocks)
-    && JSON.stringify(only.progressions) !== JSON.stringify(src.progressions), 'only the chords change when only chords may');
-}
-{
-  // varying in place: what is selected changes by the amount asked, the rest stays
-  const src = readJson('../songs/deep-space.json'), sg = upgradeSong(structuredClone(src)), before = JSON.stringify(sg.instruments);
-  const same = varySong(sg, lib, new SeedRng(3), { change: 1, vary: ['chords'] });
-  ok(same === sg && sg.name === src.name && JSON.stringify(sg.blocks) === JSON.stringify(upgradeSong(structuredClone(src)).blocks) && JSON.stringify(sg.instruments) === before
-    && JSON.stringify(sg.progressions) !== JSON.stringify(upgradeSong(structuredClone(src)).progressions), 'varying a song in place: same song, only the chords change');
-  const inst = varySong(upgradeSong(structuredClone(src)), lib, new SeedRng(4), { change: 1, vary: ['sounds'] });
-  ok(JSON.stringify(inst.instruments) !== before, 'a song without a style: its instruments move');
-  const t = sg.blocks.find((b) => !b.theme && !b.fill), tr = tracksOf(sg, t.id)[0];
-  const ctx = { spb: 4, stepsPerBar: 16, drums: sg.instruments[tr.instrument].type === 'drums', poly: false, mode: 'scale' };
-  const dist = (a, b) => a.pattern.split(/\s+/).filter((x, i) => x !== b.pattern.split(/\s+/)[i]).length;
-  let little = 0, lot = 0;
-  for (let i = 0; i < 40; i++) {
-    little += dist(varyBlock(t, new SeedRng(i), ctx, 0.05) || t, t);
-    lot += dist(varyBlock(t, new SeedRng(i), ctx, 1) || t, t);
-  }
-  ok(little < lot, `a clip: a little differs less than a lot (${little} < ${lot} changed steps)`);
-  ok(varyProgression(sg.progressions[0], new SeedRng(1), [0, 2, 3, 5, 7, 8, 10], 0.5)?.chords !== undefined && varySound(sg.instruments[tr.instrument], new SeedRng(1), 0.5) !== null, 'sequences and sounds vary');
-  // every setting can change: each one params.js lists moves in some variation of a sound it applies to
-  const get = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
-  const moved = new Set();
-  const sounds = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample'].flatMap((type) => [
-    { type, env: { a: 0.01, d: 0.3, s: 0.6, r: 0.3 } },
-    { type, unison: 2, vibrato: { depth: 0.1 }, pwm: { depth: 0.1 }, filterEnv: { amount: 1 }, arp: 20, eq: { low: 0, mid: 0, midHz: 1000, high: 0 }, wah: { depth: 0.7 }, crush: { bits: 6 }, phaser: { depth: 0.7 }, chorus: { depth: 0.5 }, tremolo: { depth: 0.5 }, autopan: { depth: 0.7 } },
-  ]).concat([{ type: 'drums', kit: 'clean' }]);
-  for (const snd of sounds) {
-    for (let i = 0; i < 60; i++) {
-      const v = varySound(snd, new SeedRng(i), 1);
-      for (const [path] of SOUND_PARAMS) if (JSON.stringify(get(v, path)) !== JSON.stringify(get(snd, path))) moved.add(path);
-      for (const k of ['type', 'wave', 'smooth', 'amp', 'body', 'kit']) if (JSON.stringify(v[k]) !== JSON.stringify(snd[k])) moved.add(k);
-      if (snd.type === 'drums') for (const [p] of PAD_PARAMS) if (Object.values(v.kit || {}).some((h) => h?.[p] !== undefined)) moved.add(`pad.${p}`);
-    }
-  }
-  const track = { id: 't', instrument: 'x', volume: 0.3, octave: 4 };
-  for (let i = 0; i < 60; i++) {
-    const v = varyTrack(track, { type: 'pulse' }, new SeedRng(i), 1);
-    for (const [path] of TRACK_PARAMS) if (get(v, path) !== get(track, path)) moved.add(`track.${path}`);
-    if (v.octave !== 4) moved.add('track.octave');
-    const sg2 = { swing: 0, humanize: 0.1, master: {}, leadIn: 2 };
-    varyFeel(sg2, new SeedRng(i), 1);
-    for (const [path] of SONG_PARAMS) if (get(sg2, path) !== undefined && get(sg2, path) !== { swing: 0, humanize: 0.1 }[path]) moved.add(`song.${path}`);
-    if (sg2.leadIn !== 2) moved.add('song.leadIn');
-  }
-  const all = [...SOUND_PARAMS.map(([p]) => p), 'type', 'wave', 'smooth', 'amp', 'body', 'kit', ...PAD_PARAMS.map(([p]) => `pad.${p}`),
-    ...TRACK_PARAMS.map(([p]) => `track.${p}`), 'track.octave', ...SONG_PARAMS.map(([p]) => `song.${p}`), 'song.leadIn'];
-  const never = all.filter((p) => !moved.has(p));
-  ok(!never.length, `every setting of instruments, tracks and the song's feel varies (${all.length})${never.length ? ` — never: ${never.join(', ')}` : ''}`);
-  // … and a little is less than a lot
-  const flat = (o, pre = '', out = {}) => { for (const [k, v] of Object.entries(o || {})) if (v && typeof v === 'object' && !Array.isArray(v)) flat(v, `${pre}${k}.`, out); else out[pre + k] = v; return out; };
-  const diff = (x, y) => { const fx = flat(x), fy = flat(y); return [...new Set([...Object.keys(fx), ...Object.keys(fy)])].filter((k) => JSON.stringify(fx[k]) !== JSON.stringify(fy[k])).length; };
-  let few = 0, many = 0;
-  for (const [, snd] of Object.entries(sg.instruments)) for (let i = 0; i < 20; i++) { few += diff(snd, varySound(snd, new SeedRng(i), 0.05)); many += diff(snd, varySound(snd, new SeedRng(i), 1)); }
-  ok(few < many / 2, `a sound: a little changes fewer settings than a lot (${few} < ${many})`);
-  // the editor's controls take their ranges from params.js: every setting they name is listed there
-  const ui = readFileSync(new URL('../src/editor/instruments.js', import.meta.url), 'utf8');
-  const listed = new Set([...SOUND_PARAMS, ...TRACK_PARAMS].map(([p]) => p));
-  const named = [...ui.matchAll(/(?:\bp|\bk|this\.p)\((?:d, )?'[^']*', '([\w.]+)'/g)].map(([, p]) => p), wrong = named.filter((p) => !listed.has(p));
-  ok(named.length > 40 && !wrong.length, `every instrument and track control is a setting in params.js (${named.length})${wrong.length ? ` — not: ${wrong.join(', ')}` : ''}`);
-  // breath: air in the note at the level its curve gives, relative to the tone, the same for every type (a string too)
-  {
-    const { Synth } = await import('../src/engine/synth.js');
-    const measure = (def) => { // the tone, and what breath adds to it (the same random phases, so the difference is the breath)
-      const run = (d) => {
-        let seed = 7;
-        const rnd = Math.random;
-        Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-        const s = new Synth(SR);
-        s.preview(d, [], { volume: 0.3 });
-        s.pv.noteOn([69], 0.8);
-        const out = Array.from({ length: SR / 2 }, () => s.pv.render());
-        Math.random = rnd;
-        return out;
-      };
-      const a = run({ ...def, breath: 0 }), b = run(def);
-      let t = 0, n = 0;
-      for (let i = SR / 4; i < SR / 2; i++) { t += a[i] ** 2; n += (b[i] - a[i]) ** 2; }
-      return 10 * Math.log10(n / t);
-    };
-    const env = { a: 0.01, d: 0.3, s: 0.8, r: 0.3 };
-    const levels = ['pulse', 'wave', 'fm', 'string', 'bowed'].map((type) => [type, measure({ type, env, breath: 0.25 })]);
-    ok(levels.every(([, db]) => db > -27 && db < -20), `breath at 25 % is a hint of air, for every type (${levels.map(([t, db]) => `${t} ${db.toFixed(0)} dB`).join(', ')})`);
-    const sg3 = upgradeSong({ ...structuredClone(song), instruments: { ...song.instruments, flute: { type: 'wave', noise: 0.08 } }, tracks: [...song.tracks, { id: 'fl', instrument: 'flute' }] });
-    ok(sg3.instruments.flute.breath === 0.25 && sg3.instruments.flute.noise === undefined, 'an older sound\'s noise becomes breath (0.08 → 0.25)');
-  }
-  // copies get the next free number
-  const taken = (list) => (x) => list.includes(x);
-  ok(copyName('Song', taken([])) === 'Song 001' && copyName('Song 001', taken([])) === 'Song 002' && copyName('Song', taken(['Song 001'])) === 'Song 002'
-    && copyName('riff_009', taken([]), '_') === 'riff_010' && uniqueId('riff', taken([])) === 'riff' && uniqueId('riff', taken(['riff', 'riff_001'])) === 'riff_002', 'copies take the next free number (Song → Song 001 → Song 002)');
-  const insts = { harp: { name: 'Harp' } };
-  copySound({ instruments: insts }, { id: 'harp', name: 'Harp', sound: {} });
-  ok(insts.harp_001.name === 'Harp 001', 'a second Harp is Harp 001');
+for (const dir of readdirSync(new URL('../examples/', import.meta.url))) {
+  for (const f of readdirSync(new URL(`../examples/${dir}/`, import.meta.url))) if (f.endsWith('.json')) toCheck.push([`${dir}/${f}`, readJson(`../examples/${dir}/${f}`)]);
 }
 for (const [file, sg] of toCheck) {
   const e = newEngine(SR, sg, 3);
   const h = run(e, 90);
   const themed = [];
   const ids = new Set(sg.blocks.map((b) => b.id));
-  const orphans = sg.blocks.filter((b) => b.track !== undefined || !tracksOf(sg, b.id).length).map((b) => b.id); // every clip on a track, none naming one
+  const orphans = sg.blocks.filter((b) => b.track !== undefined || !sg.tracks.some((t) => t.clips?.includes(b.id))).map((b) => b.id); // every clip on a track, none naming one
   ok(h.bad === 0 && h.peak > 0.1 && h.peak < 1 && !orphans.length && ids.size === sg.blocks.length, `${file}: healthy (peak ${h.peak.toFixed(2)}), blocks valid`);
   const far = [];
   for (const [mood, m] of Object.entries(sg.moods || {})) {
@@ -390,107 +267,45 @@ for (const [file, sg] of toCheck) {
   ok(!silent.length, `${file}: every stinger plays (${(sg.stingers || []).length})${silent.length ? ` — silent: ${silent}` : ''}`);
 }
 
-// 10. Instrument library: every entry becomes a track that plays its starter block; removing it leaves a clean song
+// How many notes it plays at once is the instrument's; the engine reads an older song's track poly too
 {
-  const sg = starterSong(readJson('../library/starter-song.json'), lib);
-  const quiet = [];
-  for (const entry of lib.instruments) {
-    const tr = addTrack(sg, lib, entry);
-    const e = newEngine(SR, sg, 1);
-    e.lock(tr.id, clipsOf(sg, tr)[0].id);
-    let notes = 0;
-    run(e, 8, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note' && ev.track === tr.id) notes++; });
-    if (!notes) quiet.push(entry.id);
-    removeTrack(sg, tr.id);
-  }
-  ok(!quiet.length, `every library instrument plays as a new track (${lib.instruments.length})${quiet.length ? ` — silent: ${quiet}` : ''}`);
-  ok(Object.keys(sg.instruments).length === 3 && sg.tracks.length === 3, 'removing a track removes its blocks and unused instrument');
+  const old = structuredClone(song), tr = old.tracks.find((t) => (old.instruments[t.instrument].poly || 1) > 1), inst = old.instruments[tr.instrument];
+  tr.poly = inst.poly;
+  delete inst.poly;
+  ok(prepareSong(old).trackMap[tr.id].poly === tr.poly && prepareSong(song).trackMap[tr.id].poly === tr.poly, 'the engine takes poly from the instrument (or an older song\'s track)');
 }
 
-// Clip transforms (transform.js): every one keeps a clip valid, reverse and upside down twice give it back
+// breath: air in the note at the level its curve gives, relative to the tone, the same for every type (a string too)
 {
-  const { transform, canTransform, euclid, TRANSFORMS } = await import('../src/editor/transform.js');
-  const { toEvents, toTokens } = await import('../src/editor/grid.js');
-  const { expandTokens, parseToken } = await import('../src/engine/pattern.js');
-  const bad = [];
-  let n = 0;
-  for (const [, sg] of toCheck) {
-    const spb = sg.stepsPerBeat || 4;
-    for (const b of sg.blocks.filter((x) => !x.from)) {
-      const tr = tracksOf(sg, b.id)[0], drums = sg.instruments[tr.instrument]?.type === 'drums', beats = b.beats || 4;
-      const toks = expandTokens(b.pattern, Math.round(beats * spb)), o = { drums, single: !drums && !stacksNotes(sg, tr) };
-      for (const [op] of TRANSFORMS) {
-        if (!canTransform(op, beats, drums)) continue;
-        const got = transform(toks, beats, op, o);
-        if (!got) continue;
-        n++;
-        if (got.tokens.length !== Math.round(got.beats * spb) || got.tokens.some((x) => x !== '.' && x !== '-' && parseToken(x).t !== 2)) bad.push(`${b.id}/${op}`);
-        if ((op === 'reverse' || op === 'flip') && transform(got.tokens, beats, op, o).tokens.join(' ') !== toTokens(toEvents(toks), toks.length).join(' ')) bad.push(`${b.id}/${op} twice`);
-      }
-    }
-  }
-  ok(n > 50 && !bad.length, `clip transforms keep every clip valid (${n})${bad.length ? ` — ${bad.slice(0, 6)}` : ''}`);
-  ok(euclid(3, 8, 16).map((x) => (x ? 'x' : '.')).join('') === 'x..x..x.x..x..x.', 'a drum row fills 3 in 8, again to the end');
+  const { Synth } = await import('../src/engine/synth.js');
+  const measure = (def) => { // the tone, and what breath adds to it (the same random phases, so the difference is the breath)
+    const run = (d) => {
+      let seed = 7;
+      const rnd = Math.random;
+      Math.random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+      const s = new Synth(SR);
+      s.preview(d, [], { volume: 0.3 });
+      s.pv.noteOn([69], 0.8);
+      const out = Array.from({ length: SR / 2 }, () => s.pv.render());
+      Math.random = rnd;
+      return out;
+    };
+    const a = run({ ...def, breath: 0 }), b = run(def);
+    let t = 0, n = 0;
+    for (let i = SR / 4; i < SR / 2; i++) { t += a[i] ** 2; n += (b[i] - a[i]) ** 2; }
+    return 10 * Math.log10(n / t);
+  };
+  const env = { a: 0.01, d: 0.3, s: 0.8, r: 0.3 };
+  const levels = ['pulse', 'wave', 'fm', 'string', 'bowed'].map((type) => [type, measure({ type, env, breath: 0.25 })]);
+  ok(levels.every(([, db]) => db > -27 && db < -20), `breath at 25 % is a hint of air, for every type (${levels.map(([t, db]) => `${t} ${db.toFixed(0)} dB`).join(', ')})`);
 }
 
-// 11. Variations (compose.js): every candidate is valid song data of the right length, and a seed repeats them
-{
-  const { Rng } = await import('../src/engine/rng.js');
-  const { blockVariations, progressionVariations, themeVariations } = await import('../src/engine/compose.js');
-  const { SCALES, parseChords } = await import('../src/engine/theory.js');
-  const { expandTokens, parseToken } = await import('../src/engine/pattern.js');
-  const bad = [];
-  let n = 0;
-  for (const [, sg] of toCheck) {
-    const spb = sg.stepsPerBeat || 4, ctx0 = { spb, stepsPerBar: spb * (sg.beatsPerBar || 4) };
-    for (const b of sg.blocks.filter((x) => !x.from)) {
-      const tr = tracksOf(sg, b.id)[0], drums = sg.instruments[tr.instrument]?.type === 'drums';
-      const cands = blockVariations(b, new Rng(n + 1), { ...ctx0, drums, poly: stacksNotes(sg, tr), mode: b.mode || tr.mode || 'chord' });
-      for (const c of cands) {
-        n++;
-        const toks = expandTokens(c.value.pattern), len = Math.round((b.beats || 4) * spb);
-        if (toks.length !== len || toks.some((x) => x !== '.' && x !== '-' && parseToken(x).t !== 2)) bad.push(`${b.id}/${c.kind}`);
-      }
-    }
-    for (const p of sg.progressions) for (const c of progressionVariations(p, new Rng(n++), SCALES[p.scale || sg.scale])) if (parseChords(c.value.chords).length < 1) bad.push(`${p.id}/${c.kind}`);
-    for (const [name, s] of Object.entries(sg.instruments)) {
-      for (const a of [0.1, 0.5, 1]) {
-        const v = varySound(s, new Rng(n++), a);
-        if (v.name !== s.name || (v.type !== s.type && !['pulse', 'triangle', 'wave', 'fm'].includes(v.type)) || JSON.stringify(v) === JSON.stringify(s)) bad.push(`${name}/${a}`);
-      }
-    }
-    for (const t of themes(sg)) for (const c of themeVariations(t, new Rng(n++), ctx0)) if (expandTokens(c.value.pattern).length !== Math.round((t.beats || 4) * spb)) bad.push(`${t.id}/${c.kind}`);
-  }
-  ok(n > 100 && !bad.length, `variations are valid song data (${n} candidates)${bad.length ? ` — bad: ${bad.slice(0, 5)}` : ''}`);
-  const b = song.blocks.find((x) => x.id === 'pulse'), ctx = { spb: 4, stepsPerBar: 16, drums: false, mode: 'chord' };
-  ok(JSON.stringify(blockVariations(b, new Rng(3), ctx)) === JSON.stringify(blockVariations(b, new Rng(3), ctx)), 'same seed, same variations');
-}
-
-// 12. Older songs: generator blocks become plain patterns of the block's length, the same each time; clips that
-// name their track become the track's list
-{
-  const legacy = structuredClone(song);
-  for (const t of legacy.tracks) { for (const id of t.clips) legacy.blocks.find((b) => b.id === id).track = t.id; delete t.clips; }
-  const linked = linkClips(structuredClone(legacy));
-  ok(JSON.stringify(linked.tracks.map((t) => t.clips)) === JSON.stringify(song.tracks.map((t) => t.clips)) && linked.blocks.every((b) => b.track === undefined), 'clips naming their track become the track\'s list');
-  const named = linkClips({ format: 1, tracks: [{ id: 'bass' }, { id: 'drums' }], blocks: [{ id: 'bass_walk', track: 'bass' }, { id: 'drums_walk', track: 'drums' }, { id: 'bass_x', track: 'drums' }] });
-  ok(named.format === 2 && named.blocks.map((b) => b.id).join() === 'walk,drums_walk,bass_x' && named.tracks[1].clips.join() === 'drums_walk,bass_x', 'an older song\'s clips lose their track prefix where the name stays unique');
-  ok(linkClips({ format: 2, tracks: [{ id: 'bass', clips: ['bass_line'] }], blocks: [{ id: 'bass_line' }] }).blocks[0].id === 'bass_line', 'a name given in a format-2 song stays');
-  const notes = (sg) => { const out = []; run(newEngine(SR, sg, 4), 30, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') out.push(`${ev.track}:${ev.midi}`); }); return out.join('|'); };
-  ok(notes(legacy) === notes(song), 'the engine plays an older song the same');
-
-  const { freezeGenerators } = await import('../src/engine/compose.js');
-  const { expandTokens } = await import('../src/engine/pattern.js');
-  const old = () => ({ ...structuredClone(song), blocks: [...structuredClone(song.blocks), { id: 'old_gen', track: 'lead', beats: 8, mode: 'scale', gen: { rhythm: 'x - . x . . x - x - - . . . . .', range: [0, 9], leap: 2 } }] });
-  const a = freezeGenerators(old()).blocks.at(-1), b = freezeGenerators(old()).blocks.at(-1);
-  ok(!a.gen && expandTokens(a.pattern).length === 32 && a.pattern === b.pattern, `generator blocks freeze into patterns (${a.pattern})`);
-}
 
 // 13. Amps and double tracking: every amp on a driven guitar, doubled, stays finite, sane and near the level without
 {
   const { AMPS } = await import('../src/engine/synth.js');
-  const { renderPhrase } = await import('./lab/phrase.js');
-  const e = lib.instruments.find((x) => x.id === 'power_chords');
+  const { renderPhrase } = await import('../src/phrase.js');
+  const e = POWER_CHORDS;
   const phrase = { bpm: 130, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0 . 0 . 0+2+3! - 0 . 0 . 0 . 0+2+3 - - .', beats: 4 } };
   const base = renderPhrase(phrase, e.sound, e.track, { raw: true }).rms, off = [];
   for (const amp of Object.keys(AMPS)) {
@@ -504,8 +319,8 @@ for (const [file, sg] of toCheck) {
 // 14. Bodies, ensembles, swell and scoop: every body on a string section chord stays finite, sane and near its level
 {
   const { BODIES } = await import('../src/engine/synth.js');
-  const { renderPhrase } = await import('./lab/phrase.js');
-  const e = lib.instruments.find((x) => x.id === 'strings_ensemble');
+  const { renderPhrase } = await import('../src/phrase.js');
+  const e = STRINGS;
   const phrase = { bpm: 96, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0+2+4+5 -*13 . .', beats: 4 } };
   const base = renderPhrase(phrase, e.sound, e.track, { raw: true }).rms, off = [];
   for (const body of Object.keys(BODIES)) {
@@ -522,7 +337,7 @@ for (const [file, sg] of toCheck) {
 // 14b. The high pass filter, the wah, the bitcrush and the EQ on a pulse stay finite and near its level; a flat EQ changes nothing, cuts make
 // it quieter and a boost louder
 {
-  const { renderPhrase } = await import('./lab/phrase.js');
+  const { renderPhrase } = await import('../src/phrase.js');
   const phrase = { bpm: 120, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0 . 2 . 4 . 7 . 0+2+4 - - - . . . .', beats: 4 } };
   const snd = { type: 'pulse', duty: 0.25, env: { a: 0.01, d: 0.3, s: 0.7, r: 0.2 } };
   const base = renderPhrase(phrase, snd, {}, { raw: true }).rms, off = [];
@@ -585,99 +400,6 @@ for (const [file, sg] of toCheck) {
   ok(rms(rec) > 0.001 && rms(synth) > 0.001 && Math.abs(rms(rec) - rms(synth)) > 1e-4, 'drum hits play their recording, and synthesize without the library');
 }
 
-// 12. Empty songs, "plays in" and the parts library
-{
-  const lib = readJson('../library/instruments.json');
-  const empty = emptySong(readJson('../library/starter-song.json'), { key: 'D', scale: 'dorian', bpm: 90 });
-  const r = run(newEngine(SR, empty, 3), 10, (t, e) => { if (t > 4 && t < 4.01) e.setMood('danger'); });
-  ok(r.bad === 0 && empty.tracks.length === 0 && Object.keys(empty.moods).length > 0, 'an empty song plays (silently) and takes mood calls');
-  addTrack(empty, lib, lib.instruments.find((e) => e.group === 'bass'));
-  ok(run(newEngine(SR, empty, 3), 6).peak > 0.01, 'an empty song sounds after adding one track');
-
-  // what plays where: steps of 25 %, 100 % left out; a section renamed, copied or gone takes its maps along
-  const s = structuredClone(song), b = s.blocks.find((x) => !x.fill && !x.from), [s1, s2] = s.sections;
-  setWeight(s, b, s1.id, 0.6);
-  setWeight(s, b, s2.id, 1);
-  ok(weightOf(b, s1.id) === 0.5 && b.sections?.[s2.id] === undefined, 'plays in: weights snap to a step, 100 % is left out');
-  setChance(s1, 'pad', 0.3);
-  setChance(s2, 'pad', 1);
-  ok(chanceOf(s1, 'pad') === 0.25 && s2.tracks?.pad === undefined, 'plays in: a track\'s chance snaps, 100 % is left out');
-  setMoodWeight(s, 'tension', s1.id, 0.5);
-  setNext(s2, s1.id, 0.75);
-  copySectionIn(s, s1.id, 'copy');
-  ok(weightOf(b, 'copy') === 0.5 && moodWeight(s, 'tension', 'copy') === 0.5 && nextWeight(s2, 'copy') === 0.75, 'a copied section plays what it plays, and is led to as it is');
-  renameSectionIn(s, s1.id, 'renamed');
-  ok(weightOf(b, 'renamed') === 0.5 && moodWeight(s, 'tension', 'renamed') === 0.5 && b.sections[s1.id] === undefined, 'renaming a section takes its weights along');
-  s.sections.push({ id: 'renamed' }, { id: 'copy' });
-  dropSectionIn(s, 'renamed');
-  ok(b.sections?.renamed === undefined && moodWeight(s, 'tension', 'renamed') === 0, 'a section gone: the maps forget it');
-  setMoodWeight(s, 'relaxed', s1.id, 0);
-  for (const x of s.sections) setMoodWeight(s, 'relaxed', x.id, 0);
-  ok(s.moods.relaxed.sections === undefined, 'a mood with no section left lists none');
-
-  const src = structuredClone(song), parts = songParts(src);
-  ok(parts.track.length === src.tracks.length && parts.clip.length > 0 && parts.prog.length === src.progressions.length, 'a song lists its parts');
-  const dst = emptySong(readJson('../library/starter-song.json'));
-  const drumClip = parts.clip.find((p) => p.drums), noteClip = parts.clip.find((p) => !p.drums && !p.clip.forms);
-  ok(clipTarget(dst, noteClip) === null, 'a clip with no fitting track brings its own');
-  const o1 = insertPart(dst, noteClip);
-  const o2 = insertPart(dst, drumClip);
-  ok(dst.tracks.length === 2 && dst.blocks.every((x) => x.track === undefined && tracksOf(dst, x.id).length === 1) && o1.kind === 'block' && o1.track, 'clips with no track to take them get new tracks');
-  ok(parts.clip.every((p) => !p.track && !p.trackName && !p.sound && !p.group), 'a clip part is its notes, with no track');
-  insertPart(dst, parts.clip.find((p) => p.drums && p !== drumClip) || drumClip);
-  ok(dst.tracks.length === 2, 'a second drum clip goes onto the drum track');
-  ok(dst.blocks.every((x) => Object.keys(x.sections || {}).every((id) => dst.sections.some((sec) => sec.id === id))), 'weights for other songs\' sections are dropped');
-  insertPart(dst, parts.track[0]);
-  insertPart(dst, parts.prog[0]);
-  if (parts.sting[0]) insertPart(dst, parts.sting[0]);
-  const st = dst.stingers[0];
-  ok(!st || st.parts.every((p) => dst.tracks.some((t) => t.id === p.track)), 'a stinger\'s parts find (or bring) their tracks');
-  const rr = run(newEngine(SR, dst, 5), 12, (t, e) => { if (st && t > 3 && t < 3.01) e.sting(st.id); });
-  ok(rr.bad === 0 && rr.peak > 0.01, 'a song built from parts plays');
-  ok(JSON.stringify(o2) && dst.instruments && Object.keys(dst.instruments).length === dst.tracks.length, 'every track owns its sound');
-}
-
-// Shared instruments: two tracks can play one; tracks keep their own names; an instrument no track plays goes
-{
-  const sg = upgradeSong(structuredClone(song)), [a, b] = sg.tracks.filter((t) => sg.instruments[t.instrument]?.type !== 'drums');
-  const nameB = b.name, oldB = b.instrument;
-  playInstrument(sg, b, a.instrument);
-  ok(b.instrument === a.instrument && b.name === nameB && !sg.instruments[oldB], 'a track can play another track\'s instrument (and keeps its name)');
-  const again = upgradeSong(structuredClone(sg));
-  ok(again.tracks.filter((t) => t.instrument === a.instrument).length === 2 && again.tracks.every((t) => t.name), 'a shared instrument stays shared, every track has a name');
-  const e = newEngine(SR, sg, 2), heard = new Set();
-  run(e, 20, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') heard.add(ev.track); });
-  ok(heard.size > 2, 'a song with a shared instrument plays');
-}
-
-// Shared clips: one clip on two tracks plays on both; taking it off one keeps it, off the last drops it
-{
-  const sg = structuredClone(song), mel = sg.tracks.filter((t) => sg.instruments[t.instrument]?.type !== 'drums');
-  const [a, b] = mel, id = clipsOf(sg, a).find((x) => !x.from && !x.fill).id;
-  putClip(b, id);
-  ok(tracksOf(sg, id).length === 2, 'a clip can be on two tracks');
-  const e = newEngine(SR, sg, 2);
-  e.lock(a.id, id); e.lock(b.id, id);
-  const heard = new Set();
-  run(e, 6, (t, en) => { for (const ev of en.drainEvents()) if (ev.type === 'note') heard.add(ev.track); });
-  ok(heard.has(a.id) && heard.has(b.id), 'the engine plays a shared clip on both tracks');
-  renameClip(sg, id, 'shared_one');
-  ok(a.clips.includes('shared_one') && b.clips.includes('shared_one') && !a.clips.includes(id), 'renaming a clip renames it on every track');
-  ok(!takeClip(sg, a, 'shared_one') && sg.blocks.some((x) => x.id === 'shared_one'), 'off one track, the clip stays for the other');
-  ok(takeClip(sg, b, 'shared_one') && !sg.blocks.some((x) => x.id === 'shared_one'), 'off the last track, the clip is gone');
-}
-
-// How many notes it plays at once is the instrument's: an older song's track poly moves to its instrument (the first
-// track that plays it says), and the engine reads either
-{
-  const old = structuredClone(song), tr = old.tracks.find((t) => (old.instruments[t.instrument].poly || 1) > 1), inst = old.instruments[tr.instrument];
-  tr.poly = inst.poly;
-  delete inst.poly;
-  ok(prepareSong(old).trackMap[tr.id].poly === tr.poly && prepareSong(song).trackMap[tr.id].poly === tr.poly, 'the engine takes poly from the instrument (or an older song\'s track)');
-  const up = upgradeSong(structuredClone(old));
-  ok(up.instruments[tr.instrument].poly === tr.poly && up.tracks.every((t) => t.poly === undefined), 'an older song\'s track poly moves to its instrument');
-}
-
 // A clip swapped for a copy of its own while it plays (make unique) plays on
 {
   const sg = structuredClone(song), e = newEngine(SR, sg, 2);
@@ -689,6 +411,7 @@ for (const [file, sg] of toCheck) {
   e.setSong(structuredClone(sg));
   ok(e.tracks[id].active && e.tracks[id].block?.id === copy.id, 'a clip swapped for its copy while it plays plays on');
 }
+
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

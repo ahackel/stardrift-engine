@@ -5,7 +5,7 @@
 // ("cold"); an ahead-of-time build (Unity IL2CPP) doesn't have that. Run it on the machine you care about.
 import { readFileSync, readdirSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
-import { diskSamples } from './load-samples.mjs';
+import { diskSamples } from '../src/disk-samples.js';
 
 const SAMPLES = await diskSamples();
 

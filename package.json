@@ -1,11 +1,17 @@
 {
-  "name": "stardrift",
+  "name": "stardrift-engine",
   "version": "0.1.0",
-  "description": "Procedural, block-based chiptune music engine for (space) games",
+  "description": "Procedural, block-based chiptune music engine for games",
   "type": "module",
-  "private": true,
+  "exports": {
+    ".": "./src/index.js",
+    "./*": "./src/*",
+    "./library/*": "./library/*"
+  },
+  "files": ["src", "library"],
   "scripts": {
     "dev": "node tools/serve.mjs",
+    "test": "node tools/test.mjs",
     "render": "node tools/render.mjs",
     "bench": "node tools/bench.mjs"
   }

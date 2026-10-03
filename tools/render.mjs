@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Engine } from '../src/engine/engine.js';
 import { encodeWav } from '../src/wav.js';
-import { diskSamples } from './load-samples.mjs';
+import { diskSamples } from '../src/disk-samples.js';
 
 const args = process.argv.slice(2);
 const cues = []; // timed setMood / sting calls

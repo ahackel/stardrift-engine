@@ -1,18 +1,51 @@
-# Stardrift
+# Stardrift engine
 
-A procedural, block-based chiptune music engine for (space) games: atmospheric by default, tense when the game asks for it. The music is endless, varies itself over time and follows the game's mood with smooth transitions.
+A procedural, block-based chiptune music engine for games: atmospheric by default, tense when the game asks for it. The music is endless, varies itself over time and follows the game's mood with smooth transitions.
 
-- **JavaScript player and editor**: this repo, no build step, no dependencies.
+- **JavaScript**: this repo, for web games. No build step, no dependencies.
+- **Editor**: songs are written in the [Stardrift editor](https://github.com/ahackel/stardrift), a separate repo that uses this one.
 - **Unity**: the engine is plain per-sample code, written to be ported 1:1 to C# (see *Porting to Unity*).
 
 ```bash
-npm run dev        # the editor at http://localhost:8321 (AudioWorklet needs http://, not file://)
+npm run dev        # http://localhost:8322: the example game at /examples/lop-ear-run/ (AudioWorklet needs http://, not file://)
 npm run render     # offline render + conductor log: node tools/render.mjs song secs seed out.wav --mood 30:tension --sting 45:discovery
-node tools/test.mjs
+npm test
 npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22050 --breakdown
 ```
 
-`demo/stardrift-demo.mp3` is 2:40 with mood changes (auto → *tension* → *action* → *relaxed*). The sound lab (`/tools/lab/`) plays versions of a sound side by side to compare by ear.
+`demo/stardrift-demo.mp3` is 2:40 with mood changes (auto → *tension* → *action* → *relaxed*).
+
+## In a game
+
+```bash
+npm install github:ahackel/stardrift-engine
+```
+
+```js
+import { StardriftPlayer } from 'stardrift-engine';
+```
+
+With a bundler that is all. Without one, an import map points the name at the package (the worklet and the sample library are found next to it):
+
+```html
+<script type="importmap">{ "imports": { "stardrift-engine": "./node_modules/stardrift-engine/src/index.js" } }</script>
+```
+
+The package exports `StardriftPlayer` (the web player), `Engine` (the engine itself, for offline rendering or another audio host), `loadSamples` / `fetchSamples` / `LIBRARY_URL` (the sample library), `encodeWav` / `decodeWav` and `renderPhrase` (one sound in a short phrase, offline). Single modules are there by path too, e.g. `stardrift-engine/engine/theory.js`; in node, `stardrift-engine/disk-samples.js` loads the sample library from disk.
+
+### The example game
+
+`examples/lop-ear-run/` is a small endless runner (a pixel rabbit with lop ears jumps brambles and ducks crows) with its own song. It uses every mood and every stinger the way a game would, and shows its calls to the music as it makes them:
+
+| Game | Music |
+|---|---|
+| title, game over | `setMood('relaxed')` |
+| the first stretch, crows from 300, fast from 700 | `exploring`, `tension`, `action` |
+| a fox gives chase (from 500, every 1000) | `danger` |
+| night falls (every 900) | `wonder` |
+| jump, carrot, the fox left behind, a crash | `sting('jump')`, `reward`, `discovery`, `alert` |
+
+`?auto` lets the rabbit run by itself, to hear the moods come and go.
 
 **Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Elias) plays pre-rendered stems; procedural generators on the Asset Store are Unity-only and closed; pattern tools (Strudel, ZzFXM) aren't game runtimes. Stardrift borrows their ideas instead: horizontal re-sequencing and vertical layers, a weighted section graph, tracker patterns and NES/Game Boy voices.
 
@@ -102,10 +135,6 @@ Block `mode`: `chord` (0 root, 1 third, 2 fifth, 3 root an octave up …), `scal
 
 Block `from`: play that block's notes (its `pattern`, `mode` and `fit`) instead of a pattern of its own, cut or padded to this block's `beats`; the block named must have notes of its own. `forms`: the forms one is picked from when the block starts and, half the time, when it loops — `whole` (as written), `head` (first half, then space), `sequence` (first half, then again a step or two up or down), `slow` (first half at half speed), `shift` (all of it a step or two up or down), `answer` (space, then the first half). None: as written. Songs from before kept one `theme` that `theme` blocks played: it becomes a block they take their notes `from` when the song loads.
 
-## The editor
-
-Open a song, click a chip, track, section or sequence to edit it; the **Info** panel explains whatever the pointer is on. The **Plays in** view, shown instead of the arrangement, is a grid of what plays in every section: how often each mood leads there and which sections follow it, how likely each track plays and how often each block and progression is picked. The game input on the right sends moods and stingers the way a game would and shows the calls. The editor keeps songs in the browser and exports the `.json` your game loads (and a WAV). New songs start empty, from the starter, or in a style (a hand-written example song with a new key, theme and variations). **Vary** makes a variation of what is selected, by a little or a lot.
-
 ## Files
 
 | Path | |
@@ -113,12 +142,13 @@ Open a song, click a chip, track, section or sequence to edit it; the **Info** p
 | `src/engine/engine.js` | conductor and sequencer |
 | `src/engine/synth.js`, `drums.js`, `dsp.js`, `wavetable.js` | voices, effects, drum kits, shared filters, band-limited wavetables |
 | `src/engine/pattern.js`, `theory.js`, `rng.js` | patterns and their forms, scales and chords, seeded RNG |
-| `src/engine/params.js`, `compose.js` | every setting with its range; variations and new themes |
+| `src/engine/params.js` | every setting with its range |
 | `src/player.js`, `src/worklet.js` | the web player: main-thread API and AudioWorklet host |
-| `src/editor/` | the editor: Lit panels (`vendor/lit.js`, no build step), one file per panel |
-| `songs/` | example songs: ambient space, dark synth-pop, platformer, orchestral, rock |
-| `library/` | built-in instruments, styles, the starter song, the sample library (CC0 recordings) |
-| `tools/` | offline render, tests, benchmark, sample builder, sound lab |
+| `src/index.js` | what the package exports; `samples.js`, `disk-samples.js`, `wav.js`, `phrase.js` |
+| `songs/` | the reference song (tests, render, bench); more are in the editor repo |
+| `library/` | the sample library (CC0 recordings) |
+| `examples/lop-ear-run/` | the example game and its song |
+| `tools/` | offline render, tests, benchmark, sample builder, dev server |
 
 ## Porting to Unity
 

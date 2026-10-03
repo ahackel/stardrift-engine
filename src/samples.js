@@ -15,6 +15,9 @@ export async function loadSamples(read) {
   return out;
 }
 
-// in a browser: the library next to this file's folder (../library/), or at libraryUrl
-export const fetchSamples = (libraryUrl = new URL('../library/', import.meta.url)) =>
+// the sample library that ships with the engine (library/, next to src/): file:// in node, http(s):// in a browser
+export const LIBRARY_URL = new URL('../library/', import.meta.url);
+
+// in a browser: the library that ships with the engine, or at libraryUrl
+export const fetchSamples = (libraryUrl = LIBRARY_URL) =>
   loadSamples(async (path) => (await fetch(new URL(path, libraryUrl))).arrayBuffer());

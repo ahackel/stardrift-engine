@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lop Ear Run</title>
+<style>
+  :root {
+    --bg: #f7f6f0; --fg: #3a3a3a; --dim: #85857f; --line: #dedbd0; --chip: #ecebe3; --on: #ee8a2a; --on-fg: #fff;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17181c; --fg: #d8d8d2; --dim: #8c8c88; --line: #2c2e35; --chip: #23252b; --on: #ee8a2a; --on-fg: #17181c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 40px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+  button { font: inherit; color: var(--fg); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  canvas { display: block; width: 100%; aspect-ratio: 300 / 90; image-rendering: pixelated; border-radius: 6px; touch-action: none; cursor: pointer; outline: 1px solid var(--line); }
+  .help { color: var(--dim); margin: 10px 0 20px; }
+  kbd { font: inherit; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--dim); font-weight: normal; }
+  #moods { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  #moods span { background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; transition: background .2s, color .2s; }
+  #moods span.on { background: var(--on); border-color: var(--on); color: var(--on-fg); }
+  #moods small { color: var(--dim); }
+  #moods .on small { color: inherit; opacity: .8; }
+  #status { color: var(--dim); margin: 0 0 8px; }
+  #calls { margin: 0; padding: 10px 12px; min-height: 7.5em; background: var(--chip); border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>LOP EAR RUN</h1>
+    <button id="mute" type="button" aria-pressed="false" title="M">Sound on</button>
+  </header>
+  <canvas id="game" aria-label="Lop Ear Run: a rabbit runs, jumps and ducks"></canvas>
+  <p class="help"><kbd>Space</kbd> / <kbd>↑</kbd> jump (hold to jump higher) · <kbd>↓</kbd> duck · <kbd>M</kbd> sound. On a phone: tap the right half to jump, hold the left half to duck. Carrots are worth 50.</p>
+
+  <section aria-label="Music">
+    <h2>Mood (the game asks, the music follows)</h2>
+    <div id="moods">
+      <span data-mood="relaxed">relaxed <small>title, game over</small></span>
+      <span data-mood="exploring">exploring <small>first stretch</small></span>
+      <span data-mood="tension">tension <small>crows</small></span>
+      <span data-mood="action">action <small>fast</small></span>
+      <span data-mood="danger">danger <small>fox chase</small></span>
+      <span data-mood="wonder">wonder <small>night</small></span>
+    </div>
+    <p id="status">press a key or tap the game to start the music</p>
+    <h2>Calls to the music</h2>
+    <pre id="calls"></pre>
+  </section>
+</main>
+<script type="importmap">{ "imports": { "stardrift-engine": "../../src/index.js" } }</script>
+<script type="module" src="game.js"></script>
+</body>
+</html>
