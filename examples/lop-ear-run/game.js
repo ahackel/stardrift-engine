@@ -159,6 +159,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowLeft' || e.code === 'KeyA') { e.preventDefault(); chooseNext(-1); }
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') { e.preventDefault(); chooseNext(1); }
   else if (e.code === 'KeyM') toggleMute();
+  else if (e.code === 'KeyF') toggleFull();
 });
 addEventListener('keyup', (e) => {
   if (JUMP_KEYS.includes(e.code)) release();
@@ -197,6 +198,25 @@ function toggleMute() {
 muteBtn.addEventListener('click', () => { startAudio(); toggleMute(); muteBtn.blur(); });
 muteBtn.textContent = muted ? 'Sound off' : 'Sound on';
 muteBtn.setAttribute('aria-pressed', String(muted));
+
+// full screen: only the game (Esc, F or the button leaves). Where the browser has none (iPhone), or its request fails or
+// never answers (some embedded browsers), the game fills the window instead.
+const stage = document.getElementById('stage');
+function toggleFull() {
+  if (document.fullscreenElement || stage.classList.contains('full')) {
+    stage.classList.remove('full');
+    if (document.fullscreenElement) document.exitFullscreen();
+    return;
+  }
+  if (!document.fullscreenEnabled) return stage.classList.add('full');
+  stage.requestFullscreen().catch(() => {});
+  setTimeout(() => { if (!document.fullscreenElement) stage.classList.add('full'); }, 500);
+}
+document.addEventListener('fullscreenchange', () => { if (document.fullscreenElement) stage.classList.remove('full'); });
+for (const id of ['full', 'exit-full']) {
+  const b = document.getElementById(id);
+  b.addEventListener('click', () => { startAudio(); toggleFull(); b.blur(); });
+}
 
 const animalsEl = document.getElementById('animals');
 for (const b of animalsEl.querySelectorAll('button')) b.addEventListener('click', () => { startAudio(); choose(b.dataset.animal); b.blur(); });
@@ -392,6 +412,7 @@ const stars = Array.from({ length: 28 }, () => ({ x: Math.floor(rnd() * W), y: M
 let hillX = 0, groundX = 0;
 const GROUND_LOOP = 600;
 const groundBits = Array.from({ length: 70 }, () => ({ x: Math.floor(rnd() * GROUND_LOOP), kind: rnd() < 0.15 ? 'tuft' : rnd() < 0.5 ? 'dash' : 'dot', y: 2 + Math.floor(rnd() * 4) }));
+let stageBg = null;
 const titleX = (i) => Math.round(W / 2 - 13 + (i - 1) * 34); // where the animals stand on the title
 
 // the energy bar, top left: a heart and a bar that turns red (and blinks) when it runs low
@@ -419,6 +440,7 @@ function dizzyBirds(pal, behind) {
 
 function draw() {
   const pal = night ? PALETTES.night : PALETTES.day;
+  if (stageBg !== pal.bg) stage.style.setProperty('--game-bg', stageBg = pal.bg); // around the game in full screen
   ctx.fillStyle = pal.bg;
   ctx.fillRect(0, 0, W, H);
 

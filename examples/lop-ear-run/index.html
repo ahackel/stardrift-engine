@@ -22,6 +22,13 @@
   button:disabled { cursor: default; opacity: .6; }
   .bar { display: flex; gap: 6px; flex-wrap: wrap; }
   canvas { display: block; width: 100%; aspect-ratio: 300 / 90; image-rendering: pixelated; border-radius: 6px; touch-action: none; cursor: pointer; outline: 1px solid var(--line); }
+  /* full screen: only the game, as large as it fits; where the browser has no full screen (iPhone), it fills the window */
+  #stage { position: relative; }
+  #stage:fullscreen, #stage.full { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: var(--game-bg, #f7f6f0); }
+  #stage:fullscreen canvas, #stage.full canvas { width: min(100vw, calc(100dvh * 300 / 90)); border-radius: 0; outline: none; }
+  body:has(#stage.full) { overflow: hidden; }
+  #exit-full { display: none; position: absolute; right: 12px; bottom: 12px; opacity: .6; }
+  #stage:fullscreen #exit-full, #stage.full #exit-full { display: block; }
   .help { color: var(--dim); margin: 10px 0 20px; }
   kbd { font: inherit; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
   h2 { font-size: 13px; margin: 0 0 8px; color: var(--dim); font-weight: normal; }
@@ -45,10 +52,14 @@
         <button type="button" data-animal="cat">Cat</button>
       </div>
       <button id="mute" type="button" title="M">Sound on</button>
+      <button id="full" type="button" title="F">Full screen</button>
     </div>
   </header>
-  <canvas id="game" aria-label="Lop Ear Run: a rabbit, a dog or a cat runs, jumps and ducks"></canvas>
-  <p class="help"><kbd>Space</kbd> / <kbd>↑</kbd> jump (hold to jump higher) · <kbd>↓</kbd> duck · <kbd>←</kbd> <kbd>→</kbd> pick an animal · <kbd>M</kbd> sound. On a phone: tap the right half to jump, hold the left half to duck.<br>
+  <div id="stage">
+    <canvas id="game" aria-label="Lop Ear Run: a rabbit, a dog or a cat runs, jumps and ducks"></canvas>
+    <button id="exit-full" type="button" title="Esc or F">Leave full screen</button>
+  </div>
+  <p class="help"><kbd>Space</kbd> / <kbd>↑</kbd> jump (hold to jump higher) · <kbd>↓</kbd> duck · <kbd>←</kbd> <kbd>→</kbd> pick an animal · <kbd>M</kbd> sound · <kbd>F</kbd> full screen. On a phone: tap the right half to jump, hold the left half to duck.<br>
   Jump the cacti, rocks and logs, duck under the branches. Running tires: eat (carrots, bones, fish) to keep the energy up. Every bump costs energy; with none left, the animal is knocked out.</p>
 
   <section aria-label="Music">

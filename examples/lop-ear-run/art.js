@@ -163,7 +163,7 @@ const DRAW = {
         capsule(8, 14, 6, 10.5, 1.3), capsule(13.5, 14, 14.5, 11, 1.1)];
       earAt = [17, 13.5]; eye = [20, 15.5]; nose = [23, 17];
     }
-    g.layer([ellipse(tail[0] - 0.3 + Math.abs(wiggle) * 0.5, tail[1] + wiggle * 1.5, tail[2] + 0.3, tail[2] + 0.3)], FUR, OUT); // soft, like the ear
+    g.layer([ellipse(tail[0] - 0.3, tail[1] + wiggle, tail[2] + 0.3, tail[2] + 0.3)], FUR, OUT); // soft, like the ear
     const mask = g.layer(body, FUR, OUT);
     g.layer(lopEar(earAt[0], earAt[1], ear, 7, 1.4, 2.1), EAR, OUT);
     eyes(g, pose, eye, blink);
