@@ -262,14 +262,20 @@ function autopilot() {
   if (snack && alt === 0 && gap > 90 && snack.x - (RUN_X + 12) < speed * 0.12) press();
 }
 
+// the rabbit's tail: it bobs with every hop, and wiggles in quick bursts when the rabbit is not hopping
+function wiggle() {
+  if (kind !== 'rabbit') return 0;
+  if (hopping()) return Math.round(Math.sin(phase * Math.PI * 4));
+  return blinkT % 1.7 < 0.45 ? Math.round(Math.sin(blinkT * 40)) : 0;
+}
 function animalSprite() {
-  const blink = (blinkT % 3.2) < 0.12;
-  if (state === 'ko') return animal(kind, alt > 0 ? 'hurt' : 'ko', 0, soft);
-  if (state === 'title') return animal(kind, 'idle', Math.floor(blinkT * 5) % 2, soft, blink);
+  const blink = (blinkT % 3.2) < 0.12, w = wiggle();
+  if (state === 'ko') return animal(kind, alt > 0 ? 'hurt' : 'ko', 0, soft, false, w);
+  if (state === 'title') return animal(kind, 'idle', Math.floor(blinkT * 5) % 2, soft, blink, w);
   if (hurtT > 0) return animal(kind, 'hurt', 0, soft);
   if (alt > 0) return animal(kind, 'jump', vAlt > 0 ? 0 : 1, soft, blink);
-  if (ducking) return animal(kind, 'duck', Math.floor(phase * 4) % 2, soft, blink);
-  return animal(kind, 'run', stride(kind, phase).frame, soft, blink);
+  if (ducking) return animal(kind, 'duck', Math.floor(phase * 4) % 2, soft, blink, w);
+  return animal(kind, 'run', stride(kind, phase).frame, soft, blink, w);
 }
 const hopping = () => state === 'run' && alt === 0 && !ducking && hurtT <= 0;
 const animalY = () => GROUND - FOOT - alt - (hopping() ? stride(kind, phase).lift : 0);

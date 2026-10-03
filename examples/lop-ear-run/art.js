@@ -109,10 +109,10 @@ export function stride(kind, phase) {
 }
 
 const animals = new Map();
-export function animal(kind, pose, frame = 0, soft = 0.4, blink = false) {
-  const a = Math.round(clamp(soft, -0.4, 2.6) * 8) / 8, key = `${kind}${pose}${frame}${a}${blink}`;
+export function animal(kind, pose, frame = 0, soft = 0.4, blink = false, wiggle = 0) {
+  const a = Math.round(clamp(soft, -0.4, 2.6) * 8) / 8, key = `${kind}${pose}${frame}${a}${blink}${wiggle}`;
   if (!animals.has(key)) {
-    const g = new Grid(26, 20), { mask, head } = DRAW[kind](g, pose, frame, a, blink);
+    const g = new Grid(26, 20), { mask, head } = DRAW[kind](g, pose, frame, a, blink, wiggle);
     animals.set(key, sprite(g, mask, { head }));
   }
   return animals.get(key);
@@ -132,32 +132,38 @@ const lopEar = (x, y, a, L, r, tip) => {
 const legs = (list, r) => list.map(([x1, y1, x2, y2]) => capsule(x1, y1, x2, y2, r));
 
 const DRAW = {
-  // the rabbit: round and compact, one lop ear
-  rabbit(g, pose, f, ear, blink) {
+  // the rabbit: round and compact, one lop ear, a cotton tail that wiggles (wiggle: -1, 0, 1 moves it up or down)
+  rabbit(g, pose, f, ear, blink, wiggle) {
     const crouch = pose === 'idle' || pose === 'hurt' || (pose === 'run' && f === 0);
     const stretch = (pose === 'run' && f === 1) || (pose === 'jump' && f === 0);
-    let body, earAt, eye, nose;
+    let body, tail, earAt, eye, nose;
     if (crouch) {
-      body = [ellipse(2.5, 12.5, 2, 2), ellipse(9.5, 13.5, 7, 5), ellipse(7.5, 15, 5, 4), ellipse(15.5, 9, 4.5, 4.5), ellipse(19, 10.8, 2.5, 2.2),
+      tail = [2.5, 12.5, 2];
+      body = [ellipse(9.5, 13.5, 7, 5), ellipse(7.5, 15, 5, 4), ellipse(15.5, 9, 4.5, 4.5), ellipse(19, 10.8, 2.5, 2.2),
         ellipse(8.5, 18.4, 4.5, 1.4), capsule(14.5, 14, 15, 18.3, 1.2)];
       earAt = [13.5, 6]; eye = [17, 8]; nose = [20, 10];
     } else if (stretch) {
-      body = [ellipse(2, 10.5, 2, 2), capsule(6.5, 12.5, 12, 10.5, 4.3), ellipse(16.5, 7.5, 4.5, 4.3), ellipse(20, 9.3, 2.5, 2.2),
+      tail = [2, 10.5, 2];
+      body = [capsule(6.5, 12.5, 12, 10.5, 4.3), ellipse(16.5, 7.5, 4.5, 4.3), ellipse(20, 9.3, 2.5, 2.2),
         capsule(5, 14.5, 1.5, 17.5, 1.5), capsule(15, 12, 19, 15, 1.1)];
       earAt = [14.5, 4.5]; eye = [18, 6.5]; nose = [21, 8.5];
     } else if (pose === 'run' || pose === 'jump') { // gathered
-      body = [ellipse(2.5, 11, 2, 2), ellipse(10, 12.5, 7, 5), ellipse(16, 8, 4.5, 4.3), ellipse(19.5, 9.8, 2.5, 2.2),
+      tail = [2.5, 11, 2];
+      body = [ellipse(10, 12.5, 7, 5), ellipse(16, 8, 4.5, 4.3), ellipse(19.5, 9.8, 2.5, 2.2),
         capsule(8, 16, 12.5, 17.5, 1.5), capsule(15, 12.5, 16.5, 17.3, 1.1)];
       earAt = [14, 5]; eye = [17.5, 7]; nose = [21, 9];
     } else if (pose === 'duck') {
-      body = [ellipse(1.8, 15, 1.8, 1.8), ellipse(10, 16, 8.5, 3.3), ellipse(18, 15.5, 4, 3.4), ellipse(21.3, 16.6, 2, 1.7),
+      tail = [1.8, 15, 1.8];
+      body = [ellipse(10, 16, 8.5, 3.3), ellipse(18, 15.5, 4, 3.4), ellipse(21.3, 16.6, 2, 1.7),
         ellipse(f ? 6 : 8.5, 18.8, 3.5, 1.1), capsule(17, 18, f ? 20.5 : 19.5, 18.8, 1)];
       earAt = [16, 13]; eye = [19, 14.5]; nose = [22, 16];
     } else { // ko: on its back, feet up
-      body = [ellipse(2.5, 16, 1.8, 1.8), ellipse(11, 16.5, 8, 3.2), ellipse(19, 15.8, 4.2, 3.4), ellipse(22.3, 17, 2, 1.6),
+      tail = [2.5, 16, 1.8];
+      body = [ellipse(11, 16.5, 8, 3.2), ellipse(19, 15.8, 4.2, 3.4), ellipse(22.3, 17, 2, 1.6),
         capsule(8, 14, 6, 10.5, 1.3), capsule(13.5, 14, 14.5, 11, 1.1)];
       earAt = [17, 13.5]; eye = [20, 15.5]; nose = [23, 17];
     }
+    g.layer([ellipse(tail[0] - 0.3 + Math.abs(wiggle) * 0.5, tail[1] + wiggle * 1.5, tail[2] + 0.3, tail[2] + 0.3)], FUR, OUT); // soft, like the ear
     const mask = g.layer(body, FUR, OUT);
     g.layer(lopEar(earAt[0], earAt[1], ear, 7, 1.4, 2.1), EAR, OUT);
     eyes(g, pose, eye, blink);
