@@ -99,7 +99,7 @@ Several tracks can play one instrument. Every setting and its range is listed on
 
 | Key | What |
 |---|---|
-| `type` | `pulse` (`duty`, `pwm`), `triangle`, `wave` (a preset or 32 values 0–15), `string` (plucked: `string { decay bright mute }`), `fm` (`fm { ratio index env feedback }`), `bowed` (`bow { pressure position }`), `sample` (`"sample": "cello"`: recordings in `library/`: `cello trombone flute violins violins_pizz bass_pizz glockenspiel xylophone`; kits can also play `timpani bass_drum snare shaker triangle claves`, the cymbals and hats), `drums` (`kit`) |
+| `type` | `pulse` (`duty`, `pwm`), `triangle`, `wave` (a preset or 32 values 0–15), `string` (plucked: `string { decay bright mute }`), `fm` (`fm { ratio index env feedback }`), `bowed` (`bow { pressure position }`), `sample` (`"sample": "cello"`: recordings in `library/`: `cello trombone flute violins violins_pizz bass_pizz glockenspiel xylophone`; kits can also play `timpani bass_drum snare shaker triangle claves`, `cymbal`, the cymbals and hats), `drums` (`kit`) |
 | `poly`, `arp`, `arpChord` | chords (voices), or one voice: a new note ends the last; `arp` runs chords as a chip arpeggio, `arpChord` single notes too |
 | `env { a d s r }`, `gain` | envelope, level |
 | `smooth` | no 4-bit staircase: an analog-style triangle, saw or sine |

@@ -51,6 +51,7 @@ const SOURCES = {
   snare: { from: VSCO, what: 'Concert snare drum', rate: 44100, secs: 0.7, fade: 0.3, zones: [['snare1_f_1.wav', 'VSCO 1 Percussion/drums/snare/drum1/snare1_f_1.wav']] },
   shaker: { from: VSCO, what: 'Shaker', rate: 44100, secs: 0.25, fade: 0.08, zones: [['shake1.wav', "VSCO 1 Percussion/varWood/Camo's Shaker/shake1.wav"]] },
   triangle: { from: VSCO, what: 'Triangle', rate: 44100, secs: 2, fade: 1, zones: [['triangle1_hit_mp.wav', 'VSCO 1 Percussion/varMetal/triangle/1/triangle1_hit_mp.wav']] },
+  cymbal: { from: VSCO, what: 'Suspended cymbal hit with soft mallets (f): a warm crash', rate: 44100, secs: 3.5, fade: 1.5, zones: [['susp_hit_softmall_f.wav', 'VSCO 1 Percussion/varMetal/Cymbals/susp/susp_hit_softmall_f.wav']] },
   claves: { from: VSCO, what: 'Claves', rate: 44100, secs: 0.4, fade: 0.15, zones: [['claves_mf.wav', 'VSCO 1 Percussion/varWood/claves_mf.wav']] },
 };
 const SUSTAIN = { secs: 4.6, loop: [1.8, 4.4], fade: 0.2, rms: -16 }; // loop region and crossfade in seconds, loudness in dBFS

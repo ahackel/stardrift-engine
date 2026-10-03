@@ -334,6 +334,12 @@
         "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/varMetal/triangle/1/triangle1_hit_mp.wav"
       }
     ],
+    "cymbal": [
+      {
+        "file": "samples/cymbal.wav",
+        "source": "https://github.com/sgossner/VSCO-2-CE/blob/master/VSCO 1 Percussion/varMetal/Cymbals/susp/susp_hit_softmall_f.wav"
+      }
+    ],
     "claves": [
       {
         "file": "samples/claves.wav",
