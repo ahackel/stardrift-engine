@@ -35,7 +35,7 @@ The package exports `StardriftPlayer` (the web player), `Engine` (the engine its
 
 ### The example game
 
-[Lop Ear Run](https://github.com/ahackel/lop-ear-run) ([play it](https://andreashackel.de/lop-ear-run/)) is a small endless runner made with the engine: a lop-eared rabbit, a puppy or a kitten jumps cacti and ducks under branches, with its own song. It uses every mood and every stinger the way a game would (a mood for each state of play, stingers for jumps, food, bumps, an escape and the knock-out), shows its calls to the music as it makes them, and carries a copy of the engine, so GitHub Pages serves it as plain files.
+[Lop Hop](https://github.com/ahackel/lop-hop) ([play it](https://andreashackel.de/lop-hop/)) is a small endless runner made with the engine: a lop-eared rabbit and fourteen other animals jump cacti and duck under branches, with its own song. It uses every mood and every stinger the way a game would (a mood for each state of play, stingers for jumps, food, bumps, an escape and the knock-out), shows its calls to the music as it makes them, and carries a copy of the engine, so GitHub Pages serves it as plain files.
 
 **Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Elias) plays pre-rendered stems; procedural generators on the Asset Store are Unity-only and closed; pattern tools (Strudel, ZzFXM) aren't game runtimes. Stardrift borrows their ideas instead: horizontal re-sequencing and vertical layers, a weighted section graph, tracker patterns and NES/Game Boy voices.
 
