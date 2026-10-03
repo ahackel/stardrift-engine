@@ -35,17 +35,17 @@ The package exports `StardriftPlayer` (the web player), `Engine` (the engine its
 
 ### The example game
 
-`examples/lop-ear-run/` is a small endless runner (a pixel rabbit with lop ears jumps brambles and ducks crows) with its own song. It uses every mood and every stinger the way a game would, and shows its calls to the music as it makes them:
+`examples/lop-ear-run/` is a small endless runner (a lop-eared rabbit, a beagle puppy or a kitten jumps cacti, ducks under branches and crows, eats to keep its energy up and is knocked out when it runs out) with its own song. It uses every mood and every stinger the way a game would, and shows its calls to the music as it makes them:
 
 | Game | Music |
 |---|---|
-| title, game over | `setMood('relaxed')` |
+| title, knocked out | `setMood('relaxed')` |
 | the first stretch, crows from 300, fast from 700 | `exploring`, `tension`, `action` |
 | a fox gives chase (from 500, every 1000) | `danger` |
 | night falls (every 900) | `wonder` |
-| jump, carrot, the fox left behind, a crash | `sting('jump')`, `reward`, `discovery`, `alert` |
+| jump, food, a bump, the fox left behind, knocked out | `sting('jump')`, `reward`, `bump`, `discovery`, `alert` |
 
-`?auto` lets the rabbit run by itself, to hear the moods come and go.
+`?auto` lets the animal run by itself, to hear the moods come and go.
 
 **Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Elias) plays pre-rendered stems; procedural generators on the Asset Store are Unity-only and closed; pattern tools (Strudel, ZzFXM) aren't game runtimes. Stardrift borrows their ideas instead: horizontal re-sequencing and vertical layers, a weighted section graph, tracker patterns and NES/Game Boy voices.
 

@@ -18,6 +18,9 @@
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
   button { font: inherit; color: var(--fg); background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button[aria-pressed="true"] { background: var(--on); border-color: var(--on); color: var(--on-fg); }
+  button:disabled { cursor: default; opacity: .6; }
+  .bar { display: flex; gap: 6px; flex-wrap: wrap; }
   canvas { display: block; width: 100%; aspect-ratio: 300 / 90; image-rendering: pixelated; border-radius: 6px; touch-action: none; cursor: pointer; outline: 1px solid var(--line); }
   .help { color: var(--dim); margin: 10px 0 20px; }
   kbd { font: inherit; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
@@ -35,15 +38,23 @@
 <main>
   <header>
     <h1>LOP EAR RUN</h1>
-    <button id="mute" type="button" aria-pressed="false" title="M">Sound on</button>
+    <div class="bar">
+      <div id="animals" class="bar" role="group" aria-label="Animal">
+        <button type="button" data-animal="rabbit">Rabbit</button>
+        <button type="button" data-animal="dog">Dog</button>
+        <button type="button" data-animal="cat">Cat</button>
+      </div>
+      <button id="mute" type="button" title="M">Sound on</button>
+    </div>
   </header>
-  <canvas id="game" aria-label="Lop Ear Run: a rabbit runs, jumps and ducks"></canvas>
-  <p class="help"><kbd>Space</kbd> / <kbd>↑</kbd> jump (hold to jump higher) · <kbd>↓</kbd> duck · <kbd>M</kbd> sound. On a phone: tap the right half to jump, hold the left half to duck. Carrots are worth 50.</p>
+  <canvas id="game" aria-label="Lop Ear Run: a rabbit, a dog or a cat runs, jumps and ducks"></canvas>
+  <p class="help"><kbd>Space</kbd> / <kbd>↑</kbd> jump (hold to jump higher) · <kbd>↓</kbd> duck · <kbd>←</kbd> <kbd>→</kbd> pick an animal · <kbd>M</kbd> sound. On a phone: tap the right half to jump, hold the left half to duck.<br>
+  Jump the cacti, rocks and logs, duck under the branches. Running tires: eat (carrots, bones, fish) to keep the energy up. Every bump costs energy; with none left, the animal is knocked out.</p>
 
   <section aria-label="Music">
     <h2>Mood (the game asks, the music follows)</h2>
     <div id="moods">
-      <span data-mood="relaxed">relaxed <small>title, game over</small></span>
+      <span data-mood="relaxed">relaxed <small>title, knocked out</small></span>
       <span data-mood="exploring">exploring <small>first stretch</small></span>
       <span data-mood="tension">tension <small>crows</small></span>
       <span data-mood="action">action <small>fast</small></span>
