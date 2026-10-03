@@ -152,4 +152,4 @@ For WebGL builds the JS engine can also run through a `.jslib` plugin.
 
 ## License
 
-MIT (see `LICENSE`). The sample library in `library/samples/` is CC0 (public domain) recordings by Versilian Studios.
+MIT (see `LICENSE`). The sample library in `library/samples/` is CC0 (public domain) recordings by Versilian Studios (`library/LICENSE`).
