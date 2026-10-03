@@ -7,7 +7,7 @@ A procedural, block-based chiptune music engine for games: atmospheric by defaul
 - **Unity**: the engine is plain per-sample code, written to be ported 1:1 to C# (see *Porting to Unity*).
 
 ```bash
-npm run dev        # http://localhost:8322: the example game at /examples/lop-ear-run/ (AudioWorklet needs http://, not file://)
+npm run dev        # a static server at http://localhost:8322 (AudioWorklet needs http://, not file://)
 npm run render     # offline render + conductor log: node tools/render.mjs song secs seed out.wav --mood 30:tension --sting 45:discovery
 npm test
 npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22050 --breakdown
@@ -35,17 +35,7 @@ The package exports `StardriftPlayer` (the web player), `Engine` (the engine its
 
 ### The example game
 
-`examples/lop-ear-run/` is a small endless runner (a lop-eared rabbit, a beagle puppy or a kitten jumps cacti, ducks under branches and crows, eats to keep its energy up and is knocked out when it runs out) with its own song. It uses every mood and every stinger the way a game would, and shows its calls to the music as it makes them:
-
-| Game | Music |
-|---|---|
-| title, knocked out | `setMood('relaxed')` |
-| the first stretch, crows from 300, fast from 700 | `exploring`, `tension`, `action` |
-| a fox gives chase (from 500, every 1000) | `danger` |
-| night falls (every 900) | `wonder` |
-| jump, food, a bump, the fox left behind, knocked out | `sting('jump')`, `reward`, `bump`, `discovery`, `alert` |
-
-`?auto` lets the animal run by itself, to hear the moods come and go.
+[Lop Ear Run](https://github.com/ahackel/lop-ear-run) ([play it](https://andreashackel.de/lop-ear-run/)) is a small endless runner made with the engine: a lop-eared rabbit, a puppy or a kitten jumps cacti and ducks under branches, with its own song. It uses every mood and every stinger the way a game would (a mood for each state of play, stingers for jumps, food, bumps, an escape and the knock-out), shows its calls to the music as it makes them, and carries a copy of the engine, so GitHub Pages serves it as plain files.
 
 **Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Elias) plays pre-rendered stems; procedural generators on the Asset Store are Unity-only and closed; pattern tools (Strudel, ZzFXM) aren't game runtimes. Stardrift borrows their ideas instead: horizontal re-sequencing and vertical layers, a weighted section graph, tracker patterns and NES/Game Boy voices.
 
@@ -147,7 +137,6 @@ Block `from`: play that block's notes (its `pattern`, `mode` and `fit`) instead 
 | `src/index.js` | what the package exports; `samples.js`, `disk-samples.js`, `wav.js`, `phrase.js` |
 | `songs/` | the reference song (tests, render, bench); more are in the editor repo |
 | `library/` | the sample library (CC0 recordings) |
-| `examples/lop-ear-run/` | the example game and its song |
 | `tools/` | offline render, tests, benchmark, sample builder, dev server |
 
 ## Porting to Unity

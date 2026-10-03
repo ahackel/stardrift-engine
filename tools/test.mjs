@@ -236,11 +236,8 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   ok(onBeat > 10 && fits === onBeat, `theme notes on the beat are chord tones (${fits}/${onBeat})`);
 }
 
-// 9. Every song in songs/ and the examples: healthy audio, each mood reached, each stinger plays, its themes come back
+// 9. Every song in songs/: healthy audio, each mood reached, each stinger plays, its themes come back
 const toCheck = readdirSync(new URL('../songs/', import.meta.url)).filter((f) => f.endsWith('.json')).map((f) => [f, readJson(`../songs/${f}`)]);
-for (const dir of readdirSync(new URL('../examples/', import.meta.url))) {
-  for (const f of readdirSync(new URL(`../examples/${dir}/`, import.meta.url))) if (f.endsWith('.json')) toCheck.push([`${dir}/${f}`, readJson(`../examples/${dir}/${f}`)]);
-}
 for (const [file, sg] of toCheck) {
   const e = newEngine(SR, sg, 3);
   const h = run(e, 90);
