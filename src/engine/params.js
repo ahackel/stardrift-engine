@@ -114,13 +114,13 @@ export function setAt(o, path, v) {
   const ks = path.split('.');
   let x = o;
   for (const k of ks.slice(0, -1)) x = x[k] && typeof x[k] === 'object' ? x[k] : (x[k] = {});
-  x[ks.at(-1)] = v;
+  x[ks[ks.length - 1]] = v;
 }
 // removes the key, and its group when that is left empty
 export function unsetAt(o, path) {
   const ks = path.split('.'), parent = ks.length > 1 ? getAt(o, ks.slice(0, -1).join('.')) : o;
   if (!parent) return;
-  delete parent[ks.at(-1)];
+  delete parent[ks[ks.length - 1]];
   if (ks.length > 1 && !Object.keys(parent).length) unsetAt(o, ks.slice(0, -1).join('.'));
 }
 // a setting as the editor sets it: one that switches off is removed at its minimum (with its group: vibrato …)

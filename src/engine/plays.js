@@ -10,6 +10,8 @@
 // Songs from before (tags, weights, intensity and tension, track layers) are turned into these once: migrateSong()
 // works out what the old rules picked in each section and rounds it to a step.
 export const STEPS = [0, 0.25, 0.5, 0.75, 1];
+// a song's own copy (structuredClone where there is one, which Safari has only from 15.4; a song is JSON)
+const clone = typeof structuredClone === 'function' ? structuredClone : (x) => JSON.parse(JSON.stringify(x));
 export const snap = (v) => Math.round(Math.min(1, Math.max(0, +v || 0)) * 4) / 4;
 
 // a clip's or sequence's weight in a section (a breather counts as the section it interrupts)
@@ -41,7 +43,7 @@ function layerChances(layer, sections) {
 const ALL_FORMS = ['whole', 'head', 'sequence', 'slow', 'shift', 'answer'];
 function migrateTheme(raw) {
   if (!raw || !(raw.theme || (raw.blocks || []).some((b) => b.theme))) return raw;
-  const s = structuredClone(raw), th = s.theme?.pattern ? s.theme : null, blocks = (s.blocks ||= []), tracks = s.tracks || [];
+  const s = clone(raw), th = s.theme?.pattern ? s.theme : null, blocks = (s.blocks ||= []), tracks = s.tracks || [];
   delete s.theme;
   const idsOf = (t) => (Array.isArray(t.clips) ? t.clips : blocks.filter((b) => b.track === t.id).map((b) => b.id));
   const order = tracks.flatMap(idsOf), at = (b) => (order.includes(b.id) ? order.indexOf(b.id) : order.length);
@@ -76,7 +78,7 @@ function migrateTheme(raw) {
 // The editor once kept a section's moods on the section (section.moods: names): they are the moods' sections now
 function migrateMoods(raw) {
   if (!raw?.sections?.some((x) => Array.isArray(x.moods))) return raw;
-  const s = structuredClone(raw);
+  const s = clone(raw);
   s.moods ||= {};
   for (const sec of s.sections) {
     for (const m of Array.isArray(sec.moods) ? sec.moods : []) if (s.moods[m]) (s.moods[m].sections ||= {})[sec.id] = 1;
@@ -89,7 +91,7 @@ function migrateMoods(raw) {
 // stays at least 25 %). Only the ratios count, so this changes little beyond the rounding.
 function migrateNext(raw) {
   if (!raw?.sections?.some((x) => Object.values(x.next || {}).some((w) => w !== snap(w)))) return raw;
-  const s = structuredClone(raw);
+  const s = clone(raw);
   for (const sec of s.sections) {
     const max = Math.max(0, ...Object.values(sec.next || {}));
     for (const [k, w] of Object.entries(sec.next || {})) if (w > 0) sec.next[k] = Math.max(0.25, snap(w / max)); else delete sec.next[k];
@@ -111,7 +113,7 @@ function dropLevels(raw) {
   const has = (o, ...keys) => o && typeof o === 'object' && keys.some((k) => k in o);
   if (!raw || !((raw.sections || []).some((x) => has(x, 'intensity', 'tension')) || Object.values(raw.moods || {}).some((m) => has(m, 'intensity', 'tension', 'influence'))
     || Object.values(raw.instruments || {}).some((d) => has(d, 'cutoffIntensity', 'cutoffTension')))) return raw;
-  const s = structuredClone(raw), secs = s.sections || [];
+  const s = clone(raw), secs = s.sections || [];
   // of the sections the music can get to (a section without links goes on to any)
   const led = secs.some((x) => !Object.values(x.next || {}).some((w) => w > 0)) ? secs : secs.filter((x) => secs.some((y) => y.next?.[x.id] > 0));
   for (const m of Object.values(s.moods || {})) {
@@ -147,7 +149,7 @@ export function migrateSong(raw) {
   return dropLevels(raw && LEGACY(raw) ? migrateLegacy(raw) : raw);
 }
 function migrateLegacy(raw) {
-  const s = structuredClone(raw), secs = s.sections || [];
+  const s = clone(raw), secs = s.sections || [];
   const known = new Set(secs.flatMap((x) => x.tags || []));
   const isFill = (b) => !!b.fill || (b.tags || []).includes('fill');
   const fitting = (list, want) => {
