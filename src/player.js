@@ -1,4 +1,21 @@
 import { fetchSamples, soundSamples, songSamples } from './samples.js';
+import { encodeWav } from './wav.js';
+
+// An iPhone or iPad plays a page's Web Audio as sound effects, which its silent switch mutes. Music it plays anyway: where
+// the browser has an audio session (newer Safari) the page says it plays music; before that (Safari 15), a silent media
+// element that plays along while the audio runs makes it music. Started in a user gesture (init), as the element needs.
+const APPLE_TOUCH = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1));
+function playsMusic() {
+  if (typeof navigator === 'undefined') return null;
+  if ('audioSession' in navigator) { try { navigator.audioSession.type = 'playback'; } catch { /* not settable */ } return null; }
+  if (!APPLE_TOUCH) return null;
+  const el = document.createElement('audio');
+  el.src = URL.createObjectURL(new Blob([encodeWav(new Float32Array(8000), null, 8000)], { type: 'audio/wav' })); // a second of silence
+  el.loop = true;
+  el.setAttribute('x-webkit-airplay', 'deny');
+  el.play().catch(() => {});
+  return el;
+}
 
 // Main-thread API. This is what a (web) game uses:
 //
@@ -25,6 +42,7 @@ export class StardriftPlayer {
     // some macOS devices refuse ("InvalidStateError: Failed to start the audio device").
     const ctx = (this.ctx = new AudioContext());
     ctx.resume().catch(() => {}); // still inside the user gesture; failures are handled in play()
+    this.alongside = playsMusic();
     try {
       await ctx.audioWorklet.addModule(new URL('./worklet.js', import.meta.url));
     } catch (err) {
@@ -34,7 +52,10 @@ export class StardriftPlayer {
     this.node = new AudioWorkletNode(this.ctx, 'stardrift', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
     this.gain = this.ctx.createGain();
     this.node.connect(this.gain).connect(this.ctx.destination);
-    this.ctx.onstatechange = () => this.emit('transport', { type: 'transport', playing: this.playing });
+    this.ctx.onstatechange = () => {
+      if (this.alongside) { if (this.ctx?.state === 'running') this.alongside.play().catch(() => {}); else this.alongside.pause(); }
+      this.emit('transport', { type: 'transport', playing: this.playing });
+    };
     this.node.onprocessorerror = (e) => this.emit('error', { type: 'error', text: `audio processor crashed: ${e.message || e}` });
     this.node.port.onmessage = (e) => {
       for (const ev of e.data) this.emit(ev.type, ev);
@@ -171,6 +192,7 @@ export class StardriftPlayer {
 
   dispose() {
     try { this.ctx?.close(); } catch { /* already closed */ }
+    if (this.alongside) { this.alongside.pause(); URL.revokeObjectURL(this.alongside.src); this.alongside = null; }
     this.ctx = this.node = this.gain = null;
     this.emit('disposed', { type: 'disposed' });
   }
