@@ -409,6 +409,19 @@ for (const [file, sg] of toCheck) {
   ok(e.tracks[id].active && e.tracks[id].block?.id === copy.id, 'a clip swapped for its copy while it plays plays on');
 }
 
+// A song's zip (Export for a game): the song and the recordings it plays come back as they went in, and only those
+{
+  const { songZip, openSongZip } = await import('../src/bundle.js');
+  const { unzip } = await import('../src/zip.js');
+  const { loadSamples, songSamples, LIBRARY_URL } = await import('../src/samples.js');
+  const read = async (path) => { const b = readFileSync(new URL(path, LIBRARY_URL)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+  const sg = { ...structuredClone(song), name: 'Zipped', instruments: { ...song.instruments, drums: { type: 'drums', kit: 'rock' }, keys: { type: 'sample', sample: 'cello' } } };
+  const z = await songZip(sg, read), names = songSamples(sg), { song: back, read: zread } = await openSongZip(z);
+  const got = await loadSamples(zread, names), same = names.every((n) => got[n]?.length === SAMPLES[n].length
+    && got[n].every((zone, i) => zone.root === SAMPLES[n][i].root && zone.data.length === SAMPLES[n][i].data.length && zone.data.every((x, j) => x === SAMPLES[n][i].data[j])));
+  const wavs = unzip(z).names.filter((f) => f.endsWith('.wav')).length, files = new Set(names.flatMap((n) => JSON.parse(readFileSync(new URL('samples.json', LIBRARY_URL))).samples[n].map((zn) => zn.file))).size;
+  ok(JSON.stringify(back) === JSON.stringify(sg) && same && wavs === files, `a song's zip holds the song and its recordings (${names.join(', ')}: ${wavs} files), and only those`);
+}
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

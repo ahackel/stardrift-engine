@@ -1,4 +1,6 @@
-import { fetchSamples, soundSamples, songSamples } from './samples.js';
+import { fetchSamples, loadSamples, soundSamples, songSamples } from './samples.js';
+import { isZip } from './zip.js';
+import { openSongZip } from './bundle.js';
 import { encodeWav } from './wav.js';
 
 // An iPhone or iPad plays a page's Web Audio as sound effects, which its silent switch mutes. Music it plays anyway: where
@@ -21,7 +23,7 @@ function playsMusic() {
 //
 //   const music = new StardriftPlayer();
 //   await music.init();                       // must follow a user gesture (init({ library: url }) if library/ is elsewhere)
-//   await music.loadUrl('songs/deep-space.json');
+//   await music.loadUrl('songs/deep-space.json');   // or a song's zip (the editor's Export for a game: song and recordings)
 //   music.play();
 //   music.setMood('relaxed');                 // or 'tension', 'danger', 'wonder' … (the song's moods), 'auto'
 //   music.sting('discovery');                 // a short phrase for a game event, in key and on the beat
@@ -75,7 +77,8 @@ export class StardriftPlayer {
     names = names.filter((n) => !this.requested.has(n));
     if (!names.length) return;
     for (const n of names) this.requested.add(n);
-    this.samples = Promise.all([this.samples, fetchSamples(this.library, names).then((samples) => {
+    const got = this.read ? loadSamples(this.read, names) : fetchSamples(this.library, names);
+    this.samples = Promise.all([this.samples, got.then((samples) => {
       const buffers = Object.values(samples).flat().map((z) => z.data.buffer);
       this.node?.port.postMessage({ type: 'samples', samples }, buffers);
     }).catch((err) => {
@@ -90,14 +93,26 @@ export class StardriftPlayer {
   send(msg) { if (this.node) this.node.port.postMessage(msg); }
 
   async loadUrl(url, opts) {
-    const song = await (await fetch(url)).json();
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url}: ${res.status} ${res.statusText}`);
+    const buf = await res.arrayBuffer();
+    if (isZip(buf)) return this.loadZip(buf, opts);
+    const song = JSON.parse(new TextDecoder().decode(buf));
     this.load(song, opts);
     return song;
   }
+  // a song's zip (bundle.js) as an ArrayBuffer: the song, and its recordings from the zip
+  async loadZip(buffer, opts) {
+    const { song, read } = await openSongZip(buffer);
+    this.load(song, { ...opts, read });
+    return song;
+  }
 
-  // restart=false hot-swaps the song and keeps playing from the same position (used by the editor)
-  load(song, { seed, restart = false } = {}) {
+  // restart=false hot-swaps the song and keeps playing from the same position (used by the editor).
+  // read: where the song's recordings come from (path → ArrayBuffer, see loadSamples); the sample library without it
+  load(song, { seed, restart = false, read = null } = {}) {
     if (seed !== undefined) this.seed = seed;
+    this.read = read;
     const fresh = !this.song || restart;
     this.song = JSON.parse(JSON.stringify(song));
     this.send({ type: 'load', song: this.song, seed: this.seed, restart: fresh });

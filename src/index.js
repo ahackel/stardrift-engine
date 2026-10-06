@@ -5,3 +5,5 @@ export { Engine } from './engine/engine.js';
 export { loadSamples, fetchSamples, soundSamples, songSamples, LIBRARY_URL } from './samples.js';
 export { encodeWav, decodeWav } from './wav.js';
 export { renderPhrase, phraseSong } from './phrase.js';
+export { songZip, openSongZip } from './bundle.js';
+export { zip, unzip, isZip } from './zip.js';

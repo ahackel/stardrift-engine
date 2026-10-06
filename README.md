@@ -31,7 +31,7 @@ With a bundler that is all. Without one, an import map points the name at the pa
 <script type="importmap">{ "imports": { "stardrift-engine": "./node_modules/stardrift-engine/src/index.js" } }</script>
 ```
 
-The package exports `StardriftPlayer` (the web player), `Engine` (the engine itself, for offline rendering or another audio host), `loadSamples` / `fetchSamples` / `LIBRARY_URL` (the sample library), `encodeWav` / `decodeWav` and `renderPhrase` (one sound in a short phrase, offline). Single modules are there by path too, e.g. `stardrift-engine/engine/theory.js`; in node, `stardrift-engine/disk-samples.js` loads the sample library from disk.
+The package exports `StardriftPlayer` (the web player), `Engine` (the engine itself, for offline rendering or another audio host), `loadSamples` / `fetchSamples` / `LIBRARY_URL` (the sample library), `encodeWav` / `decodeWav`, `renderPhrase` (one sound in a short phrase, offline), `songZip` / `openSongZip` (a song and its recordings in one zip, see *A song in one zip*) and `zip` / `unzip`. Single modules are there by path too, e.g. `stardrift-engine/engine/theory.js`; in node, `stardrift-engine/disk-samples.js` loads the sample library from disk.
 
 ### The example game
 
@@ -70,6 +70,16 @@ music.sting('reward', { at: 'step' });    // … or right away
 A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), and the conductor takes the shortest way along the links to the mood's sections, with shortened bridge sections the first time. All songs share the mood names (`relaxed wonder exploring tension danger action`) and stinger names (`discovery alert jump reward`), so a game can switch songs without changing its calls.
 
 The player loads the sample library (`library/`) in the background, only the recordings the song plays (and the sounds the editor previews); `init({ library: url })` points it elsewhere, other hosts call `engine.setSamples()` (`songSamples(song)` names what a song needs).
+
+### A song in one zip
+
+The editor's **Export for a game** writes a song and everything it plays into one `.zip` (`songZip(song)`): `song.json`, the recordings it uses (`library/`: `samples.json` with only those, their WAVs, their license) and a README with the song's moods and stingers. A game drops it in and loads it as it is, the recordings come from the zip:
+
+```js
+await music.loadUrl('music/iron-comet.zip');   // or music.loadZip(arrayBuffer)
+```
+
+Unzipped, the folder works too: `init({ library: 'music/iron-comet/library/' })`, `loadUrl('music/iron-comet/song.json')`. The zip stores its files uncompressed, so every browser reads it (Safari 15 too); zipped again by hand (compressed), browsers that can inflate (`DecompressionStream`) read it as well. Other hosts: `openSongZip(buffer)` gives `{ song, read }`, `loadSamples(read, songSamples(song))` the recordings.
 
 ## Song format
 
