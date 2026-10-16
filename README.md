@@ -1,10 +1,10 @@
 # Stardrift engine
 
-A procedural, block-based chiptune music engine for games: atmospheric by default, tense when the game asks for it. The music is endless, varies itself over time and follows the game's mood with smooth transitions.
+A procedural music engine for games. The music is endless, varies itself and follows the game's mood with smooth transitions. Listen: `demo/stardrift-demo.mp3` (2:40, auto → *tension* → *action* → *relaxed*).
 
-- **JavaScript**: this repo, for web games. No build step, no dependencies.
-- **Editor**: songs are written in the [Stardrift editor](https://github.com/ahackel/stardrift), a separate repo that uses this one.
-- **Unity**: the engine is plain per-sample code, written to be ported 1:1 to C# (see *Porting to Unity*).
+- **JavaScript**, for web games: no dependencies, TypeScript types included.
+- **Editor**: songs are written in the [Stardrift editor](https://github.com/ahackel/stardrift), or by an AI from [SONG_FORMAT.md](SONG_FORMAT.md).
+- **Unity**: plain per-sample code, written to be ported 1:1 to C# (see *Porting to Unity*).
 
 ```bash
 npm run dev        # a static server at http://localhost:8322 (AudioWorklet needs http://, not file://)
@@ -13,8 +13,6 @@ npm run render     # offline render + conductor log: node tools/render.mjs song 
 npm test
 npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22050 --breakdown
 ```
-
-`demo/stardrift-demo.mp3` is 2:40 with mood changes (auto → *tension* → *action* → *relaxed*).
 
 ## In a game
 
@@ -41,13 +39,13 @@ Without a bundler, an import map points the name at the package (the worklet and
 <script type="importmap">{ "imports": { "stardrift-engine": "./node_modules/stardrift-engine/src/index.js" } }</script>
 ```
 
-With a bundler, load songs as zips (*A song in one zip*): the bundler copies the worklet (`dist/worklet.js`, one file) but not the sample library, so the recordings come from the zip. Vite's dev server needs `optimizeDeps: { exclude: ['stardrift-engine'] }`, or its pre-bundling loses the worklet's path. Elsewhere, `init({ worklet: url })` says where `dist/worklet.js` is. TypeScript types come with the package.
+With a bundler, load songs as zips (*A song in one zip*): the bundler copies the worklet (`dist/worklet.js`) but not the sample library, so the recordings come from the zip. Vite's dev server needs `optimizeDeps: { exclude: ['stardrift-engine'] }`; elsewhere `init({ worklet: url })` says where `dist/worklet.js` is.
 
-The package exports `StardriftPlayer` (the web player), `Engine` (the engine itself, for offline rendering or another audio host), `validateSong` (see *Song format*), `loadSamples` / `fetchSamples` / `soundSamples` / `songSamples` / `LIBRARY_URL` (the sample library), `encodeWav` / `decodeWav`, `renderPhrase` / `phraseSong` (one sound in a short phrase, offline), `songZip` / `openSongZip` (a song and its recordings in one zip) and `zip` / `unzip` / `isZip`. Single modules are there by path too, e.g. `stardrift-engine/engine/theory.js`; in node, `stardrift-engine/disk-samples.js` loads the sample library from disk.
+Besides the player, the package exports `Engine` (for offline rendering or another audio host), `validateSong`, the sample library and zip helpers (all in `src/index.d.ts`); single modules are there by path, e.g. `stardrift-engine/engine/theory.js`.
 
 ### The example game
 
-[Lop Hop](https://github.com/ahackel/lop-hop) ([play it](https://andreashackel.de/lop-hop/)) is a small endless runner made with the engine: a lop-eared rabbit and fourteen other animals jump cacti and duck under branches, with its own song. It uses every mood and every stinger the way a game would (a mood for each state of play, stingers for jumps, food, bumps, an escape and the knock-out), shows its calls to the music as it makes them, and carries a copy of the engine, so GitHub Pages serves it as plain files.
+[Lop Hop](https://github.com/ahackel/lop-hop) ([play it](https://andreashackel.de/lop-hop/)), a small endless runner, uses every mood and stinger the way a game would and shows its calls to the music as it makes them.
 
 **Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Unreal's Harmonix) re-sequences and layers music written out in full, recorded or MIDI; trackers and BeepBox play linear songs; Reactional generates, but is closed and commercial. Stardrift generates the notes: parts written relative to the chord, picked, varied and steered by mood as it plays, as Microsoft's DirectMusic Styles once did, open and for the web.
 
@@ -61,13 +59,12 @@ The package exports `StardriftPlayer` (the web player), `Engine` (the engine its
                                   • block pick, fills, mutations
 ```
 
-- **Blocks** (clips in the editor) are 1–32 beats of pattern. A track lists the blocks it plays; notes are relative to the chord or scale, so every block fits every progression.
-- **Sections** (intro, calm, drift, tension, peak …) carry a length and weighted `next` links (0–100 % like the rest; none: any section may follow): a graph the conductor walks. A mood leads it to one of the mood's sections, picked by weight, the shortest way along the links. How lively a section is (for fills, drops and crashes) follows from what plays there.
-- **What plays in a section** is set in steps of 0, 25, 50, 75 and 100 %: how likely each track plays there, and how often it picks each of its blocks, against its others (the progressions likewise). The editor's *Plays in* view shows it all as a grid.
-- **Progressions** are roman numerals, each in its own scale if it likes (lydian for wonder, phrygian for tension). The last beats of a section play a lead-in chord into the next. A `.` is no chord (N.C., e.g. `i:4 .:4`): whole chords rest and single lines play on over the home chord, for a break.
-- **Themes**: a block can play another block's notes (`from`), at its own length, and any block can restate its notes in **forms** picked each time it starts (as written, head, sequence, slow, shift, answer). One melody in key degrees, fitted to the chord and quoted by blocks on several tracks, gives the endless music a tune you remember.
-- **Variation over time**: blocks mutate when they loop, tracks that play sometimes come and go, fills and drops mark transitions, and every so often the music thins to a breather. Everything is seeded: the same seed gives the same music.
-- **Stingers** react to game events: a short phrase from the next beat that borrows tracks, can bring its own chord and ducks the rest.
+- **Blocks** (clips in the editor) are short patterns. Notes are relative to the chord or the key, so every block fits every progression.
+- **Sections** are linked by weighted `next` links: a graph the conductor walks. A mood leads it, the shortest way along the links, to the mood's sections.
+- **What plays in a section** is weights: how likely each track plays there, how often each block and progression is picked.
+- **Themes**: one melody, quoted by blocks on several tracks in varied forms, gives the endless music a tune you remember.
+- **Variation over time**: blocks mutate when they loop, tracks come and go, fills and drops mark transitions, and now and then the music thins to a breather. The same seed gives the same music.
+- **Stingers** react to game events: a short phrase from the next beat that borrows tracks and ducks the rest.
 
 ## Game API
 
@@ -115,7 +112,7 @@ The editor's **Export for a game** writes a song and everything it plays into on
 await music.loadUrl('music/iron-comet.zip');   // or music.loadZip(arrayBuffer)
 ```
 
-Unzipped, the folder works too: `init({ library: 'music/iron-comet/library/' })`, `loadUrl('music/iron-comet/song.json')`. The zip stores its files uncompressed, so every browser reads it (Safari 15 too); zipped again by hand (compressed), browsers that can inflate (`DecompressionStream`) read it as well. Other hosts: `openSongZip(buffer)` gives `{ song, read }`, `loadSamples(read, songSamples(song))` the recordings.
+Unzipped, the folder works too: `init({ library: 'music/iron-comet/library/' })`, `loadUrl('music/iron-comet/song.json')`. Other hosts: `openSongZip(buffer)` gives `{ song, read }`, `loadSamples(read, songSamples(song))` the recordings.
 
 ## Song format
 
