@@ -185,6 +185,7 @@ The chain: pitch → source → envelope → breath → body → wah → drive �
 
 ## Writing a good song
 
+- Give the song its own sounds; the example's are one palette of many. Bells, e-pianos and marimbas: `fm` (`ratio` 3–7, short `env`); strings: `wave` `saw`, `smooth`, `unison` 3, `ensemble`, `body` `strings`; brass: `body` `brass` with a `filterEnv`; plucks and guitars: `string` (rock: `drive` and `amp` `guitar`); choirs: `wave` `saw` with `body` `ah` or `oo`; real instruments: `sample`.
 - Give each track 2–4 blocks and each section its own mix (`section.tracks`, `block.sections`): the variety comes from the choices.
 - Keep bass and chords simple and repetitive; put the tune in one theme block and quote it with `from` and `forms`.
 - Calm sections thin out (fewer tracks, soft drums), action sections fill up; `next` links lead from calm to action and back.
