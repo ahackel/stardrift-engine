@@ -423,5 +423,51 @@ for (const [file, sg] of toCheck) {
   ok(JSON.stringify(back) === JSON.stringify(sg) && same && wavs === files, `a song's zip holds the song and its recordings (${names.join(', ')}: ${wavs} files), and only those`);
 }
 
+// validateSong: a song as written is clean; a broken one says where and what, each mistake once
+{
+  const { validateSong } = await import('../src/validate.js');
+  const samples = Object.keys(SAMPLES), clean = validateSong(song, { samples });
+  ok(!clean.errors.length && !clean.warnings.length, `the reference song validates clean${[...clean.errors, ...clean.warnings].map((e) => `\n    ${e}`).join('')}`);
+  const bad = structuredClone(song), b = bad.blocks.find((x) => x.pattern);
+  b.pattern = b.pattern.replace(/^\S+/, '3x');
+  b.sections = { nowhere: 1 };
+  bad.tracks[0].clips.push('gone');
+  bad.progressions[0].chords = 'i:4 VIII:4';
+  bad.instruments.x = { type: 'sample', sample: 'kazoo' };
+  bad.tracks.push({ id: 'x', instrument: 'x', clips: [b.id] });
+  const { errors } = validateSong(bad, { samples }), has = (...parts) => errors.some((e) => parts.every((p) => e.includes(p)));
+  ok(has(`block "${b.id}"`, '"3x" is not a step') && has(`block "${b.id}"`, 'no section "nowhere"') && has(`track "${bad.tracks[0].id}"`, 'no block "gone"')
+    && has('"VIII:4" is not a chord') && has('no recording "kazoo"') && errors.length === 5, `a broken song gets one error per mistake (${errors.length})`);
+}
+
+// SONG_FORMAT.md: its example song validates clean and plays, and it names every setting there is
+{
+  const { validateSong, FIELDS } = await import('../src/validate.js');
+  const { SOUND_PARAMS } = await import('../src/engine/params.js');
+  const doc = readFileSync(new URL('../SONG_FORMAT.md', import.meta.url), 'utf8'), example = JSON.parse(/```json\n([\s\S]*?)```/.exec(doc)[1]);
+  const { errors, warnings } = validateSong(example, { samples: Object.keys(SAMPLES) }), h = run(newEngine(SR, example, 1), 20);
+  ok(!errors.length && !warnings.length && h.peak > 0.1 && !h.bad, `the example in SONG_FORMAT.md validates clean and plays${[...errors, ...warnings].map((e) => `\n    ${e}`).join('')}`);
+  const keys = new Set([...Object.values(FIELDS).flat(), ...SOUND_PARAMS.map(([p]) => p.split('.')[0])]), skip = ['$schema', 'format', 'color', 'track'];
+  const missing = [...keys].filter((k) => !skip.includes(k) && !new RegExp(`\\b${k}\\b`).test(doc));
+  ok(!missing.length, `SONG_FORMAT.md names every key a song may have${missing.length ? ` — not ${missing}` : ''}`);
+}
+
+// dist/ is built from the current src/, and the worklet there (what the player loads) plays on its own, as on the
+// audio thread
+{
+  const { built } = await import('./build.mjs');
+  const stale = Object.entries(await built()).filter(([name, text]) => { try { return readFileSync(new URL(`../dist/${name}`, import.meta.url), 'utf8') !== text; } catch { return true; } });
+  ok(!stale.length, `dist/ is built from the current src/${stale.length ? ` — npm run build (${stale.map(([n]) => n)})` : ''}`);
+  const url = new URL('../dist/worklet.js', import.meta.url);
+  let Proc = null;
+  Object.assign(globalThis, { sampleRate: SR, registerProcessor: (name, cls) => { Proc = cls; }, AudioWorkletProcessor: class { constructor() { this.port = { postMessage() {} }; } } });
+  await import(url.href);
+  const p = new Proc(), L = new Float32Array(128), R = new Float32Array(128);
+  p.onMessage({ type: 'load', song, seed: 1 });
+  let peak = 0;
+  for (let i = 0; i < 300; i++) { p.process([], [[L, R]]); for (const x of L) peak = Math.max(peak, Math.abs(x)); }
+  ok(peak > 0.05, `the built worklet plays a song without imports (peak ${peak.toFixed(3)})`);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

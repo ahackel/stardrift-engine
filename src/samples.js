@@ -18,11 +18,17 @@ export async function loadSamples(read, names) {
 }
 
 // the sample library that ships with the engine (library/, next to src/): file:// in node, http(s):// in a browser
-export const LIBRARY_URL = new URL('../library/', import.meta.url);
+export const LIBRARY_URL = new URL(/* @vite-ignore */ '../library/', import.meta.url);
 
-// in a browser: the library that ships with the engine, or at libraryUrl
-export const fetchSamples = (libraryUrl = LIBRARY_URL, names) =>
-  loadSamples(async (path) => (await fetch(new URL(path, libraryUrl))).arrayBuffer(), names);
+// in a browser: the library that ships with the engine, or at libraryUrl (relative to the page)
+export function fetchSamples(libraryUrl = LIBRARY_URL, names) {
+  const base = new URL(libraryUrl, globalThis.location?.href);
+  return loadSamples(async (path) => {
+    const res = await fetch(new URL(path, base));
+    if (!res.ok) throw new Error(`${res.url}: ${res.status} ${res.statusText}`);
+    return res.arrayBuffer();
+  }, names);
+}
 
 // the recordings a sound plays: its own (a sample sound), its kit's (drums: the preset's hits and the ones it changes)
 export function soundSamples(def) {

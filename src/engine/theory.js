@@ -60,22 +60,17 @@ export function foldDegree(deg, n) {
 
 // "i:8 IV(sus2):4 .:4 VII" -> [{degree, shape, shapeName, beats}]  (roman numerals or 1-based numbers). "." is no
 // chord (N.C., nc: true): tracks rest their whole chords and play the rest over the home chord (degree 0).
-export function parseChords(str) {
-  return String(str || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((tok) => {
-      const nc = /^\.(?::(\d+(?:\.\d+)?))?$/.exec(tok);
-      if (nc) return { nc: true, degree: 0, shapeName: 'triad', shape: SHAPES.triad, beats: nc[1] ? Math.max(0.25, +nc[1]) : 4 };
-      const m = /^([ivIV]+|\d+)(?:\((\w+)\))?(?::(\d+(?:\.\d+)?))?$/.exec(tok);
-      if (!m) return null;
-      const degree = /^\d+$/.test(m[1]) ? +m[1] - 1 : ROMAN.indexOf(m[1].toLowerCase());
-      if (degree < 0) return null;
-      const shapeName = SHAPES[m[2]] ? m[2] : 'triad';
-      return { degree, shapeName, shape: SHAPES[shapeName], beats: m[3] ? Math.max(0.25, +m[3]) : 4 };
-    })
-    .filter(Boolean);
+export const parseChords = (str) => String(str || '').trim().split(/\s+/).filter(Boolean).map(parseChord).filter(Boolean);
+// one chord of those, or null; a shape it doesn't know is a triad
+export function parseChord(tok) {
+  const nc = /^\.(?::(\d+(?:\.\d+)?))?$/.exec(tok);
+  if (nc) return { nc: true, degree: 0, shapeName: 'triad', shape: SHAPES.triad, beats: nc[1] ? Math.max(0.25, +nc[1]) : 4 };
+  const m = /^([ivIV]+|\d+)(?:\((\w+)\))?(?::(\d+(?:\.\d+)?))?$/.exec(tok);
+  if (!m) return null;
+  const degree = /^\d+$/.test(m[1]) ? +m[1] - 1 : ROMAN.indexOf(m[1].toLowerCase());
+  if (degree < 0) return null;
+  const shapeName = SHAPES[m[2]] ? m[2] : 'triad';
+  return { degree, shapeName, shape: SHAPES[shapeName], beats: m[3] ? Math.max(0.25, +m[3]) : 4 };
 }
 
 // Spell a scale degree so a 7-note scale uses every letter once (G# in D lydian, not Ab).

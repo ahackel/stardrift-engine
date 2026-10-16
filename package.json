@@ -11,10 +11,13 @@
   },
   "files": [
     "src",
-    "library"
+    "dist",
+    "library",
+    "SONG_FORMAT.md"
   ],
   "scripts": {
     "dev": "node tools/serve.mjs",
+    "build": "node tools/build.mjs",
     "test": "node tools/test.mjs",
     "render": "node tools/render.mjs",
     "bench": "node tools/bench.mjs"

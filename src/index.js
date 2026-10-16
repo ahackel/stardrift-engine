@@ -7,3 +7,4 @@ export { encodeWav, decodeWav } from './wav.js';
 export { renderPhrase, phraseSong } from './phrase.js';
 export { songZip, openSongZip } from './bundle.js';
 export { zip, unzip, isZip } from './zip.js';
+export { validateSong } from './validate.js';

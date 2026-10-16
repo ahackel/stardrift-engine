@@ -19,6 +19,11 @@ function playsMusic() {
   return el;
 }
 
+// what the engine can't read in a song, in the console (the check loads only then, a bundle stays small without it)
+const warnAbout = (song) => import('./validate.js').then(({ validateSong }) => {
+  for (const e of validateSong(song).errors) console.warn(`stardrift: ${song.name || 'the song'}: ${e}`);
+}, () => {});
+
 // Main-thread API. This is what a (web) game uses:
 //
 //   const music = new StardriftPlayer();
@@ -38,7 +43,8 @@ export class StardriftPlayer {
     this.holding = false; // editor preview while "paused": the song stands still, previews sound
   }
 
-  async init({ library } = {}) {
+  // worklet: where the AudioWorklet module is (default: the engine's dist/worklet.js, built from src/)
+  async init({ library, worklet = new URL('../dist/worklet.js', import.meta.url) } = {}) {
     if (this.ctx) return;
     // Default latency on purpose: latencyHint 'playback' makes WebKit request a buffer size
     // some macOS devices refuse ("InvalidStateError: Failed to start the audio device").
@@ -46,7 +52,7 @@ export class StardriftPlayer {
     ctx.resume().catch(() => {}); // still inside the user gesture; failures are handled in play()
     this.alongside = playsMusic();
     try {
-      await ctx.audioWorklet.addModule(new URL('./worklet.js', import.meta.url));
+      await ctx.audioWorklet.addModule(worklet);
     } catch (err) {
       this.dispose();
       throw err;
@@ -114,6 +120,7 @@ export class StardriftPlayer {
     if (seed !== undefined) this.seed = seed;
     this.read = read;
     const fresh = !this.song || restart;
+    if (fresh) warnAbout(song);
     this.song = JSON.parse(JSON.stringify(song));
     this.send({ type: 'load', song: this.song, seed: this.seed, restart: fresh });
     this.need(songSamples(this.song));
