@@ -71,6 +71,7 @@ export class StardriftPlayer {
     this.send({ type: 'hold', on: this.holding });
     if (this.meters) this.send({ type: 'meters', on: true });
     if (this.song) this.send({ type: 'load', song: this.song, seed: this.seed, restart: true });
+    if (this.mood) this.send({ type: 'mood', ...this.mood }); // asked for before there was audio
     this.library = library;
     this.requested = new Set();
     if (this.song) this.need(songSamples(this.song));
@@ -141,7 +142,7 @@ export class StardriftPlayer {
       await this.ctx.resume();
     } catch (err) {
       this.dispose();
-      this.emit('error', { type: 'error', text: `the browser could not start the audio device (${err.message}). Press ▶ Play again to retry with a fresh audio context.` });
+      this.emit('error', { type: 'error', text: `the browser could not start the audio device (${err.message}). Play again (from a click or a key) to retry with a fresh audio context.` });
       throw err;
     }
   }
@@ -219,7 +220,11 @@ export class StardriftPlayer {
     this.emit('disposed', { type: 'disposed' });
   }
 
-  setMood(mood, options) { this.send({ type: 'mood', mood, options }); }
+  setMood(mood, options) {
+    if (mood !== 'auto' && mood != null) this.warnUnless(this.song?.moods?.[mood], `no mood "${mood}"`, Object.keys(this.song?.moods || {}));
+    this.mood = { mood, options };
+    this.send({ type: 'mood', mood, options });
+  }
   lockBlock(track, block) { this.send({ type: 'lock', track, block: block || null }); }
   lockProgression(id) { this.send({ type: 'lockProg', id: id || null }); } // null = back to automatic
   // 'levels' events about 30 times a second: { tracks: { id: peak }, l, r } (the master before its soft clip)
@@ -228,7 +233,12 @@ export class StardriftPlayer {
   // Play your own chord from the next beat: degree 0-6 of the current scale (null = back to the progression)
   playChord(degree, shape = 'triad') { this.send({ type: 'chord', degree: degree ?? null, shape }); }
   // Stinger for a game event (song.stingers), from the next beat or options.at: 'step' | 'beat' | 'half' | 'bar'
-  sting(id, options) { this.send({ type: 'sting', id, options }); }
+  sting(id, options) {
+    this.warnUnless(this.song?.stingers?.some((x) => x.id === id), `no stinger "${id}"`, (this.song?.stingers || []).map((x) => x.id));
+    this.send({ type: 'sting', id, options });
+  }
+  // a game's call that names nothing in the song does nothing: it says so in the console
+  warnUnless(ok, text, names) { if (this.song && !ok) console.warn(`stardrift: ${this.song.name || 'the song'} has ${text} (${names.join(', ') || 'none'})`); }
   setMute(track, on) { this.send({ type: 'mute', track, on }); }
   setSolo(track, on) { this.send({ type: 'solo', track, on }); }
   forceSection(id) { this.send({ type: 'section', id }); }

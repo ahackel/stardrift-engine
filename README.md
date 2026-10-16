@@ -19,11 +19,20 @@ npm run bench      # CPU per song and mood: node tools/bench.mjs [songs] --sr 22
 ## In a game
 
 ```bash
-npm install github:ahackel/stardrift-engine
+npm install stardrift-engine
 ```
 
 ```js
 import { StardriftPlayer } from 'stardrift-engine';
+
+const music = new StardriftPlayer();
+button.onclick = async () => {               // browsers start audio only from a click or a key
+  await music.init();
+  await music.loadUrl('music/song.zip');     // the editor's Export for a game (or a song's .json)
+  music.play();
+};
+music.setMood('tension');
+music.sting('alert');
 ```
 
 Without a bundler, an import map points the name at the package (the worklet and the sample library are found next to it):
@@ -32,7 +41,7 @@ Without a bundler, an import map points the name at the package (the worklet and
 <script type="importmap">{ "imports": { "stardrift-engine": "./node_modules/stardrift-engine/src/index.js" } }</script>
 ```
 
-With a bundler, load songs as zips (*A song in one zip*): the bundler copies the worklet (`dist/worklet.js`, one file) but not the sample library, so the recordings come from the zip. Vite's dev server needs `optimizeDeps: { exclude: ['stardrift-engine'] }`, or its pre-bundling loses the worklet's path. Elsewhere, `init({ worklet: url })` says where `dist/worklet.js` is.
+With a bundler, load songs as zips (*A song in one zip*): the bundler copies the worklet (`dist/worklet.js`, one file) but not the sample library, so the recordings come from the zip. Vite's dev server needs `optimizeDeps: { exclude: ['stardrift-engine'] }`, or its pre-bundling loses the worklet's path. Elsewhere, `init({ worklet: url })` says where `dist/worklet.js` is. TypeScript types come with the package.
 
 The package exports `StardriftPlayer` (the web player), `Engine` (the engine itself, for offline rendering or another audio host), `validateSong` (see *Song format*), `loadSamples` / `fetchSamples` / `soundSamples` / `songSamples` / `LIBRARY_URL` (the sample library), `encodeWav` / `decodeWav`, `renderPhrase` / `phraseSong` (one sound in a short phrase, offline), `songZip` / `openSongZip` (a song and its recordings in one zip) and `zip` / `unzip` / `isZip`. Single modules are there by path too, e.g. `stardrift-engine/engine/theory.js`; in node, `stardrift-engine/disk-samples.js` loads the sample library from disk.
 
@@ -40,7 +49,7 @@ The package exports `StardriftPlayer` (the web player), `Engine` (the engine its
 
 [Lop Hop](https://github.com/ahackel/lop-hop) ([play it](https://andreashackel.de/lop-hop/)) is a small endless runner made with the engine: a lop-eared rabbit and fourteen other animals jump cacti and duck under branches, with its own song. It uses every mood and every stinger the way a game would (a mood for each state of play, stingers for jumps, food, bumps, an escape and the knock-out), shows its calls to the music as it makes them, and carries a copy of the engine, so GitHub Pages serves it as plain files.
 
-**Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Elias) plays pre-rendered stems; procedural generators on the Asset Store are Unity-only and closed; pattern tools (Strudel, ZzFXM) aren't game runtimes. Stardrift borrows their ideas instead: horizontal re-sequencing and vertical layers, a weighted section graph, tracker patterns and NES/Game Boy voices.
+**Why not something existing?** Adaptive-music middleware (FMOD, Wwise, Unreal's Harmonix) re-sequences and layers music written out in full, recorded or MIDI; trackers and BeepBox play linear songs; Reactional generates, but is closed and commercial. Stardrift generates the notes: parts written relative to the chord, picked, varied and steered by mood as it plays, as Microsoft's DirectMusic Styles once did, open and for the web.
 
 ## How it works
 
@@ -63,14 +72,38 @@ The package exports `StardriftPlayer` (the web player), `Engine` (the engine its
 ## Game API
 
 ```js
-music.setMood('relaxed');                 // named moods live in song.moods
-music.setMood('tension', { within: 0 });  // start moving at the next bar line
-music.setMood('auto');                    // walk on its own again
-music.sting('alert');                     // a stinger, from the next beat
-music.sting('reward', { at: 'step' });    // … or right away
+await music.init({ library, worklet });     // from a click or a key; both optional (where library/ and dist/worklet.js are)
+await music.loadUrl(url);                   // a song's .zip or .json; music.loadZip(arrayBuffer), music.load(song)
+music.load(song, { restart: true, seed });  // switch songs (seed: the same seed, the same music)
+music.play();
+await music.pause(2);                       // fade out over 2 s, then stop; play() goes on from there
+music.setVolume(0.5, 1);                    // 0–1, over 1 s
+music.dispose();                            // close the audio; init() builds it again
+
+music.setMood('relaxed');                   // one of the song's moods; 'auto' walks on its own again
+music.setMood('danger', { within: 0 });     // start moving at the next bar line (default: within 2 bars)
+music.sting('alert');                       // a stinger, from the next beat
+music.sting('jump', { at: 'step' });        // … or 'step', 'half', 'bar'
 ```
 
-A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), and the conductor takes the shortest way along the links to the mood's sections, with shortened bridge sections the first time. All songs share the mood names (`relaxed wonder exploring tension danger action`) and stinger names (`discovery alert jump reward`), so a game can switch songs without changing its calls.
+A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), and the conductor takes the shortest way along the links to the mood's sections, with shortened bridge sections the first time. All songs share the mood names (`relaxed wonder exploring tension danger action`) and stinger names (`discovery alert jump reward`), so a game can switch songs without changing its calls. A mood or stinger the song doesn't have does nothing and says so in the console; a mood set before `init` applies once there is audio.
+
+**Events**: `music.on(type, fn)` (returns a function that unsubscribes; `'*'` gets every event):
+
+| Type | When, and what it carries |
+|---|---|
+| `state` | a section starts, the mood or a lock changes: `section`, `next`, `prog`, `chords`, `scale`, `mood`, `heading` (the section the mood leads to), `energy` 0–1, `tracks` `{ id: { active, block } }` |
+| `step` | every step (16th): `step`, `bar` and `bars` of the section, `pos` |
+| `chord` | a new chord: `label` (`Am7`), `degree`, `scale`, `shape` |
+| `note` | a track plays a note: `track`, `midi` |
+| `sting` | a stinger starts (`on: true`) and ends: `id` |
+| `log` | the conductor's decisions, as text |
+| `transport` | playing or not: `playing` |
+| `error` | `text`: the audio device would not start, the sample library didn't load, the audio thread failed |
+
+Events arrive a few milliseconds late and before the sound leaves the speakers (the output latency): right for visuals and game logic, not for sample-exact timing.
+
+Also there, for tools such as the editor: `preview`, `keyOn` / `keyOff`, `audition`, `stopPreview`, `lockBlock`, `lockProgression`, `lockSection`, `forceSection`, `forceProgression`, `playChord`, `setMute`, `setSolo`, `setMeters` (`levels` events), `requestState`, `restart`.
 
 The player loads the sample library (`library/`) in the background, only the recordings the song plays (and the sounds the editor previews); `init({ library: url })` points it elsewhere, other hosts call `engine.setSamples()` (`songSamples(song)` names what a song needs).
 
@@ -99,7 +132,7 @@ A song is plain JSON: **[SONG_FORMAT.md](SONG_FORMAT.md)** is the whole format, 
 | `src/player.js`, `src/worklet.js` | the web player: main-thread API and AudioWorklet host |
 | `src/validate.js`, `src/schema.js` | the song check, the JSON Schema |
 | `src/bundle.js`, `src/zip.js` | a song and its recordings in one zip |
-| `src/index.js` | what the package exports; `samples.js`, `disk-samples.js`, `wav.js`, `phrase.js` |
+| `src/index.js`, `src/index.d.ts` | what the package exports, and its types; `samples.js`, `disk-samples.js`, `wav.js`, `phrase.js` |
 | `dist/` | built from `src/` (`npm run build`; the tests check it is current): `worklet.js`, `song.schema.json` |
 | `songs/` | the reference song (tests, render, bench); more are in the editor repo |
 | `library/` | the sample library (CC0 recordings) |

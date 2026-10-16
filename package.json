@@ -1,13 +1,36 @@
 {
   "name": "stardrift-engine",
   "version": "0.1.0",
-  "description": "Procedural, block-based chiptune music engine for games",
+  "description": "Procedural music engine for games: endless, varying chiptune and hybrid music that follows the game's mood. Web Audio, no dependencies.",
+  "keywords": [
+    "music",
+    "procedural",
+    "generative",
+    "adaptive-music",
+    "game-audio",
+    "chiptune",
+    "web-audio",
+    "audioworklet",
+    "gamedev"
+  ],
+  "homepage": "https://github.com/ahackel/stardrift-engine#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahackel/stardrift-engine.git"
+  },
+  "bugs": "https://github.com/ahackel/stardrift-engine/issues",
+  "author": "Andreas Hackel",
   "license": "MIT",
   "type": "module",
+  "types": "./src/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
     "./*": "./src/*",
-    "./library/*": "./library/*"
+    "./library/*": "./library/*",
+    "./dist/*": "./dist/*"
   },
   "files": [
     "src",
@@ -15,11 +38,15 @@
     "library",
     "SONG_FORMAT.md"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "node tools/serve.mjs",
     "build": "node tools/build.mjs",
     "test": "node tools/test.mjs",
     "render": "node tools/render.mjs",
-    "bench": "node tools/bench.mjs"
+    "bench": "node tools/bench.mjs",
+    "prepublishOnly": "npm test"
   }
 }
