@@ -6,7 +6,7 @@ import { FORMS } from './engine/pattern.js';
 import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS } from './engine/params.js';
 import { KITS } from './engine/drums.js';
 import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
-import { KEYS, TYPES, MODES, STING_AT, FIELDS } from './validate.js';
+import { KEYS, TYPES, MODES, STING_AT, FIELDS, FLOW_THEN, SWITCH } from './validate.js';
 
 const num = (min, max, description) => ({ type: 'number', minimum: min, maximum: max, ...(description && { description }) });
 const id = (description) => ({ type: 'string', description });
@@ -48,6 +48,7 @@ export const songSchema = () => ({
     ...ranged(SONG_PARAMS),
     breath: ref('breath'),
     startSection: id('the section it starts in (default: the first)'),
+    startMood: id('the mood whose flow plays while the game asks for none (default: the first mood with a flow)'),
     instruments: { type: 'object', additionalProperties: ref('instrument'), description: '{ id: instrument }' },
     tracks: { type: 'array', items: ref('track') },
     blocks: { type: 'array', items: ref('block'), description: 'the clips: short patterns that tracks play' },
@@ -103,14 +104,24 @@ export const songSchema = () => ({
       bars: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'array', items: { type: 'integer', minimum: 1 } }], description: 'its length, or lengths to pick from' },
       tracks: weights('track'),
       next: weights('section'),
+      blocks: { type: 'object', additionalProperties: { type: 'array', items: ref('placed') }, description: 'the grid: { track id: [{ at: bar, block }] }; each block plays from its bar until the next one or the end, looping' },
+      chords: { type: 'array', items: ref('placedChords'), description: 'the grid: [{ at: bar, prog }]' },
     }, ['id', 'bars']),
+    placed: { type: 'object', required: ['at', 'block'], additionalProperties: false, properties: { at: { type: 'integer', minimum: 0 }, block: id('a block id') } },
+    placedChords: { type: 'object', required: ['at', 'prog'], additionalProperties: false, properties: { at: { type: 'integer', minimum: 0 }, prog: id('a progression id') } },
     progression: obj('progression', {
       id: id('unique'), name: { type: 'string' }, color: { type: 'string' },
       chords: CHORDS,
       scale: { enum: Object.keys(SCALES) },
       sections: weights('section'),
     }, ['id', 'chords']),
-    mood: obj('mood', { sections: weights('section') }, ['sections']),
+    mood: obj('mood', {
+      sections: weights('section'),
+      flow: { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'array', items: [{ type: 'string' }, { type: 'integer', minimum: 1 }], minItems: 2, maxItems: 2 }] }, description: 'its sections in order: [["intro", 1], ["verse", 2]]' },
+      loopFrom: id('the section of its flow it loops from (default: the first)'),
+      then: { enum: FLOW_THEN, description: 'after its flow: loop (default), drift among its sections, or stop' },
+      switch: { enum: SWITCH, description: 'how soon a change to it comes: the next bar (default), phrase (4 bars) or section' },
+    }),
     stinger: obj('stinger', {
       id: id('discovery, alert, jump, reward, or your own'), name: { type: 'string' },
       at: { enum: STING_AT },
@@ -118,8 +129,9 @@ export const songSchema = () => ({
       chords: CHORDS,
       duck: num(0, 1, 'how far the music ducks under it'),
       parts: { type: 'array', items: ref('part'), minItems: 1 },
+      then: id('a mood with a flow: as the stinger ends, the music is there at once'),
     }, ['id', 'beats', 'parts']),
-    part: obj('part', { track: id('the track it borrows'), pattern: PATTERN, mode: { enum: MODES } }, ['track', 'pattern']),
+    part: obj('part', { track: id('the track it borrows'), pattern: PATTERN, block: id('or: a block whose notes it plays'), mode: { enum: MODES } }, ['track']),
     breath: obj('breath', {
       every: { type: 'number', minimum: 1, description: 'about every this many bars the music thins out' },
       bars: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 2, maxItems: 2 },

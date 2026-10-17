@@ -242,6 +242,7 @@ export class StardriftPlayer {
   setMute(track, on) { this.send({ type: 'mute', track, on }); }
   setSolo(track, on) { this.send({ type: 'solo', track, on }); }
   forceSection(id) { this.send({ type: 'section', id }); }
+  seek(mood, i, bar = 0) { this.mood = { mood }; this.send({ type: 'seek', mood, i, bar }); } // at once: bar of the i-th section of mood's flow
   forceProgression(id) { this.send({ type: 'prog', id }); } // once, from the next bar line
   requestState() { this.send({ type: 'state' }); }
 

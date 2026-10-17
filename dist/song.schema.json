@@ -91,6 +91,10 @@
       "type": "string",
       "description": "the section it starts in (default: the first)"
     },
+    "startMood": {
+      "type": "string",
+      "description": "the mood whose flow plays while the game asks for none (default: the first mood with a flow)"
+    },
     "master": {
       "type": "object",
       "properties": {
@@ -829,6 +833,59 @@
             "maximum": 1
           },
           "description": "{ section id: 0 | 0.25 | 0.5 | 0.75 | 1 }"
+        },
+        "blocks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/placed"
+            }
+          },
+          "description": "the grid: { track id: [{ at: bar, block }] }; each block plays from its bar until the next one or the end, looping"
+        },
+        "chords": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/placedChords"
+          },
+          "description": "the grid: [{ at: bar, prog }]"
+        }
+      }
+    },
+    "placed": {
+      "type": "object",
+      "required": [
+        "at",
+        "block"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "block": {
+          "type": "string",
+          "description": "a block id"
+        }
+      }
+    },
+    "placedChords": {
+      "type": "object",
+      "required": [
+        "at",
+        "prog"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prog": {
+          "type": "string",
+          "description": "a progression id"
         }
       }
     },
@@ -881,9 +938,7 @@
     },
     "mood": {
       "type": "object",
-      "required": [
-        "sections"
-      ],
+      "required": [],
       "additionalProperties": false,
       "properties": {
         "sections": {
@@ -894,6 +949,51 @@
             "maximum": 1
           },
           "description": "{ section id: 0 | 0.25 | 0.5 | 0.75 | 1 }"
+        },
+        "flow": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                ],
+                "minItems": 2,
+                "maxItems": 2
+              }
+            ]
+          },
+          "description": "its sections in order: [[\"intro\", 1], [\"verse\", 2]]"
+        },
+        "loopFrom": {
+          "type": "string",
+          "description": "the section of its flow it loops from (default: the first)"
+        },
+        "then": {
+          "enum": [
+            "loop",
+            "drift",
+            "stop"
+          ],
+          "description": "after its flow: loop (default), drift among its sections, or stop"
+        },
+        "switch": {
+          "enum": [
+            "bar",
+            "phrase",
+            "section"
+          ],
+          "description": "how soon a change to it comes: the next bar (default), phrase (4 bars) or section"
         }
       }
     },
@@ -942,14 +1042,17 @@
             "$ref": "#/definitions/part"
           },
           "minItems": 1
+        },
+        "then": {
+          "type": "string",
+          "description": "a mood with a flow: as the stinger ends, the music is there at once"
         }
       }
     },
     "part": {
       "type": "object",
       "required": [
-        "track",
-        "pattern"
+        "track"
       ],
       "additionalProperties": false,
       "properties": {
@@ -960,6 +1063,10 @@
         "pattern": {
           "type": "string",
           "description": "steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, k s h o c t m drum hits, a+b together; suffixes ' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored"
+        },
+        "block": {
+          "type": "string",
+          "description": "or: a block whose notes it plays"
         },
         "mode": {
           "enum": [

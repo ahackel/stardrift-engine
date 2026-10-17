@@ -13,21 +13,23 @@ export const KEYS = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G'
 export const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 export const MODES = ['chord', 'scale', 'key'];
 export const STING_AT = ['step', 'beat', 'half', 'bar'];
+export const FLOW_THEN = ['loop', 'drift', 'stop'];
+export const SWITCH = ['bar', 'phrase', 'section'];
 // the keys each part of a song may have (the editor adds name and color)
 export const FIELDS = {
   song: ['$schema', 'format', 'name', 'bpm', 'key', 'scale', 'stepsPerBeat', 'beatsPerBar', 'swing', 'humanize', 'variation', 'blockChange', 'fillChance',
-    'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'master', 'fx', 'instruments', 'tracks', 'blocks', 'sections',
+    'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'blocks', 'sections',
     'progressions', 'moods', 'stingers'],
   instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'wave', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'kit', 'preset', 'unison',
     'detune', 'ensemble', 'breath', 'env', 'gain', 'glide', 'scoop', 'vibrato', 'body', 'wah', 'drive', 'amp', 'cutoff', 'resonance', 'filter',
     'swell', 'filterEnv', 'crush', 'eq', 'phaser', 'chorus', 'tremolo', 'autopan'],
   track: ['id', 'name', 'color', 'instrument', 'octave', 'clips', 'mode', 'follow', 'stickiness', 'volume', 'pan', 'echo', 'reverb', 'double', 'pump', 'fade'],
   block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track'],
-  section: ['id', 'name', 'color', 'bars', 'tracks', 'next'],
+  section: ['id', 'name', 'color', 'bars', 'tracks', 'next', 'blocks', 'chords'],
   progression: ['id', 'name', 'color', 'chords', 'scale', 'sections'],
-  mood: ['sections'],
-  stinger: ['id', 'name', 'at', 'beats', 'chords', 'duck', 'parts'],
-  part: ['track', 'pattern', 'mode'],
+  mood: ['sections', 'flow', 'loopFrom', 'then', 'switch'],
+  stinger: ['id', 'name', 'at', 'beats', 'chords', 'duck', 'parts', 'then'],
+  part: ['track', 'pattern', 'block', 'mode'],
   breath: ['every', 'bars', 'keep'],
 };
 
@@ -186,6 +188,30 @@ export function validateSong(raw, { samples } = {}) {
     if (!bars.length || !bars.every((n) => Number.isInteger(n) && n > 0)) err(`${where}: "bars" must be a whole number or a list of them, e.g. [8, 16]`);
     weights(x.tracks, tracks, 'track', `${where} "tracks"`);
     weights(x.next, sections, 'section', `${where} "next"`);
+    // the grid: blocks and progressions placed on bars
+    const placed = (p, i, what, known, at) => {
+      if (!isObj(p)) return err(`${at} #${i + 1}: must be an object { at, ${what} }`);
+      if (!Number.isInteger(p.at) || p.at < 0) err(`${at} #${i + 1}: "at" must be a bar, 0 or more`);
+      else if (p.at >= bars[0]) warn(`${at} #${i + 1}: bar ${p.at} is past the section's end (${bars[0]} bars)`);
+      if (!known.has(p[what])) err(`${at} #${i + 1}: no ${what === 'prog' ? 'progression' : 'block'} "${p[what]}"`);
+    };
+    if (x.blocks !== undefined) {
+      if (!isObj(x.blocks)) err(`${where}: "blocks" must be an object { track id: [{ at, block }] }`);
+      else for (const [tid, ps] of Object.entries(x.blocks)) {
+        const tr = tracks.get(tid);
+        if (!tr) { err(`${where} "blocks": no track "${tid}"`); continue; }
+        if (!Array.isArray(ps)) { err(`${where} "blocks" "${tid}": must be a list [{ at, block }]`); continue; }
+        ps.forEach((p, i) => {
+          placed(p, i, 'block', blocks, `${where} "blocks" "${tid}"`);
+          if (isObj(p) && blocks.has(p.block) && !clipsOf(tr).includes(p.block)) warn(`${where} "blocks" "${tid}": "${p.block}" is not on the track's "clips"`);
+        });
+      }
+      if (Array.isArray(x.bars) && x.bars.length > 1) warn(`${where}: a section with "blocks" has one length; it plays ${bars[0]} bars`);
+    }
+    if (x.chords !== undefined) {
+      if (!Array.isArray(x.chords)) err(`${where}: "chords" must be a list [{ at, prog }]`);
+      else x.chords.forEach((p, i) => placed(p, i, 'prog', progressions, `${where} "chords"`));
+    }
   }
   for (const p of progressions.values()) {
     const where = `progression "${p.id}"`;
@@ -200,8 +226,20 @@ export function validateSong(raw, { samples } = {}) {
     if (!isObj(m)) { err(`${where}: must be an object { sections: { id: weight } }`); continue; }
     fields(m, 'mood', where);
     weights(m.sections, sections, 'section', `${where} "sections"`);
-    if (!Object.values(m.sections || {}).some((w) => w > 0)) warn(`${where}: names no section, so it leads nowhere`);
+    if (m.flow !== undefined) {
+      if (!Array.isArray(m.flow) || !m.flow.length) err(`${where}: "flow" must be a list of sections: [["intro", 1], ["verse", 2]]`);
+      else m.flow.forEach((e, i) => {
+        const [id, n] = Array.isArray(e) ? e : [e, 1];
+        if (!sections.has(id)) err(`${where} "flow" #${i + 1}: no section ${JSON.stringify(id)}`);
+        if (!(Number.isInteger(n) && n >= 1)) err(`${where} "flow" #${i + 1}: times must be a whole number, 1 or more`);
+      });
+      const ids = Array.isArray(m.flow) ? m.flow.map((e) => (Array.isArray(e) ? e[0] : e)) : [];
+      if (m.loopFrom !== undefined && !ids.includes(m.loopFrom)) err(`${where}: "loopFrom" names no section of its flow: "${m.loopFrom}"`);
+      if (m.then !== undefined && !FLOW_THEN.includes(m.then)) err(`${where}: "then" must be ${list(FLOW_THEN)}`);
+      if (m.switch !== undefined && !SWITCH.includes(m.switch)) err(`${where}: "switch" must be ${list(SWITCH)}`);
+    } else if (!Object.values(m.sections || {}).some((w) => w > 0)) warn(`${where}: names no section, so it leads nowhere`);
   }
+  if (s.startMood !== undefined && !(isObj(s.moods) && Array.isArray(s.moods[s.startMood]?.flow))) err(`the song: "startMood" names no mood with a flow: "${s.startMood}"`);
 
   // stingers
   for (const x of stingers.values()) {
@@ -217,8 +255,10 @@ export function validateSong(raw, { samples } = {}) {
       mode(pt.mode, at);
       const tr = tracks.get(pt.track);
       if (!tr) return err(`${at}: no track "${pt.track}"`);
+      if (pt.block !== undefined) { if (!blocks.has(pt.block)) err(`${at}: no block "${pt.block}"`); return; }
       pattern(pt.pattern, steps, drumsOf(tr), at);
     });
+    if (x.then !== undefined && !(isObj(s.moods) && Array.isArray(s.moods[x.then]?.flow))) err(`${where}: "then" names no mood with a flow: "${x.then}"`);
     if (!Array.isArray(x.parts) || !x.parts.length) err(`${where}: needs "parts": [{ track, pattern }]`);
   }
   return { errors, warnings };

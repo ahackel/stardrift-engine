@@ -155,6 +155,8 @@ export class StardriftPlayer {
   lockProgression(id: string | null): void;
   lockSection(id: string | null): void;
   forceSection(id: string): void;
+  /** Jump at once to a bar of a section in a mood's flow (i: its place in mood.flow, bar: from 0). */
+  seek(mood: string, i: number, bar?: number): void;
   forceProgression(id: string): void;
   playChord(degree: number | null, shape?: string): void;
   setMute(track: string, on: boolean): void;

@@ -469,5 +469,91 @@ for (const [file, sg] of toCheck) {
   ok(peak > 0.05, `the built worklet plays a song without imports (peak ${peak.toFixed(3)})`);
 }
 
+// 16. The grid: sections play the blocks placed on their bars, moods play their flow in order (looping from their
+// loop point), a mood change comes at the next bar line with a fill, a stinger with then changes the mood at once
+{
+  const grid = {
+    format: 2, name: 'grid', bpm: 120, key: 'C', scale: 'minor',
+    instruments: { lead: { type: 'pulse' }, drums: { type: 'drums', kit: 'chip' } },
+    tracks: [{ id: 'lead', instrument: 'lead', octave: 5, clips: ['tune', 'tune2'] }, { id: 'drums', instrument: 'drums', clips: ['beat', 'fill', 'hit'] }],
+    blocks: [
+      { id: 'tune', beats: 4, pattern: '0 - 2 - 4 - 2 - 0 - . . 1 - . .' }, { id: 'tune2', beats: 8, pattern: '4 -*7 2 -*7 0 -*15' },
+      { id: 'beat', beats: 4, pattern: 'k . h . s . h . k . h . s . h .' }, { id: 'fill', beats: 4, fill: true, pattern: 's s s s s s s s s s s s s! s! s! s!' },
+      { id: 'hit', beats: 4, pattern: 'c! . . . k . . . . . . . . . . .' },
+    ],
+    progressions: [{ id: 'home', chords: 'i:4 VI:4' }, { id: 'dark', chords: 'iv:4 v:4' }],
+    sections: [
+      { id: 'intro', bars: 2, blocks: { drums: [{ at: 0, block: 'beat' }] }, chords: [{ at: 0, prog: 'home' }] },
+      { id: 'verse', bars: 4, blocks: { drums: [{ at: 0, block: 'beat' }], lead: [{ at: 2, block: 'tune' }] } },
+      { id: 'boss', bars: 3, blocks: { drums: [{ at: 0, block: 'beat' }], lead: [{ at: 0, block: 'tune2' }] }, chords: [{ at: 0, prog: 'dark' }] },
+    ],
+    moods: {
+      calm: { flow: [['intro', 1], ['verse', 2]], loopFrom: 'verse' },
+      boss: { flow: ['boss'], then: 'stop' },
+    },
+    stingers: [{ id: 'boss_appears', at: 'beat', beats: 4, then: 'boss', parts: [{ track: 'drums', block: 'hit' }] }],
+  };
+  const { validateSong } = await import('../src/validate.js');
+  const v = validateSong(grid);
+  ok(!v.errors.length && !v.warnings.length, `a grid song validates (${[...v.errors, ...v.warnings].join('; ') || 'clean'})`);
+  const spbar = 16;
+  // ticks, noting each section as it starts: [id, step] (and what plays where, each bar)
+  const play = (e, n, seen = []) => { for (let i = 0; i < n; i++) { e.tick(); if (e.sectionBar === 0 && (e.step - 1) % spbar === 0) seen.push([e.section.id, e.step - 1]); } return seen; };
+  {
+    const e = newEngine(SR, grid, 1), seen = [], lead = [];
+    for (let i = 0; i < 18 * spbar; i++) { play(e, 1, seen); if (e.step % spbar === 1) lead.push(e.tracks.lead?.active ? 1 : 0); }
+    ok(seen.map((x) => x[0]).join() === 'intro,verse,verse,verse,verse', `a flow plays in order and loops from its loop point (${seen.map((x) => x[0]).join(' → ')})`);
+    ok(lead.slice(2, 6).join('') === '0011', `a block plays from the bar it is placed on (lead in the verse: ${lead.slice(2, 6).join('')})`);
+    ok(e.prog.id === 'home', 'a section with no chords placed keeps the progression that plays');
+  }
+  {
+    const e = newEngine(SR, grid, 1);
+    play(e, 2 * spbar + 5); // in the verse's first bar, 5 steps in
+    e.setMood('boss');
+    let fill = false;
+    const seen = play(e, 3 * spbar, []);
+    const at = seen.find((x) => x[0] === 'boss');
+    ok(at && at[1] === 3 * spbar, `a mood change comes at the next bar line (boss at step ${at?.[1]}, the line at ${3 * spbar})`);
+    const e2 = newEngine(SR, grid, 1);
+    play(e2, 2 * spbar + 5);
+    e2.setMood('boss');
+    fill = !!e2.tracks.drums.fill && e2.tracks.drums.fill.end === 3 * spbar && e2.tracks.drums.fill.start === 2 * spbar + 5;
+    ok(fill, 'the drums fill the rest of the bar before it');
+    const e3 = newEngine(SR, grid, 1);
+    play(e3, 2 * spbar + 14); // less than a beat left: the bar after
+    e3.setMood('boss');
+    const s3 = play(e3, 3 * spbar, []).find((x) => x[0] === 'boss');
+    ok(s3 && s3[1] === 4 * spbar, `less than a beat before the line: the bar after (boss at step ${s3?.[1]})`);
+    const after = play(e3, 4 * spbar, []);
+    ok(after.some((x) => x[0] === 'end') && e3.tracks.lead.active === false, `a flow that stops ends in silence (${after.map((x) => x[0]).join(' → ')})`);
+    e3.setMood('calm');
+    const back = play(e3, 3 * spbar, []);
+    ok(back[0]?.[0] === 'verse', `a mood comes back at its loop point (${back.map((x) => x[0]).join(' → ')})`);
+  }
+  {
+    const e = newEngine(SR, grid, 1);
+    play(e, 2 * spbar + 6);
+    e.sting('boss_appears'); // on the next beat (step 40), 4 beats: ends at step 56, mid-bar
+    const seen = play(e, 2 * spbar, []);
+    const at = seen.find((x) => x[0] === 'boss');
+    ok(at && at[1] === 3 * spbar + 8 + (spbar - 8), `a stinger with then switches the mood as it ends, its end the new bar line (boss at ${at?.[1]})`);
+    ok(e.moodName === 'boss', 'and the mood is the stinger\'s then');
+  }
+  {
+    const e = newEngine(SR, grid, 1);
+    play(e, spbar + 5); // in the intro's second bar
+    e.seek('calm', 1, 3); // the verse's bar 4: the lead's tune (from bar 3) one bar in
+    play(e, 1);
+    ok(e.section.id === 'verse' && e.sectionBar === 3, `seek jumps at once, to the bar (${e.section.id}, bar ${e.sectionBar + 1}, at step ${e.step - 1})`);
+    const ts = e.tracks.lead;
+    ok(ts.active && ts.block.id === 'tune' && e.step - 1 - ts.start === spbar, `a block placed before the bar plays on from where it would be (${e.step - 1 - ts.start} steps in)`);
+    ok(e.flowPos.mood === 'calm' && e.flowPos.i === 1, 'and the flow goes on from there');
+    const e2 = newEngine(SR, grid, 1);
+    e2.seek('boss', 0, 2); // before the music started
+    play(e2, 1);
+    ok(e2.section.id === 'boss' && e2.sectionBar === 2 && e2.moodName === 'boss' && e2.prog.id === 'dark', `seek before it plays starts there (${e2.section.id}, bar ${e2.sectionBar + 1})`);
+  }
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

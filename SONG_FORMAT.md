@@ -177,11 +177,32 @@ The chain: pitch → source → envelope → breath → body → wah → drive �
 
 ## Moods
 
-`{ moodName: { sections: { sectionId: weight } } }`. A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), and the music takes the shortest way along `next` to one of the mood's sections.
+`{ moodName: { sections: { sectionId: weight } } }`, or a `flow` (the grid, below). A mood change never cuts: the section ends at a bar line with a fill (going up) or a drop (going down), and the music takes the shortest way along `next` to one of the mood's sections.
+
+## The grid: sections in order
+
+A song can also be laid out like a sequencer's arrangement: each section holds blocks placed on its bars, and each mood plays its sections in order. Songs on the grid play the same way every time, as written; the blocks still vary as they loop (`mutate`, `forms`).
+
+```json
+"sections": [
+  { "id": "intro", "bars": 4, "blocks": { "pad": [{ "at": 0, "block": "pad_hold" }] }, "chords": [{ "at": 0, "prog": "home" }] },
+  { "id": "verse", "bars": 8, "blocks": { "drums": [{ "at": 0, "block": "beat_soft" }, { "at": 7, "block": "fill" }], "lead": [{ "at": 4, "block": "theme" }] } }
+],
+"moods": {
+  "relaxed": { "flow": [["intro", 1], ["verse", 2]], "loopFrom": "verse" },
+  "action": { "flow": [["verse", 1], ["fight", 2]], "then": "drift", "switch": "bar" }
+},
+"startMood": "relaxed"
+```
+
+- `section.blocks` `{ trackId: [{ at, block }] }`: a block plays from bar `at` (0 is the first) until the next block on its track or the section's end, looping. A track with nothing placed rests, and a track rests until its first block. The block should be on the track's `clips`. `section.chords` `[{ at, prog }]`: the progression from that bar on; with none, the one that plays goes on. A section with `blocks` has one length (`bars`), and its `tracks` and `next`, and the blocks' and progressions' `sections`, are not used.
+- `mood.flow`: its sections in order, each `[id, times]` (or just the id, once). One section can be in several flows. After its flow the mood does what `then` says: `loop` (default) from `loopFrom` (default: its first section), `drift` (picks among its sections at random) or `stop` (silence until another mood). The first time a mood plays it starts at its flow's start, later at `loopFrom`.
+- A change to a mood with a flow comes as soon as it sounds natural, by `switch`: at the next bar line (`bar`, the default; the bar after when less than a beat is left), the next phrase of 4 bars (`phrase`) or the section's end (`section`). The drums play the end of a fill (a block with `fill`, on their `clips`) up to the change; a block that both sections play carries on.
+- `startMood`: the mood whose flow plays until the game asks for one (default: the first mood with a flow).
 
 ## Stingers
 
-`{ id, at, beats, chords, duck, parts }`: a short phrase for a game event, from the next `at` (`step beat half bar`). `parts` `[{ track, pattern, mode }]` each borrow a track for the stinger's `beats` (a pattern of `beats × 4` steps). `chords`: its own, like a progression's. `duck` 0–1: how far the rest of the music ducks under it.
+`{ id, at, beats, chords, duck, parts, then }`: a short phrase for a game event, from the next `at` (`step beat half bar`). `parts` `[{ track, pattern, mode }]` each borrow a track for the stinger's `beats` (a pattern of `beats × 4` steps), or `[{ track, block }]` play a block's notes. `chords`: its own, like a progression's. `duck` 0–1: how far the rest of the music ducks under it. `then`: a mood with a flow; as the stinger ends the music is there at once, its bar line where the stinger ends, with no fill (the stinger was the way in): `{ "id": "boss_appears", "beats": 4, "then": "action", "parts": [{ "track": "drums", "block": "hit" }] }`.
 
 ## Writing a good song
 

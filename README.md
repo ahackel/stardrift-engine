@@ -100,7 +100,7 @@ A mood change never cuts: the section ends at a bar line with a fill (going up) 
 
 Events arrive a few milliseconds late and before the sound leaves the speakers (the output latency): right for visuals and game logic, not for sample-exact timing.
 
-Also there, for tools such as the editor: `preview`, `keyOn` / `keyOff`, `audition`, `stopPreview`, `lockBlock`, `lockProgression`, `lockSection`, `forceSection`, `forceProgression`, `playChord`, `setMute`, `setSolo`, `setMeters` (`levels` events), `requestState`, `restart`.
+Also there, for tools such as the editor: `preview`, `keyOn` / `keyOff`, `audition`, `stopPreview`, `lockBlock`, `lockProgression`, `lockSection`, `forceSection`, `seek`, `forceProgression`, `playChord`, `setMute`, `setSolo`, `setMeters` (`levels` events), `requestState`, `restart`.
 
 The player loads the sample library (`library/`) in the background, only the recordings the song plays (and the sounds the editor previews); `init({ library: url })` points it elsewhere, other hosts call `engine.setSamples()` (`songSamples(song)` names what a song needs).
 

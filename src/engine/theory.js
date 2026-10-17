@@ -1,5 +1,6 @@
 // Music theory helpers: scales, diatonic chords, song preparation.
 import { migrateSong } from './plays.js';
+import { notesOf } from './pattern.js';
 
 export const SCALES = {
   major: [0, 2, 4, 5, 7, 9, 11],
@@ -192,6 +193,45 @@ export function prepareSong(raw) {
   s.blocksByTrack = {};
   for (const t of s.tracks) {
     s.blocksByTrack[t.id] = Array.isArray(t.clips) ? t.clips.map((id) => s.blockMap[id]).filter(Boolean) : s.blocks.filter((b) => b.track === t.id);
+  }
+
+  // An arranged section (the grid): `blocks` places blocks on its bars, track by track ({ trackId: [{ at, block }] }),
+  // `chords` its progressions ([{ at, prog }]). A block plays from its bar until the next one on its track or the
+  // section's end, looping; a track with nothing placed rests. Its length is one number of bars.
+  for (const x of s.sections) {
+    if (!x.blocks || typeof x.blocks !== 'object') continue;
+    const n = x.bars[0] || 8, at = (p) => Math.max(0, Math.min(n - 1, p.at | 0));
+    x.arranged = true;
+    x.bars = [n];
+    x.place = {};
+    for (const [tid, list] of Object.entries(x.blocks)) {
+      if (!s.trackMap[tid] || !Array.isArray(list)) continue;
+      const ps = list.map((p) => p && s.blockMap[p.block] && { at: at(p), block: s.blockMap[p.block] }).filter(Boolean).sort((a, b) => a.at - b.at);
+      if (ps.length) x.place[tid] = ps;
+    }
+    x.chordPlace = (Array.isArray(x.chords) ? x.chords : []).map((p) => p && s.progMap[p.prog] && { at: at(p), prog: s.progMap[p.prog] }).filter(Boolean).sort((a, b) => a.at - b.at);
+  }
+
+  // A mood with a flow plays its sections in order ([id, times] or id), then loops from loopFrom (default: the first),
+  // drifts among them, or stops. switch: how soon a change to it happens: at the next bar (default), phrase or section.
+  s.flows = {};
+  for (const [name, m] of Object.entries(s.moods)) {
+    if (!m || !Array.isArray(m.flow)) continue;
+    const list = m.flow.map((e) => (Array.isArray(e) ? { sec: s.sectionMap[e[0]], times: Math.max(1, e[1] | 0 || 1) } : { sec: s.sectionMap[e], times: 1 })).filter((e) => e.sec);
+    if (!list.length) continue;
+    const from = list.findIndex((e) => e.sec.id === m.loopFrom);
+    s.flows[name] = { name, list, loopFrom: Math.max(0, from), then: ['drift', 'stop'].includes(m.then) ? m.then : 'loop', switch: ['phrase', 'section'].includes(m.switch) ? m.switch : 'bar' };
+  }
+  s.startMood = s.flows[raw.startMood] ? raw.startMood : Object.keys(s.flows)[0] || null;
+
+  // a stinger part may play a block instead of a pattern of its own; then: the mood it switches to as it ends
+  for (const st of s.stingers) {
+    st.parts = st.parts.map((p) => {
+      if (!p.block) return p.pattern !== undefined ? p : null;
+      const b = s.blockMap[p.block], src = b && notesOf(b, s.blockMap);
+      return src ? { ...p, pattern: src.pattern, mode: p.mode ?? b.mode ?? src.mode } : null;
+    }).filter(Boolean);
+    st.then = st.then && s.flows[st.then] ? st.then : null;
   }
   return s;
 }

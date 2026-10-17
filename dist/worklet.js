@@ -238,8 +238,185 @@ function migrateLegacy(raw) {
 return { STEPS, chanceIn, migrateSong, snap, upgradeFilter, weightIn };
 })();
 
+const $engine_pattern = (() => {
+
+// Pattern language: one whitespace-separated token per step (default 4 steps per beat).
+//
+//   .        rest (releases a held note)
+//   -        hold the previous note
+//   3        note: chord-tone index / scale degree / key degree (depends on block mode)
+//   *        the whole current chord (instruments with poly) or a fast chip arpeggio (instruments with `arp`)
+//   0+4+8    several notes at once
+//   k s h    drum hits: k kick, s snare, h hat, o open hat, c crash/wash, t tom, m metal tick
+// Suffixes: ' octave up, , octave down, # / b semitone up/down
+// Flags:    ! accent, ? 50% chance, ?30 30% chance
+// Repeat:   T*n repeats token T n times ("-*15"), `|` is ignored (visual bar separator)
+
+const REST = 0, HOLD = 1, NOTE = 2;
+const REST_STEP = Object.freeze({ t: REST });
+const HOLD_STEP = Object.freeze({ t: HOLD });
+
+function expandTokens(str, length = 0) {
+  const out = [];
+  for (const t of String(str || '').trim().split(/\s+/)) {
+    if (!t || t === '|') continue;
+    const m = /^(.+)\*(\d+)$/.exec(t);
+    if (m) for (let i = 0, n = Math.min(+m[2], 4096); i < n; i++) out.push(m[1]);
+    else out.push(t);
+  }
+  return length > 0 ? fitLength(out, length) : out;
+}
+
+// cut or pad (with rests) a token array to exactly `length` steps
+function fitLength(tokens, length) {
+  const out = tokens.slice(0, length);
+  while (out.length < length) out.push('.');
+  return out;
+}
+
+function parseAtom(a) {
+  const m = /^(\*|-?\d+|[a-z])([',#b]*)$/.exec(a);
+  if (!m) return null;
+  let oct = 0, semi = 0;
+  for (const c of m[2]) {
+    if (c === "'") oct++;
+    else if (c === ',') oct--;
+    else if (c === '#') semi++;
+    else if (c === 'b') semi--;
+  }
+  if (m[1] === '*') return { kind: 'chord', value: 0, oct, semi };
+  if (/^-?\d+$/.test(m[1])) return { kind: 'num', value: +m[1], oct, semi };
+  return { kind: 'hit', value: m[1], oct, semi };
+}
+
+function parseToken(t) {
+  if (!t || t === '.') return REST_STEP;
+  if (t === '-') return HOLD_STEP;
+  const m = /^([^!?]+)((?:!|\?\d*)*)$/.exec(t);
+  if (!m) return REST_STEP;
+  const atoms = m[1].split('+').map(parseAtom).filter(Boolean);
+  if (!atoms.length) return REST_STEP;
+  const q = /\?(\d*)/.exec(m[2]);
+  return {
+    t: NOTE,
+    atoms,
+    accent: m[2].includes('!'),
+    prob: q ? (q[1] ? Math.min(100, +q[1]) / 100 : 0.5) : 1,
+  };
+}
+
+// a note not held into the next step (a rest or another note follows) is short: string sounds with `mute` play it
+// palm-muted, while held notes ring open
+const parseTokens = (tokens) => tokens.map((t, i) => {
+  const st = parseToken(t);
+  if (st.t === NOTE) st.short = tokens[(i + 1) % tokens.length] !== '-';
+  return st;
+});
+
+// Tokens -> readable pattern string, one bar per group, runs compressed as T*n.
+function formatTokens(tokens, stepsPerBar = 16) {
+  const bars = [];
+  for (let b = 0; b < tokens.length; b += stepsPerBar) {
+    const bar = tokens.slice(b, b + stepsPerBar);
+    const parts = [];
+    for (let i = 0; i < bar.length; ) {
+      let j = i + 1;
+      while (j < bar.length && bar[j] === bar[i]) j++;
+      const n = j - i;
+      if (n >= 3) parts.push(`${bar[i]}*${n}`);
+      else for (let k = 0; k < n; k++) parts.push(bar[i]);
+      i = j;
+    }
+    bars.push(parts.join(' '));
+  }
+  return bars.join(' | ');
+}
+
+function nearestTone(d, tones, n) {
+  let best = d, bestDist = Infinity;
+  const o0 = Math.floor(d / n);
+  for (let o = o0 - 1; o <= o0 + 1; o++) {
+    for (const t of tones) {
+      const c = o * n + t, dist = Math.abs(c - d);
+      if (dist < bestDist) { best = c; bestDist = dist; }
+    }
+  }
+  return best;
+}
+
+// Small, musical mutations applied when a block loops, so repeats are never identical.
+function mutateTokens(tokens, rng, isDrum, amount = 1) {
+  const out = tokens.slice();
+  const p = 0.12 * amount;
+  for (let i = 0; i < out.length; i++) {
+    const t = out[i];
+    if (t === '-') continue;
+    if (t === '.') {
+      if (isDrum) {
+        if (rng.chance(p * 0.4)) out[i] = rng.chance(0.75) ? 'h?' : 's?40';
+      } else if (i > 0 && /^-?\d+$/.test(out[i - 1]) && rng.chance(p * 0.4)) {
+        out[i] = String(+out[i - 1] + rng.pick([-1, 1]));
+      }
+      continue;
+    }
+    if (isDrum) {
+      if (/^[hom]\??$/.test(t) && rng.chance(p)) out[i] = '.';
+      continue;
+    }
+    const m = /^(-?\d+)(.*)$/.exec(t);
+    if (!m) continue;
+    const r = rng.next();
+    if (r < p * 0.5) {
+      out[i] = '.';
+      for (let j = i + 1; j < out.length && out[j] === '-'; j++) out[j] = '.';
+    } else if (r < p * 1.3) {
+      out[i] = String(+m[1] + rng.pick([-1, 1, -2, 2])) + m[2];
+    } else if (r < p * 1.6) {
+      out[i] = m[1] + "'" + m[2];
+    }
+  }
+  return out;
+}
+
+// Forms: how a clip restates its notes (block.forms; one is picked when it starts and, half the time, when it loops),
+// so a melody comes back recognisable but not the same. Every form keeps the opening or the rhythm, which is what the
+// ear holds on to. A clip can play another clip's notes (block.from): one melody, quoted by several clips and tracks.
+//   whole     as written                     head    first half, then space
+//   sequence  first half, then again a step or two higher/lower
+//   slow      first half at half speed       shift   all of it a step or two higher/lower
+//   answer    space, then the first half (a canon against a track playing it whole)
+const FORMS = ['whole', 'head', 'sequence', 'slow', 'shift', 'answer'];
+
+const moveToken = (t, k) => t.replace(/(^|\+)(-?\d+)/g, (_, pre, n) => pre + (+n + k));
+
+function formTokens(notes, form, rng) {
+  const n = notes.length, h = n >> 1, head = notes.slice(0, h), space = Array(n - h).fill('.');
+  switch (form) {
+    case 'head': return [...head, ...space];
+    case 'sequence': { const k = rng.pick([-2, -1, 1, 2]); return [...head, ...head.map((t) => moveToken(t, k))]; }
+    case 'slow': return head.flatMap((t) => [t, t === '.' ? '.' : '-']);
+    case 'shift': { const k = rng.pick([-2, -1, 1, 2]); return notes.map((t) => moveToken(t, k)); }
+    case 'answer': return [...space, ...head];
+    default: return notes.slice();
+  }
+}
+
+// the forms a clip may play in (block.forms; none: as written), and the clip whose notes it plays (block.from: another
+// clip's, if that one has notes of its own; null if it is gone; else its own). blocks: the song's blocks by id, or a
+// function from id to block. Shared by the engine and the editor.
+const formsOf = (b) => (Array.isArray(b?.forms) ? b.forms.filter((f) => FORMS.includes(f)) : []);
+const variesForm = (b) => formsOf(b).some((f) => f !== 'whole');
+function notesOf(b, blocks) {
+  const src = b?.from && (typeof blocks === 'function' ? blocks(b.from) : blocks[b.from]);
+  return src && !src.from && src !== b ? src : b?.from ? null : b;
+}
+
+return { FORMS, HOLD, NOTE, REST, expandTokens, fitLength, formTokens, formatTokens, formsOf, mutateTokens, nearestTone, notesOf, parseToken, parseTokens, variesForm };
+})();
+
 const $engine_theory = (() => {
 const { migrateSong } = $engine_plays;
+const { notesOf } = $engine_pattern;
 // Music theory helpers: scales, diatonic chords, song preparation.
 
 const SCALES = {
@@ -434,186 +611,49 @@ function prepareSong(raw) {
   for (const t of s.tracks) {
     s.blocksByTrack[t.id] = Array.isArray(t.clips) ? t.clips.map((id) => s.blockMap[id]).filter(Boolean) : s.blocks.filter((b) => b.track === t.id);
   }
+
+  // An arranged section (the grid): `blocks` places blocks on its bars, track by track ({ trackId: [{ at, block }] }),
+  // `chords` its progressions ([{ at, prog }]). A block plays from its bar until the next one on its track or the
+  // section's end, looping; a track with nothing placed rests. Its length is one number of bars.
+  for (const x of s.sections) {
+    if (!x.blocks || typeof x.blocks !== 'object') continue;
+    const n = x.bars[0] || 8, at = (p) => Math.max(0, Math.min(n - 1, p.at | 0));
+    x.arranged = true;
+    x.bars = [n];
+    x.place = {};
+    for (const [tid, list] of Object.entries(x.blocks)) {
+      if (!s.trackMap[tid] || !Array.isArray(list)) continue;
+      const ps = list.map((p) => p && s.blockMap[p.block] && { at: at(p), block: s.blockMap[p.block] }).filter(Boolean).sort((a, b) => a.at - b.at);
+      if (ps.length) x.place[tid] = ps;
+    }
+    x.chordPlace = (Array.isArray(x.chords) ? x.chords : []).map((p) => p && s.progMap[p.prog] && { at: at(p), prog: s.progMap[p.prog] }).filter(Boolean).sort((a, b) => a.at - b.at);
+  }
+
+  // A mood with a flow plays its sections in order ([id, times] or id), then loops from loopFrom (default: the first),
+  // drifts among them, or stops. switch: how soon a change to it happens: at the next bar (default), phrase or section.
+  s.flows = {};
+  for (const [name, m] of Object.entries(s.moods)) {
+    if (!m || !Array.isArray(m.flow)) continue;
+    const list = m.flow.map((e) => (Array.isArray(e) ? { sec: s.sectionMap[e[0]], times: Math.max(1, e[1] | 0 || 1) } : { sec: s.sectionMap[e], times: 1 })).filter((e) => e.sec);
+    if (!list.length) continue;
+    const from = list.findIndex((e) => e.sec.id === m.loopFrom);
+    s.flows[name] = { name, list, loopFrom: Math.max(0, from), then: ['drift', 'stop'].includes(m.then) ? m.then : 'loop', switch: ['phrase', 'section'].includes(m.switch) ? m.switch : 'bar' };
+  }
+  s.startMood = s.flows[raw.startMood] ? raw.startMood : Object.keys(s.flows)[0] || null;
+
+  // a stinger part may play a block instead of a pattern of its own; then: the mood it switches to as it ends
+  for (const st of s.stingers) {
+    st.parts = st.parts.map((p) => {
+      if (!p.block) return p.pattern !== undefined ? p : null;
+      const b = s.blockMap[p.block], src = b && notesOf(b, s.blockMap);
+      return src ? { ...p, pattern: src.pattern, mode: p.mode ?? b.mode ?? src.mode } : null;
+    }).filter(Boolean);
+    st.then = st.then && s.flows[st.then] ? st.then : null;
+  }
   return s;
 }
 
 return { NOTE_NAMES, SCALES, SHAPES, chordLabel, chordQuality, clamp, clamp01, degSemis, foldDegree, formatChords, mod, noteName, parseChord, parseChords, parseKey, prepareSong, romanNumeral, scaleOf, songSteps };
-})();
-
-const $engine_pattern = (() => {
-
-// Pattern language: one whitespace-separated token per step (default 4 steps per beat).
-//
-//   .        rest (releases a held note)
-//   -        hold the previous note
-//   3        note: chord-tone index / scale degree / key degree (depends on block mode)
-//   *        the whole current chord (instruments with poly) or a fast chip arpeggio (instruments with `arp`)
-//   0+4+8    several notes at once
-//   k s h    drum hits: k kick, s snare, h hat, o open hat, c crash/wash, t tom, m metal tick
-// Suffixes: ' octave up, , octave down, # / b semitone up/down
-// Flags:    ! accent, ? 50% chance, ?30 30% chance
-// Repeat:   T*n repeats token T n times ("-*15"), `|` is ignored (visual bar separator)
-
-const REST = 0, HOLD = 1, NOTE = 2;
-const REST_STEP = Object.freeze({ t: REST });
-const HOLD_STEP = Object.freeze({ t: HOLD });
-
-function expandTokens(str, length = 0) {
-  const out = [];
-  for (const t of String(str || '').trim().split(/\s+/)) {
-    if (!t || t === '|') continue;
-    const m = /^(.+)\*(\d+)$/.exec(t);
-    if (m) for (let i = 0, n = Math.min(+m[2], 4096); i < n; i++) out.push(m[1]);
-    else out.push(t);
-  }
-  return length > 0 ? fitLength(out, length) : out;
-}
-
-// cut or pad (with rests) a token array to exactly `length` steps
-function fitLength(tokens, length) {
-  const out = tokens.slice(0, length);
-  while (out.length < length) out.push('.');
-  return out;
-}
-
-function parseAtom(a) {
-  const m = /^(\*|-?\d+|[a-z])([',#b]*)$/.exec(a);
-  if (!m) return null;
-  let oct = 0, semi = 0;
-  for (const c of m[2]) {
-    if (c === "'") oct++;
-    else if (c === ',') oct--;
-    else if (c === '#') semi++;
-    else if (c === 'b') semi--;
-  }
-  if (m[1] === '*') return { kind: 'chord', value: 0, oct, semi };
-  if (/^-?\d+$/.test(m[1])) return { kind: 'num', value: +m[1], oct, semi };
-  return { kind: 'hit', value: m[1], oct, semi };
-}
-
-function parseToken(t) {
-  if (!t || t === '.') return REST_STEP;
-  if (t === '-') return HOLD_STEP;
-  const m = /^([^!?]+)((?:!|\?\d*)*)$/.exec(t);
-  if (!m) return REST_STEP;
-  const atoms = m[1].split('+').map(parseAtom).filter(Boolean);
-  if (!atoms.length) return REST_STEP;
-  const q = /\?(\d*)/.exec(m[2]);
-  return {
-    t: NOTE,
-    atoms,
-    accent: m[2].includes('!'),
-    prob: q ? (q[1] ? Math.min(100, +q[1]) / 100 : 0.5) : 1,
-  };
-}
-
-// a note not held into the next step (a rest or another note follows) is short: string sounds with `mute` play it
-// palm-muted, while held notes ring open
-const parseTokens = (tokens) => tokens.map((t, i) => {
-  const st = parseToken(t);
-  if (st.t === NOTE) st.short = tokens[(i + 1) % tokens.length] !== '-';
-  return st;
-});
-
-// Tokens -> readable pattern string, one bar per group, runs compressed as T*n.
-function formatTokens(tokens, stepsPerBar = 16) {
-  const bars = [];
-  for (let b = 0; b < tokens.length; b += stepsPerBar) {
-    const bar = tokens.slice(b, b + stepsPerBar);
-    const parts = [];
-    for (let i = 0; i < bar.length; ) {
-      let j = i + 1;
-      while (j < bar.length && bar[j] === bar[i]) j++;
-      const n = j - i;
-      if (n >= 3) parts.push(`${bar[i]}*${n}`);
-      else for (let k = 0; k < n; k++) parts.push(bar[i]);
-      i = j;
-    }
-    bars.push(parts.join(' '));
-  }
-  return bars.join(' | ');
-}
-
-function nearestTone(d, tones, n) {
-  let best = d, bestDist = Infinity;
-  const o0 = Math.floor(d / n);
-  for (let o = o0 - 1; o <= o0 + 1; o++) {
-    for (const t of tones) {
-      const c = o * n + t, dist = Math.abs(c - d);
-      if (dist < bestDist) { best = c; bestDist = dist; }
-    }
-  }
-  return best;
-}
-
-// Small, musical mutations applied when a block loops, so repeats are never identical.
-function mutateTokens(tokens, rng, isDrum, amount = 1) {
-  const out = tokens.slice();
-  const p = 0.12 * amount;
-  for (let i = 0; i < out.length; i++) {
-    const t = out[i];
-    if (t === '-') continue;
-    if (t === '.') {
-      if (isDrum) {
-        if (rng.chance(p * 0.4)) out[i] = rng.chance(0.75) ? 'h?' : 's?40';
-      } else if (i > 0 && /^-?\d+$/.test(out[i - 1]) && rng.chance(p * 0.4)) {
-        out[i] = String(+out[i - 1] + rng.pick([-1, 1]));
-      }
-      continue;
-    }
-    if (isDrum) {
-      if (/^[hom]\??$/.test(t) && rng.chance(p)) out[i] = '.';
-      continue;
-    }
-    const m = /^(-?\d+)(.*)$/.exec(t);
-    if (!m) continue;
-    const r = rng.next();
-    if (r < p * 0.5) {
-      out[i] = '.';
-      for (let j = i + 1; j < out.length && out[j] === '-'; j++) out[j] = '.';
-    } else if (r < p * 1.3) {
-      out[i] = String(+m[1] + rng.pick([-1, 1, -2, 2])) + m[2];
-    } else if (r < p * 1.6) {
-      out[i] = m[1] + "'" + m[2];
-    }
-  }
-  return out;
-}
-
-// Forms: how a clip restates its notes (block.forms; one is picked when it starts and, half the time, when it loops),
-// so a melody comes back recognisable but not the same. Every form keeps the opening or the rhythm, which is what the
-// ear holds on to. A clip can play another clip's notes (block.from): one melody, quoted by several clips and tracks.
-//   whole     as written                     head    first half, then space
-//   sequence  first half, then again a step or two higher/lower
-//   slow      first half at half speed       shift   all of it a step or two higher/lower
-//   answer    space, then the first half (a canon against a track playing it whole)
-const FORMS = ['whole', 'head', 'sequence', 'slow', 'shift', 'answer'];
-
-const moveToken = (t, k) => t.replace(/(^|\+)(-?\d+)/g, (_, pre, n) => pre + (+n + k));
-
-function formTokens(notes, form, rng) {
-  const n = notes.length, h = n >> 1, head = notes.slice(0, h), space = Array(n - h).fill('.');
-  switch (form) {
-    case 'head': return [...head, ...space];
-    case 'sequence': { const k = rng.pick([-2, -1, 1, 2]); return [...head, ...head.map((t) => moveToken(t, k))]; }
-    case 'slow': return head.flatMap((t) => [t, t === '.' ? '.' : '-']);
-    case 'shift': { const k = rng.pick([-2, -1, 1, 2]); return notes.map((t) => moveToken(t, k)); }
-    case 'answer': return [...space, ...head];
-    default: return notes.slice();
-  }
-}
-
-// the forms a clip may play in (block.forms; none: as written), and the clip whose notes it plays (block.from: another
-// clip's, if that one has notes of its own; null if it is gone; else its own). blocks: the song's blocks by id, or a
-// function from id to block. Shared by the engine and the editor.
-const formsOf = (b) => (Array.isArray(b?.forms) ? b.forms.filter((f) => FORMS.includes(f)) : []);
-const variesForm = (b) => formsOf(b).some((f) => f !== 'whole');
-function notesOf(b, blocks) {
-  const src = b?.from && (typeof blocks === 'function' ? blocks(b.from) : blocks[b.from]);
-  return src && !src.from && src !== b ? src : b?.from ? null : b;
-}
-
-return { FORMS, HOLD, NOTE, REST, expandTokens, fitLength, formTokens, formatTokens, formsOf, mutateTokens, nearestTone, notesOf, parseToken, parseTokens, variesForm };
 })();
 
 const $engine_dsp = (() => {
@@ -2229,7 +2269,12 @@ class Engine {
     this.upcoming = null; // {sec, prog}: next section and its progression, picked one bar early
     this.barsSinceBreath = 0;
     this.breathAt = 0;
-    this.curSting = null; // {id, pos, len, parts: {trackId: {mode, steps}}, chords}
+    this.flowPos = null; // {mood, i, rep, sec}: where the music is in a mood's flow (or {mood, stop: true})
+    this.flowPlan = null; // the same for the section coming next
+    this.entered = {}; // the moods whose flow has played: the next time they come in at their loop point
+    this.switching = false; // a mood change is on its way: the bar before it ends in a fill
+    this.instant = false; // the next section starts afresh: no block carries over (a stinger's mood change)
+    this.curSting = null; // {id, pos, len, parts: {trackId: {mode, steps}}, chords, then}
     this.nextSting = null; // {def, q}: starts on the next step divisible by q
     this.chordKey = '';
     this.tracks = {};
@@ -2267,6 +2312,15 @@ class Engine {
       return;
     }
     if (!this.song.moods[mood]) return;
+    const flow = this.song.flows[mood];
+    if (flow) {
+      if (mood === this.moodName && this.flowPos?.mood === mood) return;
+      this.moodName = mood;
+      this.moodSec = null;
+      this.switchTo(flow);
+      this.emitState();
+      return;
+    }
     const again = mood === this.moodName;
     this.moodName = mood;
     if (!(again && this.moodSec)) { this.aimMood(); this.arrived = !!this.section && this.inMood(this.section); } // asked again: keep where it heads
@@ -2285,6 +2339,130 @@ class Engine {
   // is this one of the sections the mood leads to?
   inMood(sec) {
     return (this.song.moods[this.moodName]?.sections?.[sec.id] ?? 0) > 0;
+  }
+
+  // ---------------------------------------------------------------- flows (moods that play sections in order)
+  // the flow that leads now: the mood's, or with no mood asked for, the song's first (startMood)
+  activeFlow() {
+    const f = this.song.flows;
+    return f[this.moodName] || (this.moodName === 'auto' ? f[this.song.startMood] : null) || null;
+  }
+
+  // where a mood's flow comes in: at its start the first time, at its loop point after that
+  entryOf(flow) {
+    const i = this.entered[flow.name] ? flow.loopFrom : 0;
+    return { mood: flow.name, i, rep: 0, sec: flow.list[i].sec };
+  }
+
+  // the place in the flow after pos: the section again (times), the next one, then loop, drift among them, or stop
+  flowAfter(pos) {
+    const flow = this.song.flows[pos.mood];
+    if (!flow || pos.stop) return pos.stop ? pos : null;
+    const e = flow.list[pos.i];
+    if (e && pos.rep + 1 < e.times) return { ...pos, rep: pos.rep + 1 };
+    const i = pos.i + 1;
+    if (i < flow.list.length && !pos.drift) return { mood: pos.mood, i, rep: 0, sec: flow.list[i].sec };
+    if (flow.then === 'stop') return { mood: pos.mood, stop: true, sec: this.restSection() };
+    if (flow.then === 'loop') return { mood: pos.mood, i: flow.loopFrom, rep: 0, sec: flow.list[flow.loopFrom].sec };
+    const others = flow.list.map((x, j) => j).filter((j) => flow.list[j].sec !== pos.sec);
+    const j = others.length ? this.rng.pick(others) : 0;
+    return { mood: pos.mood, i: j, rep: 0, sec: flow.list[j].sec, drift: true };
+  }
+
+  // the silence a flow that stops ends in, until another mood is asked for
+  restSection() {
+    return (this.rest ||= { id: 'end', bars: [1], arranged: true, rest: true, place: {}, chordPlace: [] });
+  }
+
+  // A change to a mood with a flow, as soon as it sounds natural: at the next bar line (the bar after, when less than
+  // a beat is left), at the next phrase of 4 bars, or when the section ends (flow.switch). The drums fill the bar
+  // before it; blocks both sections play carry over (startSection).
+  switchTo(flow) {
+    const s = this.song, pos = this.entryOf(flow);
+    this.flowPlan = pos;
+    this.log(`mood → ${flow.name} (${pos.sec.id})`);
+    if (!this.section) { this.nextSection = pos.sec; return; }
+    if (this.secLock) return; // the editor holds a section: the mood takes over when it lets go
+    const spbar = s.stepsPerBar, inBar = this.step % spbar, rem = inBar ? spbar - inBar : 0;
+    let k = this.sectionBar + 1 + (rem < s.spb ? 1 : 0); // the bar the new section starts on, counted in this one
+    if (flow.switch === 'phrase') k = Math.ceil(k / 4) * 4;
+    if (flow.switch === 'section') k = this.sectionBars;
+    if (k > this.sectionBars) k = this.sectionBars;
+    const line = this.step + rem + (k - this.sectionBar - 1) * spbar; // the step it starts on
+    this.sectionBars = k;
+    this.nextSection = pos.sec;
+    this.switching = true;
+    this.seamFill(Math.max(this.step, line - spbar), line);
+    if (this.sectionBar === k - 1) this.prepareLeadIn(pos.sec);
+  }
+
+  // the drums fill the steps from start to the bar line at end: the tail of a fill block (one the track plays)
+  seamFill(start, end) {
+    if (end <= start) return;
+    const s = this.song;
+    for (const tr of s.tracks) {
+      const ts = this.tracks[tr.id];
+      if (tr.inst.type !== 'drums' || !ts?.active || this.locks[tr.id]) continue;
+      const fills = (s.blocksByTrack[tr.id] || []).filter(isFill);
+      if (!fills.length) continue;
+      const b = this.rng.pick(fills), all = expandTokens(b.pattern, s.stepsPerBar), n = Math.min(end - start, all.length);
+      ts.fill = { start: end - n, end, steps: parseTokens(all.slice(all.length - n)) };
+      this.log(`fill ${b.id}`);
+    }
+  }
+
+  // A stinger that changes the mood (then) ends: the music moves its bar line here and starts the mood's section at
+  // once, with no fill (the stinger was the way in)
+  stingThen(sg) {
+    const s = this.song, flow = s.flows[sg.then];
+    this.endSting(false);
+    const r = this.step % s.stepsPerBar;
+    if (r) { // a bar line now: everything counted in steps moves on with it
+      const d = s.stepsPerBar - r;
+      this.step += d;
+      this.progStart += d;
+      for (const ts of Object.values(this.tracks)) { ts.start += d; ts.fill = null; }
+      this.leadIn = null;
+    }
+    if (!flow || !this.section) return;
+    this.moodName = flow.name;
+    this.moodSec = null;
+    const pos = this.entryOf(flow);
+    this.flowPlan = pos;
+    this.nextSection = pos.sec;
+    this.forced = null;
+    this.sectionBars = this.sectionBar + 1;
+    this.instant = true;
+    this.log(`mood → ${flow.name} (${pos.sec.id}, at once)`);
+  }
+
+  // The editor's playhead, dropped on the grid: the music jumps there at once, to bar `bar` of the section at place i
+  // of the mood's flow (the mood leads from then on). Blocks and chords placed before that bar play on from where they
+  // would be by then.
+  seek(mood, i, bar = 0) {
+    const s = this.song, e = s.flows[mood]?.list[i];
+    if (!e) return;
+    if (this.curSting) this.endSting(false);
+    this.moodName = mood;
+    this.moodSec = null;
+    const r = this.step % s.stepsPerBar;
+    if (r) this.step += s.stepsPerBar - r; // it lands on a bar line, now
+    for (const tr of s.tracks) {
+      const ts = this.tracks[tr.id];
+      if (!ts) continue;
+      ts.fill = null;
+      if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; }
+    }
+    this.leadIn = null;
+    this.upcoming = null;
+    this.switching = false;
+    this.flowPlan = { mood, i, rep: 0, sec: e.sec };
+    this.forced = e.sec;
+    this.nextSection = null;
+    this.seekBar = Math.max(0, bar | 0);
+    this.instant = true;
+    if (this.section) this.sectionBars = this.sectionBar + 1; // onBar starts it
+    this.log(`seek → ${mood} · ${e.sec.id} · bar ${this.seekBar + 1}`);
   }
 
   forceSection(id) {
@@ -2410,6 +2588,7 @@ class Engine {
   // ---------------------------------------------------------------- sequencer
   tick() {
     const s = this.song;
+    if (this.curSting?.then && this.curSting.pos >= this.curSting.len) this.stingThen(this.curSting);
     if (this.step % s.stepsPerBar === 0) this.onBar();
 
     this.updateSting(false);
@@ -2573,7 +2752,7 @@ class Engine {
     if (this.section) this.sectionBar++;
     if (this.section && !this.section.breath) this.barsSinceBreath = this.isThin() ? 0 : this.barsSinceBreath + 1;
     if (!this.section || this.sectionBar >= this.sectionBars) {
-      const next = this.forced || this.nextSection || (this.section ? this.chooseNext() : this.song.sectionMap[this.secLock] || this.song.sectionMap[this.song.raw.startSection] || this.song.sections[0]);
+      const next = this.forced || this.nextSection || (this.section || (this.activeFlow() && !this.secLock) ? this.chooseNext() : this.song.sectionMap[this.secLock] || this.song.sectionMap[this.song.raw.startSection] || this.song.sections[0]);
       this.forced = null;
       this.startSection(next);
     } else {
@@ -2599,21 +2778,46 @@ class Engine {
     this.sectionBar = 0;
     this.sectionBars = Math.max(1, rng.pick(sec.bars) | 0);
     this.nextSection = null;
+    this.switching = false;
+    // where it is in the flow: as planned, else the section's first place in the flow that leads
+    if (this.flowPlan && this.flowPlan.sec === sec) this.flowPos = this.flowPlan;
+    else {
+      const f = this.activeFlow(), i = f ? f.list.findIndex((e) => e.sec === sec) : -1;
+      this.flowPos = i >= 0 ? { mood: f.name, i, rep: 0, sec } : null;
+    }
+    this.flowPlan = null;
+    if (this.flowPos) this.entered[this.flowPos.mood] = true;
     // on the way to a mood's sections, the first time: keep the ones in between short
     if (this.moodSec && this.inMood(sec)) this.arrived = true;
-    if (!this.secLock && this.moodSec && !this.arrived) {
+    if (!sec.arranged && !this.secLock && this.moodSec && !this.arrived) {
       this.sectionBars = Math.min(this.sectionBars, Math.max(1, this.song.transitBars));
     }
 
-    this.prog = this.upcoming?.sec === sec && this.upcoming.prog ? this.upcoming.prog : this.pickProgression();
-    this.progStart = this.step;
+    const placed = sec.arranged && sec.chordPlace.find((p) => p.at === 0);
+    if (placed || !sec.arranged || !this.prog) {
+      this.prog = this.upcoming?.sec === sec && this.upcoming.prog ? this.upcoming.prog : this.pickProgression();
+      this.progStart = this.step;
+    }
     this.upcoming = null;
     this.leadIn = null;
     if (sec.breath) { this.barsSinceBreath = 0; this.breathAt = 0; }
 
-    for (const tr of s.tracks) this.setupTrack(tr);
+    const at = sec.arranged ? Math.min(this.seekBar || 0, this.sectionBars - 1) : 0, spbar = s.stepsPerBar;
+    this.seekBar = 0;
+    if (at) { // a seek into the middle: the chords placed last before the bar, from where they would be
+      this.sectionBar = at;
+      let cp = null;
+      for (const x of sec.chordPlace) if (x.at <= at) cp = x;
+      if (cp && !this.progLock) { this.prog = cp.prog; this.progStart = this.step - (at - cp.at) * spbar; }
+    }
+    for (const tr of s.tracks) if (sec.arranged) this.arrangeTrack(tr, true); else this.setupTrack(tr);
+    if (at) for (const tr of s.tracks) {
+      const ts = this.tracks[tr.id], p = this.placeAt(sec, tr.id, at);
+      if (ts?.active && p && ts.block === p.block && !this.locks[tr.id]) ts.start = this.step - (at - p.at) * spbar;
+    }
+    this.instant = false;
 
-    if (!first && this.energy(sec) >= 0.7 && this.energy(sec) >= this.energy(prev)) { // into a lively section: a crash
+    if (!first && !sec.arranged && this.energy(sec) >= 0.7 && this.energy(sec) >= this.energy(prev)) { // into a lively section: a crash
       for (const tr of s.tracks) if (tr.inst.type === 'drums' && this.tracks[tr.id]?.active) this.synth.drum(tr.id, ['c'], 0.7);
     }
     this.log(`▶ ${sec.id} · ${this.sectionBars} bars · ${this.prog ? this.prog.id : '—'}`);
@@ -2641,6 +2845,33 @@ class Engine {
       ts.sounding = null;
     }
     ts.active = active;
+  }
+
+  // A track in an arranged section, at its start (start) or at a bar: the block placed there starts (at the start, one
+  // that already plays goes on, unless the section starts afresh); no block placed yet: the track rests.
+  arrangeTrack(tr, start) {
+    const ts = this.trackState(tr), was = ts.active;
+    const lock = this.locks[tr.id] && this.song.blockMap[this.locks[tr.id]];
+    if (lock) { if (start) { ts.fill = null; if (ts.block !== lock || !was) this.startBlock(tr, ts, lock); ts.active = true; } return; }
+    const p = this.placeAt(this.section, tr.id, this.sectionBar);
+    if (!start && (!p || p.at !== this.sectionBar)) return; // nothing new on this bar
+    if (start && !this.switching) ts.fill = null;
+    let active = !!p;
+    if (p && !(start && was && ts.block === p.block && ts.steps && !this.instant)) this.startBlock(tr, ts, p.block);
+    const fade = this.fadeSec(tr);
+    if (active && !was) this.synth.fade(tr.id, 1, fade);
+    if (!active && ts.sounding && !this.curSting?.parts[tr.id]) {
+      if (fade) this.synth.fade(tr.id, 0, fade); else this.synth.release(tr.id);
+      ts.sounding = null;
+    }
+    ts.active = active;
+  }
+
+  // the block placed on a track that plays at a bar of an arranged section (the last one placed at or before it)
+  placeAt(sec, trackId, bar) {
+    let p = null;
+    for (const x of sec.place?.[trackId] || []) if (x.at <= bar) p = x;
+    return p;
   }
 
   // how long a track takes to join or leave, in seconds: pads and other sustained sounds (chords, a slow attack) fade
@@ -2719,6 +2950,13 @@ class Engine {
 
   midSectionBar() {
     const s = this.song, rng = this.rng;
+    if (this.section.arranged) { // the grid: what is placed on this bar starts
+      for (const tr of s.tracks) this.arrangeTrack(tr, false);
+      const cp = this.section.chordPlace.find((p) => p.at === this.sectionBar);
+      if (cp && !this.progLock) { this.prog = cp.prog; this.progStart = this.step; }
+      this.emitState();
+      return;
+    }
     let changed = false;
     const churn = this.sectionBar % 4 === 0;
     for (const tr of s.tracks) {
@@ -2749,6 +2987,13 @@ class Engine {
   prepareTransition() {
     const s = this.song, rng = this.rng;
     let next = this.forced || this.nextSection || this.chooseNext();
+    if (this.section.arranged || next.arranged) { // the grid: fills are placed, or come with a mood change (switchTo)
+      this.nextSection = next;
+      this.prepareLeadIn(next);
+      this.log(`next → ${next.id}`);
+      this.emitState();
+      return;
+    }
     if (!this.forced && this.shouldBreathe()) next = this.makeBreath(next);
     this.nextSection = next;
     this.prepareLeadIn(next);
@@ -2787,7 +3032,7 @@ class Engine {
     const s = this.song, def = p.def, len = Math.max(1, Math.round(def.beats * s.spb));
     const parts = {};
     for (const pt of def.parts) parts[pt.track] = { mode: pt.mode, steps: parseTokens(expandTokens(pt.pattern, len)) };
-    this.curSting = { id: def.id, pos: 0, len, parts, chords: def.chordList.length ? def.chordList : null };
+    this.curSting = { id: def.id, pos: 0, len, parts, chords: def.chordList.length ? def.chordList : null, then: held ? null : def.then };
     this.synth.setDuck(Object.keys(parts), def.duck);
     this.log(`✦ ${def.id}`);
     this.emit({ type: 'sting', id: def.id, on: true });
@@ -2840,7 +3085,7 @@ class Engine {
   // grows back. Only while things are calm.
   shouldBreathe() {
     const b = this.song.breath;
-    if (!b || !(b.every > 0) || this.section.breath || this.secLock) return false;
+    if (!b || !(b.every > 0) || this.section.breath || this.section.arranged || this.secLock) return false;
     if (!this.breathAt) this.breathAt = Math.round(b.every * this.rng.range(0.75, 1.25));
     if (this.barsSinceBreath < this.breathAt) return false;
     return this.energy(this.section) < 0.7 && (!this.moodSec || this.inMood(this.section)); // not on the way to a mood
@@ -2859,6 +3104,7 @@ class Engine {
 
   notesIn(sec) {
     const s = this.song;
+    if (sec.arranged) return s.tracks.reduce((a, tr) => { const b = sec.place[tr.id]?.[0]?.block; return a + (b ? density(b, s.spb, s.blockMap) * (tr.inst.type === 'drums' ? 1.5 : 1) : 0); }, 0);
     return s.tracks.reduce((a, tr) => {
       const loops = (s.blocksByTrack[tr.id] || []).filter((b) => !b.fill && weightIn(b, sec) > 0);
       const w = loops.reduce((q, b) => q + weightIn(b, sec), 0);
@@ -2941,6 +3187,12 @@ class Engine {
   chooseNext() {
     const s = this.song, cur = this.section;
     if (this.secLock && s.sectionMap[this.secLock]) return s.sectionMap[this.secLock];
+    const flow = this.activeFlow();
+    if (flow) { // a flow: the next place in it (a section it doesn't know: its start)
+      const pos = (this.flowPos?.mood === flow.name && this.flowAfter(this.flowPos)) || this.entryOf(flow);
+      this.flowPlan = pos;
+      return pos.sec;
+    }
     if (this.moodSec) this.aimMood(); // while a mood holds, it picks again among its sections
     const list = this.linksOf(cur), goal = this.moodSec && s.sectionMap[this.moodSec];
     if (!goal) return this.rng.weighted(list.map((x) => x[0]), list.map((x) => x[1]));
@@ -2964,6 +3216,7 @@ class Engine {
     const s = this.song;
     if (!s.progressions.length) return null;
     if (this.progLock && s.progMap[this.progLock]) return s.progMap[this.progLock];
+    if (sec.arranged) { const p = sec.chordPlace.find((x) => x.at === 0); if (p) return p.prog; }
     // by weight in the section; none weighs anything there: any of them (the chords have to come from somewhere)
     let list = s.progressions.filter((p) => weightIn(p, sec) > 0);
     const any = !list.length;
@@ -3003,10 +3256,38 @@ class Engine {
       ts.steps = parseTokens(ts.tokens);
     }
     for (const [id, b] of Object.entries(this.locks)) if (!s.blockMap[b]) delete this.locks[id];
+    const relink = (pos) => { if (!pos || pos.stop) return pos; const f = s.flows[pos.mood], e = f?.list[pos.i]; return e ? { ...pos, sec: e.sec } : null; };
+    this.flowPos = relink(this.flowPos);
+    this.flowPlan = relink(this.flowPlan);
+    if (this.section.arranged) { // a new length counts at once (unless a mood change is on its way)
+      if (!this.switching && this.sectionBar < this.sectionBars - 1) this.sectionBars = Math.max(this.sectionBar + 1, this.section.bars[0]);
+      this.rearrange();
+    }
     if (this.nextSting) this.nextSting.def = s.stingMap[this.nextSting.def.id] || null;
     if (!this.nextSting?.def) this.nextSting = null;
     if (this.progLock && !s.progMap[this.progLock]) this.progLock = null;
     this.emitState();
+  }
+
+  // An edit of the arranged section that plays: each track plays what is placed on this bar now, in time with where
+  // it was placed (a block dropped here sounds at once)
+  rearrange() {
+    const s = this.song, sec = this.section, spbar = s.stepsPerBar;
+    const bar = this.step % spbar === 0 ? this.sectionBar + 1 : this.sectionBar, lineStep = this.step - (this.step % spbar || spbar);
+    if (bar >= this.sectionBars) return;
+    for (const tr of s.tracks) {
+      if (this.locks[tr.id]) continue;
+      const ts = this.trackState(tr), p = this.placeAt(sec, tr.id, bar);
+      if (!p) {
+        if (ts.active) { ts.active = false; if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; } }
+        continue;
+      }
+      if (ts.active && ts.block === p.block) continue;
+      this.startBlock(tr, ts, p.block);
+      ts.start = (this.step % spbar === 0 ? this.step : lineStep) - (bar - p.at) * spbar;
+      if (!ts.active) this.synth.fade(tr.id, 1, 0);
+      ts.active = true;
+    }
   }
 
   // ---------------------------------------------------------------- events for UIs
@@ -3038,6 +3319,7 @@ class Engine {
       energy: this.section ? this.energy(this.section) : 0,
       mood: this.moodName,
       heading: this.moodSec,
+      flow: this.flowPos && { mood: this.flowPos.mood, i: this.flowPos.i ?? -1, rep: this.flowPos.rep ?? 0, stop: !!this.flowPos.stop },
       tracks,
     });
   }
@@ -3091,6 +3373,7 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'mute': e.setMute(m.track, m.on); break;
         case 'solo': e.setSolo(m.track, m.on); break;
         case 'section': e.forceSection(m.id); break;
+        case 'seek': e.seek(m.mood, m.i, m.bar); break;
         case 'prog': e.forceProgression(m.id); break;
         case 'state': e.emitState(); break;
         case 'preview': e.preview(m.inst, m.events, m.options); break;
