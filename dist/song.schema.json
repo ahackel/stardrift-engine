@@ -119,6 +119,13 @@
         "$ref": "#/definitions/track"
       }
     },
+    "effectTracks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/effectTrack"
+      },
+      "description": "the grid: rows of effect blocks (filter sweeps, fades, echo throws) for the tracks they target"
+    },
     "blocks": {
       "type": "array",
       "items": {
@@ -700,11 +707,65 @@
         }
       }
     },
+    "effectTrack": {
+      "type": "object",
+      "description": "a row of effect blocks on the grid",
+      "required": [
+        "id",
+        "target",
+        "clips"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "unique, among the tracks too"
+        },
+        "name": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "target": {
+          "oneOf": [
+            {
+              "const": "*"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "the tracks its effect blocks move: ids, or \"*\" for all (the whole mix)"
+        },
+        "except": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "a track id"
+          },
+          "description": "with \"target\": \"*\": the tracks it leaves alone"
+        },
+        "clips": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "an effect block id"
+          },
+          "description": "the effect blocks it plays"
+        }
+      }
+    },
     "block": {
       "type": "object",
       "required": [
-        "id",
-        "beats"
+        "id"
       ],
       "additionalProperties": false,
       "properties": {
@@ -779,6 +840,56 @@
         "track": {
           "type": "string",
           "description": "older songs: the track it is on"
+        },
+        "fx": {
+          "type": "object",
+          "description": "an effect block (on an effect track): one setting moved across the bars it is placed on",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "filter",
+                "highpass",
+                "volume",
+                "echo",
+                "reverb",
+                "pan",
+                "gate",
+                "crush"
+              ],
+              "description": "filter (low pass, Hz), highpass (Hz), volume 0–1, echo and reverb (more send, 0–1), pan −1–1, gate (chop depth 0–1), crush 0–1"
+            },
+            "from": {
+              "type": "number"
+            },
+            "to": {
+              "type": "number"
+            },
+            "shape": {
+              "enum": [
+                "ramp",
+                "hump",
+                "wave",
+                "hold"
+              ],
+              "description": "ramp (default): from → to across its bars; hump: from → to → from; wave: between them every \"beats\"; hold: at to"
+            },
+            "beats": {
+              "type": "number",
+              "minimum": 0.25,
+              "maximum": 64,
+              "description": "a wave: beats per cycle (4)"
+            },
+            "rate": {
+              "type": "number",
+              "minimum": 0.0625,
+              "maximum": 4,
+              "description": "a gate: beats per chop (0.25)"
+            }
+          }
         }
       }
     },

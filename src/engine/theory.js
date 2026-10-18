@@ -163,6 +163,14 @@ export function prepareSong(raw) {
     return { ...t, inst, poly: inst.poly ?? t.poly };
   });
   s.trackMap = Object.fromEntries(s.tracks.map((t) => [t.id, t]));
+  // effect tracks (the grid): rows of effect blocks for the tracks they target ("*": all, but `except`; or ids).
+  // ids: the tracks each one moves; mix: the whole mix instead (all of them)
+  s.fxTracks = (Array.isArray(raw.effectTracks) ? raw.effectTracks : []).filter((t) => t && t.id).map((t) => {
+    const all = t.target === '*', except = Array.isArray(t.except) ? t.except : [];
+    const ids = all ? s.tracks.map((x) => x.id).filter((id) => !except.includes(id)) : (Array.isArray(t.target) ? t.target : [t.target]).filter((id) => s.trackMap[id]);
+    return { ...t, ids, mix: all && !except.some((id) => s.trackMap[id]) };
+  });
+  s.fxMap = Object.fromEntries(s.fxTracks.map((t) => [t.id, t]));
 
   s.progressions = (src.progressions || []).map((p) => {
     const chordList = parseChords(p.chords);
@@ -205,7 +213,7 @@ export function prepareSong(raw) {
     x.bars = [n];
     x.place = {};
     for (const [tid, list] of Object.entries(x.blocks)) {
-      if (!s.trackMap[tid] || !Array.isArray(list)) continue;
+      if (!(s.trackMap[tid] || s.fxMap[tid]) || !Array.isArray(list)) continue;
       const ps = list.map((p) => p && s.blockMap[p.block] && { at: at(p), block: s.blockMap[p.block] }).filter(Boolean).sort((a, b) => a.at - b.at);
       if (ps.length) x.place[tid] = ps;
     }

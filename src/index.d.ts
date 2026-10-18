@@ -42,9 +42,36 @@ export interface Track {
   color?: string;
 }
 
+/** a row of effect blocks on the grid */
+export interface EffectTrack {
+  id: string;
+  /** the tracks its effect blocks move, '*' for all (the whole mix) */
+  target: '*' | string | string[];
+  /** with target '*': the tracks it leaves alone */
+  except?: string[];
+  clips: string[];
+  name?: string;
+  color?: string;
+}
+
+export type FxKind = 'filter' | 'highpass' | 'volume' | 'echo' | 'reverb' | 'pan' | 'gate' | 'crush';
+/** an effect block: one setting moved across the bars it is placed on */
+export interface Fx {
+  kind: FxKind;
+  from?: number;
+  to?: number;
+  shape?: 'ramp' | 'hump' | 'wave' | 'hold';
+  /** a wave: beats per cycle (4) */
+  beats?: number;
+  /** a gate: beats per chop (0.25) */
+  rate?: number;
+}
+
 export interface Block {
   id: string;
-  beats: number;
+  /** not on an effect block, which lasts as long as it is placed */
+  beats?: number;
+  fx?: Fx;
   pattern?: string;
   from?: string;
   mode?: Mode;
@@ -93,6 +120,7 @@ export interface Song {
   scale?: string;
   instruments: Record<string, Instrument>;
   tracks: Track[];
+  effectTracks?: EffectTrack[];
   blocks: Block[];
   sections?: Section[];
   progressions?: Progression[];

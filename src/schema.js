@@ -6,6 +6,7 @@ import { FORMS } from './engine/pattern.js';
 import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS } from './engine/params.js';
 import { KITS } from './engine/drums.js';
 import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
+import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
 import { KEYS, TYPES, MODES, STING_AT, FIELDS, FLOW_THEN, SWITCH } from './validate.js';
 
 const num = (min, max, description) => ({ type: 'number', minimum: min, maximum: max, ...(description && { description }) });
@@ -51,6 +52,7 @@ export const songSchema = () => ({
     startMood: id('the mood whose flow plays while the game asks for none (default: the first mood with a flow)'),
     instruments: { type: 'object', additionalProperties: ref('instrument'), description: '{ id: instrument }' },
     tracks: { type: 'array', items: ref('track') },
+    effectTracks: { type: 'array', items: ref('effectTrack'), description: 'the grid: rows of effect blocks (filter sweeps, fades, echo throws) for the tracks they target' },
     blocks: { type: 'array', items: ref('block'), description: 'the clips: short patterns that tracks play' },
     sections: { type: 'array', items: ref('section') },
     progressions: { type: 'array', items: ref('progression') },
@@ -86,6 +88,12 @@ export const songSchema = () => ({
       follow: { type: 'boolean', description: 'held notes move with the chord' },
       stickiness: { type: 'number', minimum: 0, description: 'how much it keeps its block (default 1.5)' },
     }, ['id', 'instrument', 'clips']),
+    effectTrack: obj('effectTrack', {
+      id: id('unique, among the tracks too'), name: { type: 'string' }, color: { type: 'string' },
+      target: { oneOf: [{ const: '*' }, { type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'the tracks its effect blocks move: ids, or "*" for all (the whole mix)' },
+      except: { type: 'array', items: id('a track id'), description: 'with "target": "*": the tracks it leaves alone' },
+      clips: { type: 'array', items: id('an effect block id'), description: 'the effect blocks it plays' },
+    }, ['id', 'target', 'clips'], 'a row of effect blocks on the grid'),
     block: obj('block', {
       id: id('unique'), name: { type: 'string' }, color: { type: 'string' },
       beats: num(0.25, 64, 'its length; the pattern has beats × stepsPerBeat steps'),
@@ -98,7 +106,14 @@ export const songSchema = () => ({
       fill: { type: 'boolean', description: 'a drum fill for the bar before a section change' },
       mutate: num(0, 2, 'how much it changes when it loops (default 1)'),
       track: id('older songs: the track it is on'),
-    }, ['id', 'beats']),
+      fx: obj('fx', {
+        kind: { enum: Object.keys(FX_KINDS), description: 'filter (low pass, Hz), highpass (Hz), volume 0–1, echo and reverb (more send, 0–1), pan −1–1, gate (chop depth 0–1), crush 0–1' },
+        from: { type: 'number' }, to: { type: 'number' },
+        shape: { enum: FX_SHAPES, description: 'ramp (default): from → to across its bars; hump: from → to → from; wave: between them every "beats"; hold: at to' },
+        beats: num(0.25, 64, 'a wave: beats per cycle (4)'),
+        rate: num(0.0625, 4, 'a gate: beats per chop (0.25)'),
+      }, ['kind'], 'an effect block (on an effect track): one setting moved across the bars it is placed on'),
+    }, ['id']),
     section: obj('section', {
       id: id('unique'), name: { type: 'string' }, color: { type: 'string' },
       bars: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'array', items: { type: 'integer', minimum: 1 } }], description: 'its length, or lengths to pick from' },

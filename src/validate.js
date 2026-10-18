@@ -8,6 +8,7 @@ import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_NAMES, getAt } from './eng
 import { migrateSong } from './engine/plays.js';
 import { KITS } from './engine/drums.js';
 import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
+import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
 
 export const KEYS = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
 export const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
@@ -18,19 +19,21 @@ export const SWITCH = ['bar', 'phrase', 'section'];
 // the keys each part of a song may have (the editor adds name and color)
 export const FIELDS = {
   song: ['$schema', 'format', 'name', 'bpm', 'key', 'scale', 'stepsPerBeat', 'beatsPerBar', 'swing', 'humanize', 'variation', 'blockChange', 'fillChance',
-    'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'blocks', 'sections',
+    'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'effectTracks', 'blocks', 'sections',
     'progressions', 'moods', 'stingers'],
   instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'wave', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'kit', 'preset', 'unison',
     'detune', 'ensemble', 'breath', 'env', 'gain', 'glide', 'scoop', 'vibrato', 'body', 'wah', 'drive', 'amp', 'cutoff', 'resonance', 'filter',
     'swell', 'filterEnv', 'crush', 'eq', 'phaser', 'chorus', 'tremolo', 'autopan'],
   track: ['id', 'name', 'color', 'instrument', 'octave', 'clips', 'mode', 'follow', 'stickiness', 'volume', 'pan', 'echo', 'reverb', 'double', 'pump', 'fade'],
-  block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track'],
+  effectTrack: ['id', 'name', 'color', 'target', 'except', 'clips'],
+  block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track', 'fx'],
   section: ['id', 'name', 'color', 'bars', 'tracks', 'next', 'blocks', 'chords'],
   progression: ['id', 'name', 'color', 'chords', 'scale', 'sections'],
   mood: ['sections', 'flow', 'loopFrom', 'then', 'switch'],
   stinger: ['id', 'name', 'at', 'beats', 'chords', 'duck', 'parts', 'then'],
   part: ['track', 'pattern', 'block', 'mode'],
   breath: ['every', 'bars', 'keep'],
+  fx: ['kind', 'from', 'to', 'shape', 'beats', 'rate'],
 };
 
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -145,6 +148,23 @@ export function validateSong(raw, { samples } = {}) {
   const playedBy = new Map();
   const drumsOf = (tr) => (tr.instrument in instruments ? instruments[tr.instrument]?.type === 'drums' : undefined);
   const clipsOf = (tr) => (Array.isArray(tr.clips) ? tr.clips : [...blocks.values()].filter((b) => b.track === tr.id).map((b) => b.id));
+  // effect tracks: their targets, and effect blocks only
+  const fxTracks = byId(s.effectTracks, 'effectTrack');
+  for (const tr of fxTracks.values()) {
+    const where = `effect track "${tr.id}"`;
+    fields(tr, 'effectTrack', where);
+    if (tracks.has(tr.id)) err(`${where}: a track has this id too`);
+    const ids = tr.target === '*' ? [] : Array.isArray(tr.target) ? tr.target : [tr.target];
+    if (tr.target !== '*' && !(ids.length && ids.every((id) => typeof id === 'string'))) err(`${where}: "target" must be "*" (every track) or track ids`);
+    for (const id of [...ids, ...(Array.isArray(tr.except) ? tr.except : [])]) if (typeof id === 'string' && !tracks.has(id)) err(`${where}: no track "${id}" to move`);
+    if (tr.except !== undefined && (tr.target !== '*' || !Array.isArray(tr.except))) err(`${where}: "except" is a list of track ids, with "target": "*"`);
+    if (!Array.isArray(tr.clips)) err(`${where}: needs "clips": a list of effect block ids`);
+    for (const id of Array.isArray(tr.clips) ? tr.clips : []) {
+      if (!blocks.has(id)) err(`${where}: "clips" names no block "${id}"`);
+      else if (!blocks.get(id).fx) err(`${where}: "${id}" plays notes; an effect track plays effect blocks (with "fx")`);
+      else playedBy.set(id, 'fx');
+    }
+  }
   for (const tr of tracks.values()) {
     const where = `track "${tr.id}"`;
     fields(tr, 'track', where);
@@ -157,6 +177,7 @@ export function validateSong(raw, { samples } = {}) {
     if (!clips.length) warn(`${where}: has no clips, so it plays nothing`);
     for (const id of clips) {
       if (!blocks.has(id)) { err(`${where}: "clips" names no block "${id}"`); continue; }
+      if (blocks.get(id).fx) { err(`${where}: "${id}" is an effect block; it goes on an effect track ("effectTracks")`); continue; }
       const d = drumsOf(tr);
       playedBy.set(id, playedBy.has(id) && playedBy.get(id) !== d ? undefined : d);
     }
@@ -170,6 +191,25 @@ export function validateSong(raw, { samples } = {}) {
     mode(b.mode, where);
     weights(b.sections, sections, 'section', `${where} "sections"`);
     if (b.forms !== undefined) for (const f of Array.isArray(b.forms) ? b.forms : [b.forms]) if (!FORMS.includes(f)) err(`${where}: no form ${JSON.stringify(f)} (${list(FORMS)})`);
+    if (b.fx !== undefined) { // an effect block: one setting moved across the bars it is placed on
+      const fx = b.fx, k = isObj(fx) && FX_KINDS[fx.kind];
+      if (!isObj(fx)) err(`${where}: "fx" must be an object { kind, from, to, shape }`);
+      else {
+        fields(fx, 'fx', `${where} "fx"`);
+        if (!k) err(`${where}: "fx" "kind" must be ${list(Object.keys(FX_KINDS))}`);
+        else for (const key of ['from', 'to']) {
+          const v = fx[key];
+          if (v === undefined) continue;
+          if (typeof v !== 'number' || !Number.isFinite(v)) err(`${where}: "fx" "${key}" must be a number`);
+          else if (v < k.min || v > k.max) warn(`${where}: "fx" "${key}" is ${v}, outside ${k.min}–${k.max} for ${fx.kind}`);
+        }
+        if (fx.shape !== undefined && !FX_SHAPES.includes(fx.shape)) err(`${where}: "fx" "shape" must be ${list(FX_SHAPES)}`);
+        for (const key of ['beats', 'rate']) if (fx[key] !== undefined && !(typeof fx[key] === 'number' && fx[key] > 0)) err(`${where}: "fx" "${key}" must be beats, above 0`);
+      }
+      if (b.pattern !== undefined || b.from !== undefined) warn(`${where}: an effect block plays no notes ("pattern", "from" are ignored)`);
+      if (!playedBy.has(b.id)) warn(`${where}: is on no effect track's "clips", so it never plays`);
+      continue;
+    }
     if (b.from !== undefined) {
       const src = blocks.get(b.from);
       if (!src) err(`${where}: "from" names no block "${b.from}"`);
@@ -198,7 +238,7 @@ export function validateSong(raw, { samples } = {}) {
     if (x.blocks !== undefined) {
       if (!isObj(x.blocks)) err(`${where}: "blocks" must be an object { track id: [{ at, block }] }`);
       else for (const [tid, ps] of Object.entries(x.blocks)) {
-        const tr = tracks.get(tid);
+        const tr = tracks.get(tid) || fxTracks.get(tid);
         if (!tr) { err(`${where} "blocks": no track "${tid}"`); continue; }
         if (!Array.isArray(ps)) { err(`${where} "blocks" "${tid}": must be a list [{ at, block }]`); continue; }
         ps.forEach((p, i) => {
@@ -254,7 +294,7 @@ export function validateSong(raw, { samples } = {}) {
       fields(pt, 'part', at);
       mode(pt.mode, at);
       const tr = tracks.get(pt.track);
-      if (!tr) return err(`${at}: no track "${pt.track}"`);
+      if (!tr) return err(`${at}: no track "${pt.track}"${fxTracks.has(pt.track) ? ' (effect tracks play no stingers)' : ''}`);
       if (pt.block !== undefined) { if (!blocks.has(pt.block)) err(`${at}: no block "${pt.block}"`); return; }
       pattern(pt.pattern, steps, drumsOf(tr), at);
     });

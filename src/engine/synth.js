@@ -7,6 +7,7 @@ import { DrumVoice, compileKit } from './drums.js';
 import { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTables, levelLimits, cachedTables } from './wavetable.js';
 import { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } from './dsp.js';
 import { clamp, clamp01 } from './theory.js';
+import { Moves } from './moves.js';
 
 const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
 
@@ -528,10 +529,13 @@ class TrackBus {
     this.chPh = 0; this.chI = 0; this.chBuf = null; // the chorus: its wave, where it writes, its delay line
     this.tPh = 0; // the tremolo's wave
     this.apT = 0; this.apPh = 0; // the auto-pan: its countdown to new pan gains, its wave
+    this.mvT = 0; // countdown to the next pan gains while an effect row moves it
   }
   // bps: the song's beats per second (the wah sweeps with them)
   set(tr, p, sr, bps = 2) {
     this.p = p; this.sr = sr; this.bps = bps;
+    this.mv ||= new Moves(sr); // the effect rows' moves on this track
+    this.apOff = 0;
     this.vol = (tr.volume ?? 0.3) * p.gain;
     this.pan = clamp(tr.pan || 0, -1, 1);
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
@@ -713,7 +717,14 @@ class TrackBus {
     if (p.autopan && --this.apT <= 0) { // the pan gains move every 16 samples
       this.apT = 16;
       if ((this.apPh += this.apInc) >= 1) this.apPh -= 1;
-      this.place(p.autopan.depth * Math.sin(TWO_PI * this.apPh));
+      this.apOff = p.autopan.depth * Math.sin(TWO_PI * this.apPh);
+      if (!this.mv.on) this.place(this.apOff);
+    }
+    const mv = this.mv;
+    mv.tick();
+    if (mv.on) {
+      y = mv.run(y);
+      if (--this.mvT <= 0) { this.mvT = 16; this.place(this.apOff + mv.pan); } // an effect row's pan
     }
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
@@ -838,6 +849,7 @@ export class Synth {
     this.sr = sr;
     this.tracks = {}; this.list = [];
     this.echo = new Echo(sr); this.reverb = new Reverb(sr); this.bus = new Master(sr);
+    this.mix = new Moves(sr, 2); // the effect rows' moves on the whole mix
     this.outL = 0; this.outR = 0;
     this.peakL = 0; this.peakR = 0; // the master's loudest samples since the meters last looked (takePeaks)
     this.mutes = {}; this.solos = {};
@@ -901,6 +913,15 @@ export class Synth {
     if (to > 0 && !b.fadeStep) b.fade = 0;
     b.fadeTo = to;
     b.fadeStep = (to - b.fade) / Math.max(1, sec * this.sr);
+  }
+  // an effect row's values for a track (its id) or the whole mix ('*'), reached over n samples (Moves.to); null: off
+  move(id, v, n) {
+    const mv = id === '*' ? this.mix : this.tracks[id]?.mv;
+    if (mv) mv.to(v, n, this.bps);
+  }
+  stopMoves() {
+    this.mix = new Moves(this.sr, 2);
+    for (const b of this.list) b.mv = new Moves(this.sr);
   }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
   release(id) { this.tracks[id]?.release(); }
@@ -967,7 +988,7 @@ export class Synth {
         l += x * b.pl + c * b.ql; r += x * b.pr + c * b.qr;
         x = (x + c) * 0.5;
       } else { l += x * b.pl; r += x * b.pr; }
-      e += x * b.echo; v += x * b.rev;
+      e += x * (b.echo + b.mv.echo); v += x * (b.rev + b.mv.rev);
     }
     const pv = this.pv;
     if (pv) {
@@ -992,8 +1013,12 @@ export class Synth {
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;
     this.reverb.process(v + (el + er) * 0.5 * this.echoToRev);
-    const m = this.master, bus = this.bus;
-    bus.process((l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m, (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m);
+    const m = this.master, bus = this.bus, mix = this.mix;
+    l = (l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m;
+    r = (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m;
+    mix.tick();
+    if (mix.on) { l = mix.run(l, 0); r = mix.run(r, 1); }
+    bus.process(l, r);
     const al = bus.l < 0 ? -bus.l : bus.l, ar = bus.r < 0 ? -bus.r : bus.r; // before the soft clip: above 1 it squashes
     if (al > this.peakL) this.peakL = al;
     if (ar > this.peakR) this.peakR = ar;

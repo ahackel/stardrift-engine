@@ -5,6 +5,7 @@ import { Rng } from './rng.js';
 import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod } from './theory.js';
 import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } from './pattern.js';
 import { Synth } from './synth.js';
+import { FX_KINDS, fxAt, fxJoin, onMix } from './moves.js';
 import { autoFade } from './params.js';
 import { weightIn, chanceIn } from './plays.js';
 
@@ -87,6 +88,7 @@ export class Engine {
     this.history = {};
     this.synth.allOff();
     this.synth.setDuck(null);
+    this.synth.stopMoves(); this.moved = null;
     this.setSong(song || this.song.raw);
   }
 
@@ -431,9 +433,37 @@ export class Engine {
       this.playStep(tr, ts, steps[p], ts.block, chordChanged);
     }
     if (sg) sg.pos++;
+    this.moveFx();
     const progBeat = this.prog ? (((this.step - this.progStart) / s.spb) % this.prog.totalBeats) : 0;
     this.emit({ type: 'step', step: this.step, bar: this.sectionBar, bars: this.sectionBars, spbar: s.stepsPerBar, pos, progBeat });
     this.step++;
+  }
+
+  // The effect rows: each effect block placed in the section moves its setting across the bars it plays (until the
+  // next block on its row or the section's end), on the tracks its row targets or the whole mix. Worked out for the
+  // end of this step, reached over the step; buses no row moves any more go back. A muted row moves nothing.
+  moveFx() {
+    const s = this.song, sec = this.section, out = {};
+    if (sec?.arranged) {
+      const spbar = s.stepsPerBar, inBar = this.step % spbar;
+      for (const ft of s.fxTracks) {
+        const list = sec.place[ft.id];
+        if (!list || this.synth.mutes[ft.id]) continue;
+        let i = -1;
+        for (let j = 0; j < list.length; j++) if (list[j].at <= this.sectionBar) i = j;
+        const p = list[i], fx = p?.block.fx;
+        if (!fx || !FX_KINDS[fx.kind]) continue;
+        const span = ((list[i + 1]?.at ?? this.sectionBars) - p.at) * spbar, pos = (this.sectionBar - p.at) * spbar + inBar;
+        const v = fxAt(fx, (pos + 1) / span, (pos + 1) / s.spb);
+        const set = (id, key, val) => { const o = (out[id] ||= {}); o[key] = fxJoin(key, o[key], val); if (key === 'gate' && o.gate === val) { o.rate = fx.rate; o.phase = ((pos / s.spb) / Math.max(0.0625, fx.rate || 0.25)) % 1; } };
+        if (ft.mix && onMix(fx.kind)) set('*', fx.kind, v);
+        else for (const id of ft.ids) set(id, fx.kind, v);
+      }
+    }
+    const was = this.moved || {};
+    for (const id in out) this.synth.move(id, out[id], this.stepLen);
+    for (const id in was) if (!out[id]) this.synth.move(id, null, this.stepLen);
+    this.moved = out;
   }
 
   // src = the block (or stinger part) the step comes from: it decides how numbers map to notes

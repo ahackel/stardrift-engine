@@ -580,6 +580,14 @@ function prepareSong(raw) {
     return { ...t, inst, poly: inst.poly ?? t.poly };
   });
   s.trackMap = Object.fromEntries(s.tracks.map((t) => [t.id, t]));
+  // effect tracks (the grid): rows of effect blocks for the tracks they target ("*": all, but `except`; or ids).
+  // ids: the tracks each one moves; mix: the whole mix instead (all of them)
+  s.fxTracks = (Array.isArray(raw.effectTracks) ? raw.effectTracks : []).filter((t) => t && t.id).map((t) => {
+    const all = t.target === '*', except = Array.isArray(t.except) ? t.except : [];
+    const ids = all ? s.tracks.map((x) => x.id).filter((id) => !except.includes(id)) : (Array.isArray(t.target) ? t.target : [t.target]).filter((id) => s.trackMap[id]);
+    return { ...t, ids, mix: all && !except.some((id) => s.trackMap[id]) };
+  });
+  s.fxMap = Object.fromEntries(s.fxTracks.map((t) => [t.id, t]));
 
   s.progressions = (src.progressions || []).map((p) => {
     const chordList = parseChords(p.chords);
@@ -622,7 +630,7 @@ function prepareSong(raw) {
     x.bars = [n];
     x.place = {};
     for (const [tid, list] of Object.entries(x.blocks)) {
-      if (!s.trackMap[tid] || !Array.isArray(list)) continue;
+      if (!(s.trackMap[tid] || s.fxMap[tid]) || !Array.isArray(list)) continue;
       const ps = list.map((p) => p && s.blockMap[p.block] && { at: at(p), block: s.blockMap[p.block] }).filter(Boolean).sort((a, b) => a.at - b.at);
       if (ps.length) x.place[tid] = ps;
     }
@@ -1035,11 +1043,121 @@ function cachedTables(key, make) {
 return { TABLE_SIZE, buildTables, cachedTables, formulaHarmonics, levelLimits, sampledHarmonics, stairHarmonics };
 })();
 
+const $engine_moves = (() => {
+const { svfSet, svf, LP, HP } = $engine_dsp;
+// Effect rows (the grid). An effect track places effect blocks on a section's bars like any track, and each one moves
+// one setting of the tracks the row targets (or of the whole mix) across the bars it plays: a filter sweep, a fade,
+// an echo throw. Here: the kinds, their curves (fxAt, which the editor draws with too) and Moves, which plays them
+// on a bus. The engine works out each row's value once a step; Moves ramps there over the step.
+
+// each kind: its range, the value that changes nothing (off), its default from and to; log: moves in octaves (Hz)
+const FX_KINDS = {
+  filter: { min: 60, max: 16000, off: 16000, log: true, def: [16000, 400] }, // a low pass
+  highpass: { min: 20, max: 8000, off: 20, log: true, def: [20, 2000] },
+  volume: { min: 0, max: 1, off: 1, def: [1, 0] }, // as a fader: 0.5 is about −12 dB
+  echo: { min: 0, max: 1, off: 0, def: [0, 0.6] }, // more send to the song's echo
+  reverb: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // more send to the reverb
+  pan: { min: -1, max: 1, off: 0, def: [-0.8, 0.8] },
+  gate: { min: 0, max: 1, off: 0, def: [0, 1] }, // chops the sound in time: depth (rate: beats, 0.25)
+  crush: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // fewer bits, a lower rate
+};
+const FX_SHAPES = ['ramp', 'hump', 'wave', 'hold'];
+// the kinds the whole mix takes on the master; the rest are each track's (its pan, its sends)
+const MIX_KINDS = new Set(['filter', 'highpass', 'volume', 'gate', 'crush']);
+const onMix = (kind) => MIX_KINDS.has(kind);
+
+const clampTo = (k, v) => Math.min(k.max, Math.max(k.min, +v));
+// fx's value u (0–1) of the way through the bars it plays on, b beats in: ramp from → to, hump from → to → from,
+// wave between them every `beats` (4), hold at to
+function fxAt(fx, u, b) {
+  const k = FX_KINDS[fx?.kind];
+  if (!k) return null;
+  const from = clampTo(k, fx.from ?? k.def[0]), to = clampTo(k, fx.to ?? k.def[1]);
+  let t;
+  if (fx.shape === 'hump') t = 0.5 - 0.5 * Math.cos(2 * Math.PI * u);
+  else if (fx.shape === 'wave') t = 0.5 - 0.5 * Math.cos((2 * Math.PI * b) / Math.max(0.25, fx.beats || 4));
+  else if (fx.shape === 'hold') t = 1;
+  else t = Math.min(1, Math.max(0, u));
+  return k.log ? from * Math.pow(to / from, t) : from + (to - from) * t;
+}
+// two rows moving the same setting of one bus: the lower low pass, the higher high pass, the faders multiply, the rest add
+function fxJoin(kind, a, b) {
+  if (a === undefined) return b;
+  if (kind === 'filter') return Math.min(a, b);
+  if (kind === 'highpass' || kind === 'gate' || kind === 'crush') return Math.max(a, b);
+  if (kind === 'volume') return a * b;
+  return Math.max(-1, Math.min(1, a + b));
+}
+
+const OFF_LP = Math.log2(16000), OFF_HP = Math.log2(20);
+// One bus's moves (a track's, mono; the master's, two channels). to() sets where each value goes over n samples;
+// tick() moves them once a sample; run() puts a sample through (filters, crush, gate, volume). pan, echo and rev
+// are for the bus to read.
+class Moves {
+  constructor(sr, ch = 1) {
+    this.sr = sr;
+    this.lp = OFF_LP; this.hp = OFF_HP; this.vol = 1; this.gate = 0; this.crush = 0; this.pan = 0; this.echo = 0; this.rev = 0;
+    this.d = { lp: 0, hp: 0, vol: 0, gate: 0, crush: 0, pan: 0, echo: 0, rev: 0 };
+    this.left = 0; // samples the ramps still run
+    this.on = false; // anything moved: run() is needed
+    this.lpC = { mode: LP, k: 1.2, a1: 0, a2: 0, a3: 0 }; this.hpC = { mode: HP, k: 1.2, a1: 0, a2: 0, a3: 0 };
+    this.st = Array.from({ length: ch }, () => ({ l: { ic1: 0, ic2: 0 }, h: { ic1: 0, ic2: 0 }, ph: 1, hold: 0 }));
+    this.cT = 0; // countdown to new filter coefficients
+    this.gPh = 0; this.gInc = 0; this.gLvl = 1; this.gK = 1 - Math.exp(-1 / (0.003 * sr)); // the gate: its wave, its level (3 ms edges)
+    this.setCoefs();
+  }
+  // v: { filter, highpass, volume, gate, crush, pan, echo, reverb, rate, phase } (missing: off), or null: all off
+  to(v, n, bps) {
+    n = Math.max(1, n | 0);
+    v ||= {};
+    const go = (key, target) => { this.d[key] = (target - this[key]) / n; };
+    go('lp', Math.log2(v.filter ?? 16000)); go('hp', Math.log2(v.highpass ?? 20)); go('vol', v.volume ?? 1);
+    go('gate', v.gate ?? 0); go('crush', v.crush ?? 0); go('pan', v.pan ?? 0); go('echo', v.echo ?? 0); go('rev', v.reverb ?? 0);
+    if (v.gate) { this.gPh = v.phase || 0; this.gInc = bps / (Math.max(0.0625, v.rate || 0.25) * this.sr); }
+    this.left = n;
+    this.on = true;
+  }
+  tick() {
+    if (this.left > 0) {
+      const d = this.d;
+      this.lp += d.lp; this.hp += d.hp; this.vol += d.vol; this.gate += d.gate; this.crush += d.crush;
+      this.pan += d.pan; this.echo += d.echo; this.rev += d.rev;
+      if (--this.left === 0) this.on = this.lp < OFF_LP - 0.01 || this.hp > OFF_HP + 0.01 || Math.abs(this.vol - 1) > 1e-4 || this.gate > 1e-3
+        || this.crush > 1e-3 || Math.abs(this.pan) > 1e-3 || this.echo > 1e-4 || this.rev > 1e-4;
+    }
+    if (!this.on) return;
+    if (--this.cT <= 0) { this.cT = 16; this.setCoefs(); }
+    if (this.gate > 1e-3) {
+      if ((this.gPh += this.gInc) >= 1) this.gPh -= 1;
+      this.gLvl += ((this.gPh < 0.5 ? 1 : 1 - this.gate) - this.gLvl) * this.gK;
+    } else this.gLvl = 1;
+  }
+  setCoefs() {
+    svfSet(this.lpC, Math.pow(2, this.lp), 1.2, this.sr).mode = LP;
+    svfSet(this.hpC, Math.pow(2, this.hp), 1.2, this.sr).mode = HP;
+    if (this.crush > 1e-3) { this.levels = Math.pow(2, 11 - 9 * this.crush); this.cStep = Math.pow(2, -4 * this.crush); }
+  }
+  run(x, c = 0) {
+    const st = this.st[c];
+    if (this.lp < OFF_LP - 0.01) x = svf(this.lpC, st.l, x);
+    if (this.hp > OFF_HP + 0.01) x = svf(this.hpC, st.h, x);
+    if (this.crush > 1e-3) {
+      if ((st.ph += this.cStep) >= 1) { st.ph -= 1; st.hold = Math.round(x * this.levels) / this.levels; }
+      x = st.hold;
+    }
+    return x * this.vol * this.vol * this.gLvl;
+  }
+}
+
+return { FX_KINDS, FX_SHAPES, Moves, fxAt, fxJoin, onMix };
+})();
+
 const $engine_synth = (() => {
 const { DrumVoice, compileKit } = $engine_drums;
 const { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTables, levelLimits, cachedTables } = $engine_wavetable;
 const { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } = $engine_dsp;
 const { clamp, clamp01 } = $engine_theory;
+const { Moves } = $engine_moves;
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
 // section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, auto-pan, ping-pong echo and a small Freeverb.
@@ -1566,10 +1684,13 @@ class TrackBus {
     this.chPh = 0; this.chI = 0; this.chBuf = null; // the chorus: its wave, where it writes, its delay line
     this.tPh = 0; // the tremolo's wave
     this.apT = 0; this.apPh = 0; // the auto-pan: its countdown to new pan gains, its wave
+    this.mvT = 0; // countdown to the next pan gains while an effect row moves it
   }
   // bps: the song's beats per second (the wah sweeps with them)
   set(tr, p, sr, bps = 2) {
     this.p = p; this.sr = sr; this.bps = bps;
+    this.mv ||= new Moves(sr); // the effect rows' moves on this track
+    this.apOff = 0;
     this.vol = (tr.volume ?? 0.3) * p.gain;
     this.pan = clamp(tr.pan || 0, -1, 1);
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
@@ -1751,7 +1872,14 @@ class TrackBus {
     if (p.autopan && --this.apT <= 0) { // the pan gains move every 16 samples
       this.apT = 16;
       if ((this.apPh += this.apInc) >= 1) this.apPh -= 1;
-      this.place(p.autopan.depth * Math.sin(TWO_PI * this.apPh));
+      this.apOff = p.autopan.depth * Math.sin(TWO_PI * this.apPh);
+      if (!this.mv.on) this.place(this.apOff);
+    }
+    const mv = this.mv;
+    mv.tick();
+    if (mv.on) {
+      y = mv.run(y);
+      if (--this.mvT <= 0) { this.mvT = 16; this.place(this.apOff + mv.pan); } // an effect row's pan
     }
     this.g += (this.gTarget - this.g) * 0.0015;
     if (this.fadeStep) {
@@ -1876,6 +2004,7 @@ class Synth {
     this.sr = sr;
     this.tracks = {}; this.list = [];
     this.echo = new Echo(sr); this.reverb = new Reverb(sr); this.bus = new Master(sr);
+    this.mix = new Moves(sr, 2); // the effect rows' moves on the whole mix
     this.outL = 0; this.outR = 0;
     this.peakL = 0; this.peakR = 0; // the master's loudest samples since the meters last looked (takePeaks)
     this.mutes = {}; this.solos = {};
@@ -1939,6 +2068,15 @@ class Synth {
     if (to > 0 && !b.fadeStep) b.fade = 0;
     b.fadeTo = to;
     b.fadeStep = (to - b.fade) / Math.max(1, sec * this.sr);
+  }
+  // an effect row's values for a track (its id) or the whole mix ('*'), reached over n samples (Moves.to); null: off
+  move(id, v, n) {
+    const mv = id === '*' ? this.mix : this.tracks[id]?.mv;
+    if (mv) mv.to(v, n, this.bps);
+  }
+  stopMoves() {
+    this.mix = new Moves(this.sr, 2);
+    for (const b of this.list) b.mv = new Moves(this.sr);
   }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
   release(id) { this.tracks[id]?.release(); }
@@ -2005,7 +2143,7 @@ class Synth {
         l += x * b.pl + c * b.ql; r += x * b.pr + c * b.qr;
         x = (x + c) * 0.5;
       } else { l += x * b.pl; r += x * b.pr; }
-      e += x * b.echo; v += x * b.rev;
+      e += x * (b.echo + b.mv.echo); v += x * (b.rev + b.mv.rev);
     }
     const pv = this.pv;
     if (pv) {
@@ -2030,8 +2168,12 @@ class Synth {
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;
     this.reverb.process(v + (el + er) * 0.5 * this.echoToRev);
-    const m = this.master, bus = this.bus;
-    bus.process((l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m, (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m);
+    const m = this.master, bus = this.bus, mix = this.mix;
+    l = (l + el * this.echoLevel + this.reverb.outL * this.revLevel) * m;
+    r = (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m;
+    mix.tick();
+    if (mix.on) { l = mix.run(l, 0); r = mix.run(r, 1); }
+    bus.process(l, r);
     const al = bus.l < 0 ? -bus.l : bus.l, ar = bus.r < 0 ? -bus.r : bus.r; // before the soft clip: above 1 it squashes
     if (al > this.peakL) this.peakL = al;
     if (ar > this.peakR) this.peakR = ar;
@@ -2196,6 +2338,7 @@ const { Rng } = $engine_rng;
 const { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod } = $engine_theory;
 const { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } = $engine_pattern;
 const { Synth } = $engine_synth;
+const { FX_KINDS, fxAt, fxJoin, onMix } = $engine_moves;
 const { autoFade } = $engine_params;
 const { weightIn, chanceIn } = $engine_plays;
 // The engine = conductor (decides WHAT plays) + sequencer (WHEN) + synth (HOW it sounds).
@@ -2281,6 +2424,7 @@ class Engine {
     this.history = {};
     this.synth.allOff();
     this.synth.setDuck(null);
+    this.synth.stopMoves(); this.moved = null;
     this.setSong(song || this.song.raw);
   }
 
@@ -2625,9 +2769,37 @@ class Engine {
       this.playStep(tr, ts, steps[p], ts.block, chordChanged);
     }
     if (sg) sg.pos++;
+    this.moveFx();
     const progBeat = this.prog ? (((this.step - this.progStart) / s.spb) % this.prog.totalBeats) : 0;
     this.emit({ type: 'step', step: this.step, bar: this.sectionBar, bars: this.sectionBars, spbar: s.stepsPerBar, pos, progBeat });
     this.step++;
+  }
+
+  // The effect rows: each effect block placed in the section moves its setting across the bars it plays (until the
+  // next block on its row or the section's end), on the tracks its row targets or the whole mix. Worked out for the
+  // end of this step, reached over the step; buses no row moves any more go back. A muted row moves nothing.
+  moveFx() {
+    const s = this.song, sec = this.section, out = {};
+    if (sec?.arranged) {
+      const spbar = s.stepsPerBar, inBar = this.step % spbar;
+      for (const ft of s.fxTracks) {
+        const list = sec.place[ft.id];
+        if (!list || this.synth.mutes[ft.id]) continue;
+        let i = -1;
+        for (let j = 0; j < list.length; j++) if (list[j].at <= this.sectionBar) i = j;
+        const p = list[i], fx = p?.block.fx;
+        if (!fx || !FX_KINDS[fx.kind]) continue;
+        const span = ((list[i + 1]?.at ?? this.sectionBars) - p.at) * spbar, pos = (this.sectionBar - p.at) * spbar + inBar;
+        const v = fxAt(fx, (pos + 1) / span, (pos + 1) / s.spb);
+        const set = (id, key, val) => { const o = (out[id] ||= {}); o[key] = fxJoin(key, o[key], val); if (key === 'gate' && o.gate === val) { o.rate = fx.rate; o.phase = ((pos / s.spb) / Math.max(0.0625, fx.rate || 0.25)) % 1; } };
+        if (ft.mix && onMix(fx.kind)) set('*', fx.kind, v);
+        else for (const id of ft.ids) set(id, fx.kind, v);
+      }
+    }
+    const was = this.moved || {};
+    for (const id in out) this.synth.move(id, out[id], this.stepLen);
+    for (const id in was) if (!out[id]) this.synth.move(id, null, this.stepLen);
+    this.moved = out;
   }
 
   // src = the block (or stinger part) the step comes from: it decides how numbers map to notes

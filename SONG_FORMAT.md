@@ -198,6 +198,24 @@ A song can also be laid out like a sequencer's arrangement: each section holds b
 - `section.blocks` `{ trackId: [{ at, block }] }`: a block plays from bar `at` (0 is the first) until the next block on its track or the section's end, looping. A track with nothing placed rests, and a track rests until its first block. The block should be on the track's `clips`. `section.chords` `[{ at, prog }]`: the progression from that bar on; with none, the one that plays goes on. A section with `blocks` has one length (`bars`), and its `tracks` and `next`, and the blocks' and progressions' `sections`, are not used.
 - `mood.flow`: its sections in order, each `[id, times]` (or just the id, once). One section can be in several flows. After its flow the mood does what `then` says: `loop` (default) from `loopFrom` (default: its first section), `drift` (picks among its sections at random) or `stop` (silence until another mood). The first time a mood plays it starts at its flow's start, later at `loopFrom`.
 - A change to a mood with a flow comes as soon as it sounds natural, by `switch`: at the next bar line (`bar`, the default; the bar after when less than a beat is left), the next phrase of 4 bars (`phrase`) or the section's end (`section`). The drums play the end of a fill (a block with `fill`, on their `clips`) up to the change; a block that both sections play carries on.
+
+### Effect tracks
+
+`effectTracks` lists the song's effect tracks: rows of effect blocks on the grid, each moving one setting across the bars it is placed on (until the next block on its row or the section's end), then back. Only sections with `blocks` play them.
+
+```json
+"effectTracks": [{ "id": "sweeps", "target": "*", "except": ["drums"], "clips": ["build", "throw"] }],
+"blocks": [
+  { "id": "build", "fx": { "kind": "filter", "from": 300, "to": 16000 } },
+  { "id": "throw", "fx": { "kind": "echo", "from": 0, "to": 0.7, "shape": "hump" } }
+]
+```
+
+- An effect track is `{ id, target, clips }` (its id not a track's too), and `section.blocks` places its effect blocks like a track's.
+- `target`: the tracks it moves, ids or `"*"` for all; with `"*"`, `except` leaves some out. `"*"` with no `except` moves the whole mix, echo and reverb included (filter, highpass, volume, gate, crush; pan, echo and reverb move every track).
+- `fx.kind`: `filter` (a low pass, 60–16000 Hz), `highpass` (20–8000 Hz), `volume` 0–1 (a fader), `echo` and `reverb` 0–1 (more send), `pan` −1–1, `gate` 0–1 (chops the sound every `rate` beats, 0.25), `crush` 0–1 (fewer bits, a lower rate).
+- `fx.from`, `fx.to` and `fx.shape`: `ramp` (default) from → to across its bars, `hump` from → to → from, `wave` between them every `beats` (4), `hold` at `to`.
+- Two rows moving one setting: the lower low pass and the higher high pass win, faders multiply, the rest add.
 - `startMood`: the mood whose flow plays until the game asks for one (default: the first mood with a flow).
 
 ## Stingers

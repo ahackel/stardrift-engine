@@ -555,5 +555,69 @@ for (const [file, sg] of toCheck) {
   }
 }
 
+// 17. Effect tracks: an effect block moves its setting across the bars it is placed on, on the tracks its row targets
+// ("*": the whole mix), and back once it ends; a muted row moves nothing
+{
+  const { validateSong } = await import('../src/validate.js');
+  const fxSong = (target, extra = {}) => ({
+    format: 2, name: 'fx', bpm: 120, key: 'C', scale: 'minor',
+    instruments: { lead: { type: 'pulse' }, drums: { type: 'drums', kit: 'chip' } },
+    tracks: [{ id: 'lead', instrument: 'lead', octave: 5, clips: ['tune'] }, { id: 'drums', instrument: 'drums', clips: ['beat'] }],
+    effectTracks: [{ id: 'fx', target, ...extra, clips: ['sweep', 'quiet', 'chop'] }],
+    blocks: [
+      { id: 'tune', beats: 4, pattern: '0 - 2 - 4 - 2 - 0 - 4 - 2 - 4 -' }, { id: 'beat', beats: 4, pattern: 'k . h . s . h . k . h . s . h .' },
+      { id: 'sweep', fx: { kind: 'filter', from: 16000, to: 250 } }, { id: 'quiet', fx: { kind: 'volume', from: 0, to: 0, shape: 'hold' } },
+      { id: 'chop', fx: { kind: 'gate', from: 1, to: 1, rate: 0.5 } },
+    ],
+    progressions: [{ id: 'home', chords: 'i:4 VI:4' }],
+    sections: [
+      { id: 'a', bars: 4, blocks: { lead: [{ at: 0, block: 'tune' }], drums: [{ at: 0, block: 'beat' }], fx: [{ at: 0, block: 'sweep' }, { at: 2, block: 'quiet' }] }, chords: [{ at: 0, prog: 'home' }] },
+      { id: 'b', bars: 2, blocks: { lead: [{ at: 0, block: 'tune' }], fx: [{ at: 0, block: 'chop' }] } },
+      { id: 'c', bars: 2, blocks: { lead: [{ at: 0, block: 'tune' }] } },
+    ],
+    moods: { calm: { flow: ['a', 'b', 'c'] } },
+  });
+  const v = validateSong(fxSong('*'));
+  ok(!v.errors.length && !v.warnings.length, `a song with an effect track validates (${[...v.errors, ...v.warnings].join('; ') || 'clean'})`);
+  const bad = validateSong({ ...fxSong('nope'), blocks: [...fxSong('*').blocks, { id: 'wrong', fx: { kind: 'wobble' } }] });
+  ok(bad.errors.some((x) => x.includes('no track "nope"')) && bad.errors.some((x) => x.includes('"kind"')), `and a wrong target or kind is an error (${bad.errors.length})`);
+  const ticks = (e, n) => { for (let i = 0; i < n; i++) e.tick(); };
+  {
+    const e = newEngine(SR, fxSong('*'), 1);
+    ticks(e, 16); // bar 1 of the sweep's 2: halfway at the end of the step
+    const lp = e.moved['*']?.filter;
+    ok(lp > 1700 && lp < 2300, `an effect block on "*" moves the whole mix, along its curve (the low pass halfway: ${Math.round(lp)} Hz)`);
+    ok(!e.moved.lead && !e.moved.drums, 'and not each track');
+    ticks(e, 17);
+    ok(e.moved['*']?.volume === 0 && e.moved['*'].filter === undefined, 'the next block on the row takes over at its bar');
+    ticks(e, 32);
+    ok(e.moved['*']?.gate === 1 && e.moved['*'].rate === 0.5, 'into the next section: its own row');
+    ticks(e, 32);
+    ok(!Object.keys(e.moved).length, 'a section with nothing on the row: nothing moves');
+  }
+  {
+    const e = newEngine(SR, fxSong(['lead']), 1);
+    ticks(e, 16);
+    ok(e.moved.lead?.filter > 0 && !e.moved.drums && !e.moved['*'], 'targets: only the tracks it names');
+    const e2 = newEngine(SR, fxSong('*', { except: ['drums'] }), 1);
+    ticks(e2, 16);
+    ok(e2.moved.lead?.filter > 0 && !e2.moved.drums && !e2.moved['*'], '"*" with except: every track but those');
+    const e3 = newEngine(SR, fxSong('*'), 1);
+    e3.setMute('fx', true);
+    ticks(e3, 16);
+    ok(!Object.keys(e3.moved).length, 'a muted effect row moves nothing');
+  }
+  {
+    // the sound: silent under volume 0, clean through the sweep and the gate, back once nothing moves
+    const e = newEngine(SR, fxSong('*'), 1);
+    const L = new Float32Array(128), R = new Float32Array(128); // 2 s a bar at 120 bpm
+    const peakOver = (secs) => { let p = 0, bad = 0; for (let i = 0; i < secs * SR; i += 128) { e.process(L, R, 128); for (let j = 0; j < 128; j++) { if (!Number.isFinite(L[j])) bad++; p = Math.max(p, Math.abs(L[j])); } } return { p, bad }; };
+    const sweep = peakOver(4.2), quiet = peakOver(3.6), chop = peakOver(4), plain = peakOver(4);
+    ok(sweep.bad + quiet.bad + chop.bad + plain.bad === 0, 'no NaN/Inf through the moves');
+    ok(quiet.p < 0.01 && sweep.p > 0.05 && plain.p > 0.05, `volume 0 silences the mix, and it comes back (${sweep.p.toFixed(2)} → ${quiet.p.toFixed(3)} → ${plain.p.toFixed(2)})`);
+    ok(!e.synth.mix.on, 'once nothing moves, the mix runs as before');
+  }
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);
