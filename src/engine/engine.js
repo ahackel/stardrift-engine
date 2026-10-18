@@ -6,6 +6,7 @@ import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mo
 import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } from './pattern.js';
 import { Synth } from './synth.js';
 import { FX_KINDS, fxAt, fxJoin, onMix } from './moves.js';
+import { playOf } from './sfx.js';
 import { autoFade } from './params.js';
 import { weightIn, chanceIn } from './plays.js';
 
@@ -58,6 +59,8 @@ export class Engine {
     if (seed !== undefined) this.seed = seed >>> 0;
     this.rng = new Rng(this.seed);
     this.vrng = new Rng(this.seed ^ 0x9e3779b9); // velocity humanizing has its own stream: it never changes the arrangement
+    this.srng = new Rng(this.seed ^ 0x51ed270b); // so has the game sounds' variation
+    this.sfxQ = []; // game sounds waiting for their step or beat: {def, opts, q}
     this.step = 0;
     this.stepTimer = 0;
     this.clock = 0; this.later = []; // samples played; notes waiting to start (lagOf)
@@ -342,6 +345,33 @@ export class Engine {
     return true;
   }
 
+  // A game sound (song.sounds, by id; or a sound's own settings): at once, or from the next step or beat (opts.at, else
+  // the sound's `at`). opts: { pitch: × (1.2: higher), volume, pan, at }. While held (editor) it plays at once.
+  sound(ref, opts = {}) {
+    const def = typeof ref === 'string' ? this.song.soundMap[ref] : ref;
+    if (!def || typeof def !== 'object') return false;
+    const q = { step: 1, beat: this.song.spb }[opts.at || def.at];
+    if (q && !this.hold) this.sfxQ.push({ def, opts, q });
+    else this.playSound(def, opts);
+    return true;
+  }
+  playSound(def, opts) { this.synth.sound(playOf(def, this.srng, opts, (m, dir) => this.snap(m, dir))); }
+  stopSounds() { this.sfxQ = []; this.synth.stopSounds(); }
+  setSoundVolume(v) { this.synth.sfxGain = Math.max(0, +v || 0); }
+  // midi m (a fraction too) → the nearest tone of the chord playing (with no chord: of the scale); dir 1: the nearest
+  // above m, −1: below
+  snap(m, dir = 0) {
+    const scale = this.scaleNow(), chord = this.chord, L = scale.length, kr = this.song.keyRoot;
+    const pcs = chord.nc ? Array.from({ length: L }, (_, i) => mod(kr + degSemis(scale, i), 12))
+      : chord.shape.map((o) => mod(kr + degSemis(scale, foldDegree(chord.degree, L) + o), 12));
+    let best = null;
+    for (let k = Math.floor(m) - 12; k <= Math.ceil(m) + 12; k++) {
+      if (!pcs.includes(mod(k, 12)) || (dir > 0 && k <= m) || (dir < 0 && k >= m)) continue;
+      if (best === null || Math.abs(k - m) < Math.abs(best - m)) best = k;
+    }
+    return best;
+  }
+
   setMute(id, on) { this.synth.setMute(id, on); }
   setSolo(id, on) { this.synth.setSolo(id, on); }
 
@@ -349,6 +379,7 @@ export class Engine {
   setHold(on) {
     on = !!on;
     if (on && !this.hold) { this.later = []; this.synth.releaseAll(); } // no late notes after the pause
+    if (on && this.sfxQ.length) { for (const x of this.sfxQ) this.playSound(x.def, x.opts); this.sfxQ = []; } // the beat they waited for won't come
     this.hold = on;
   }
 
@@ -360,6 +391,7 @@ export class Engine {
     syn.pvQ = [];
     syn.pvI = 0;
     this.nextSting = null;
+    this.stopSounds();
     if (this.curSting) this.endSting(this.hold);
   }
   keyOn(inst, note, opts) { this.synth.keyOn(inst, note, opts); }
@@ -408,6 +440,7 @@ export class Engine {
     const li = this.leadIn; // only while its section is still the one coming next (a mood change may have re-routed)
     const chordChanged = this.setChord(this.stingChord() || this.liveChord
       || (li && this.step >= li.start && this.nextSection === li.sec ? li.chord : this.chordAt(this.step)));
+    if (this.sfxQ.length) this.sfxQ = this.sfxQ.filter((x) => (this.step % x.q ? true : (this.playSound(x.def, x.opts), false)));
 
     const pos = {}, sg = this.curSting;
     for (const tr of s.tracks) {

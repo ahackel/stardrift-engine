@@ -7,6 +7,7 @@ import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS } from './engine/params.js';
 import { KITS } from './engine/drums.js';
 import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
 import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
+import { SFX_WAVES, SFX_AT, SFX_RANGES } from './engine/sfx.js';
 import { KEYS, TYPES, MODES, STING_AT, FIELDS, FLOW_THEN, SWITCH } from './validate.js';
 
 const num = (min, max, description) => ({ type: 'number', minimum: min, maximum: max, ...(description && { description }) });
@@ -58,6 +59,7 @@ export const songSchema = () => ({
     progressions: { type: 'array', items: ref('progression') },
     moods: { type: 'object', additionalProperties: ref('mood'), description: '{ relaxed, wonder, exploring, tension, danger, action: { sections } }' },
     stingers: { type: 'array', items: ref('stinger'), description: 'discovery, alert, jump, reward' },
+    sounds: { type: 'array', items: ref('sound'), description: 'game sounds made by synthesis: jump, coin, hit, explosion (music.sound(id))' },
   }, ['tracks', 'blocks']),
   definitions: {
     instrument: obj('instrument', {
@@ -146,6 +148,12 @@ export const songSchema = () => ({
       parts: { type: 'array', items: ref('part'), minItems: 1 },
       then: id('a mood with a flow: as the stinger ends, the music is there at once'),
     }, ['id', 'beats', 'parts']),
+    sound: obj('sound', {
+      id: id('jump, coin, hit, or your own: music.sound(id)'), name: { type: 'string' }, color: { type: 'string' },
+      wave: { enum: SFX_WAVES }, at: { enum: SFX_AT, description: 'when it starts: now (default), the next step or the next beat' },
+      key: { type: 'boolean', description: 'tuned to the nearest note of the chord playing' },
+      ...Object.fromEntries(SFX_RANGES.map(([k, a, b]) => [k, num(a, b)])),
+    }, ['id']),
     part: obj('part', { track: id('the track it borrows'), pattern: PATTERN, block: id('or: a block whose notes it plays'), mode: { enum: MODES } }, ['track']),
     breath: obj('breath', {
       every: { type: 'number', minimum: 1, description: 'about every this many bars the music thins out' },

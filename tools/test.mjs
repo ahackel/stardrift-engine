@@ -619,5 +619,44 @@ for (const [file, sg] of toCheck) {
   }
 }
 
+// 18. Game sounds: each wave renders clean and dies away within its length; vary 0 repeats, vary changes; key tunes to
+// the chord; at 'beat' waits for the beat; a sound plays while the song is held; a duck quietens the music
+{
+  const { renderSound, SFX_WAVES } = await import('../src/engine/sfx.js');
+  const { validateSong } = await import('../src/validate.js');
+  const peak = (a, from = 0, to = a.length) => { let p = 0; for (let i = from; i < to; i++) p = Math.max(p, Math.abs(a[i])); return p; };
+  const clean = SFX_WAVES.every((wave) => { const b = renderSound({ wave, slide: -24, noise: 0.3, tone: 0.5, sweep: 0.5, crush: 0.4, vibrato: 0.5, repeat: 0.05 }); return b.every(Number.isFinite) && peak(b) > 0.05 && peak(b) < 1 && Math.abs(b[b.length - 1]) < 0.01; });
+  ok(clean, 'every wave renders clean, and dies away at its end');
+  const a = renderSound({ vary: 0 }, { seed: 1 }), b = renderSound({ vary: 0 }, { seed: 2 }), c = renderSound({ vary: 0.8 }, { seed: 2 });
+  ok(a.length === b.length && a.every((x, i) => x === b[i]) && c.length !== a.length, 'vary 0: every play the same; vary: they differ');
+  const song = {
+    format: 2, name: 'sfx', bpm: 120, key: 'C', scale: 'major',
+    instruments: { pad: { type: 'pulse' } }, tracks: [{ id: 'pad', instrument: 'pad', octave: 4, clips: ['hold'] }],
+    blocks: [{ id: 'hold', beats: 4, pattern: '* - - - - - - - - - - - - - - -' }], progressions: [{ id: 'p', chords: 'I:4' }],
+    sections: [{ id: 'a', bars: 4, blocks: { pad: [{ at: 0, block: 'hold' }] }, chords: [{ at: 0, prog: 'p' }] }], moods: { calm: { flow: ['a'] } },
+    sounds: [{ id: 'coin', pitch: 1000, jump: 4, key: true, at: 'beat', vary: 0 }, { id: 'boom', wave: 'noise', pitch: 60, length: 0.8, duck: 0.8 }],
+  };
+  const v = validateSong(song), bad = validateSong({ ...song, sounds: [{ id: 'x', wave: 'kazoo', pitch: 'high', at: 'later' }] });
+  ok(!v.errors.length && !v.warnings.length && bad.errors.length === 3, `sounds validate, and a wrong wave, number or at is an error (${[...v.errors, ...v.warnings, ...bad.errors].join('; ')})`);
+  const e = newEngine(SR, song, 1);
+  ok(e.snap(84.3) === 84 && e.snap(84, 1) === 88 && e.snap(84, -1) === 79 && e.snap(90) === 91, 'key: the nearest tone of the chord (C: C E G), above or below');
+  const L = new Float32Array(SR), R = new Float32Array(SR);
+  e.process(L, R, 100);
+  ok(e.sound('coin') && e.sfxQ.length === 1 && !e.sound('nope'), 'a sound "at beat" waits; a sound the song lacks plays nothing');
+  e.process(L, R, (SR >> 1) + 100);
+  ok(!e.sfxQ.length && e.synth.sfx.some((x) => !x.done), 'on the beat it plays');
+  const p = e.synth.sfx.find((x) => !x.done).p, m = 69 + 12 * Math.log2(p.pitch / 440);
+  ok(Math.abs(m - Math.round(m)) < 1e-6 && [0, 4, 7].includes(Math.round(m) % 12) && [0, 4, 7].includes((Math.round(m) + p.jump) % 12), `it is tuned to the chord, its jump too (${Math.round(m)} + ${p.jump})`);
+  const h = newEngine(SR, song, 1);
+  h.setHold(true);
+  h.sound('coin');
+  h.process(L, R, SR >> 2);
+  ok(peak(L) > 0.05, 'held, a sound plays at once');
+  const d = newEngine(SR, { ...song, sounds: [{ id: 'boom', wave: 'sine', pitch: 30, volume: 0.01, length: 1, duck: 0.8 }] }, 1);
+  d.process(L, R, SR); const before = peak(L);
+  d.sound('boom'); d.process(L, R, SR >> 1); const under = peak(L, SR >> 3, SR >> 1);
+  ok(under < before * 0.5, `duck: the music gets quieter under the sound (${before.toFixed(2)} → ${under.toFixed(2)})`);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

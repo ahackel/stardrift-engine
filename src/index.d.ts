@@ -112,6 +112,31 @@ export interface Stinger {
   name?: string;
 }
 
+/** A game sound: a short sound effect made by synthesis (SONG_FORMAT.md, "Game sounds"). Every setting is optional. */
+export interface Sound {
+  id: string;
+  name?: string;
+  wave?: 'square' | 'triangle' | 'saw' | 'sine' | 'noise';
+  /** Hz at the start */
+  pitch?: number;
+  /** semitones over the sound */
+  slide?: number;
+  /** seconds */
+  length?: number;
+  noise?: number; punch?: number; tone?: number; sweep?: number; attack?: number; duty?: number;
+  jump?: number; jumpAt?: number; vibrato?: number; vibRate?: number; repeat?: number;
+  crush?: number; echo?: number; reverb?: number; volume?: number;
+  /** how much each play differs, 0–1 */
+  vary?: number;
+  /** tuned to the chord playing */
+  key?: boolean;
+  at?: SoundAt;
+  /** how much quieter the music gets under it, 0–1 */
+  duck?: number;
+}
+export type SoundAt = 'now' | 'step' | 'beat';
+export interface SoundOptions { pitch?: number; volume?: number; pan?: number; at?: SoundAt }
+
 export interface Song {
   name?: string;
   format?: number;
@@ -126,6 +151,7 @@ export interface Song {
   progressions?: Progression[];
   moods?: Record<string, { sections: Record<string, Weight> }>;
   stingers?: Stinger[];
+  sounds?: Sound[];
   startSection?: string;
   breath?: { every: number; bars: [number, number]; keep?: string[] };
   /** swing, humanize, leadIn, master, fx … (SONG_FORMAT.md) */
@@ -169,6 +195,11 @@ export class StardriftPlayer {
   /** one of the song's moods, or 'auto'; within: bars until the move starts (default 2) */
   setMood(mood: string, options?: { within?: number }): void;
   sting(id: string, options?: { at?: StingAt }): void;
+  /** a game sound: one of the song's (its id) or a sound's own settings; it sounds with the music paused too */
+  sound(sound: string | Omit<Sound, 'id'>, options?: SoundOptions): Promise<void>;
+  stopSounds(): void;
+  /** the sounds' own volume (setVolume: everything) */
+  setSoundVolume(volume: number): void;
   on<K extends keyof StardriftEvents>(type: K, fn: (event: StardriftEvents[K]) => void): () => void;
   on(type: '*', fn: (event: StardriftEvents[keyof StardriftEvents]) => void): () => void;
   off(type: string, fn: Function): void;
@@ -204,6 +235,9 @@ export class Engine {
   setSamples(samples: Samples): void;
   setMood(mood: string, options?: { within?: number }): void;
   sting(id: string, options?: { at?: StingAt }): boolean;
+  sound(sound: string | Omit<Sound, 'id'>, options?: SoundOptions): boolean;
+  stopSounds(): void;
+  setSoundVolume(volume: number): void;
   /** the events since the last call (StardriftEvents) */
   drainEvents(): StardriftEvents[keyof StardriftEvents][];
 }
@@ -226,3 +260,10 @@ export function openSongZip(buffer: ArrayBuffer): Promise<{ song: Song; read: Re
 export function zip(files: { name: string; data: string | Uint8Array }[], date?: Date): Uint8Array;
 export function unzip(buffer: ArrayBuffer | Uint8Array): { names: string[]; has(name: string): boolean; read(name: string): Promise<Uint8Array> };
 export function isZip(buffer: ArrayBuffer | Uint8Array): boolean;
+
+/** a sound into a buffer, dry and mono (seed: which take, when it varies) */
+export function renderSound(sound: Omit<Sound, 'id'>, options?: { sr?: number; seed?: number; opts?: SoundOptions }): Float32Array;
+/** a sound with every setting there, in range */
+export function soundOf(sound: Partial<Sound>): Required<Omit<Sound, 'id' | 'name'>>;
+export const SFX_DEFAULTS: Required<Omit<Sound, 'id' | 'name'>>;
+export const SFX_WAVES: string[];

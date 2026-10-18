@@ -158,6 +158,13 @@
         "$ref": "#/definitions/stinger"
       },
       "description": "discovery, alert, jump, reward"
+    },
+    "sounds": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/sound"
+      },
+      "description": "game sounds made by synthesis: jump, coin, hit, explosion (music.sound(id))"
     }
   },
   "definitions": {
@@ -1157,6 +1164,146 @@
         "then": {
           "type": "string",
           "description": "a mood with a flow: as the stinger ends, the music is there at once"
+        }
+      }
+    },
+    "sound": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "jump, coin, hit, or your own: music.sound(id)"
+        },
+        "name": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "wave": {
+          "enum": [
+            "square",
+            "triangle",
+            "saw",
+            "sine",
+            "noise"
+          ]
+        },
+        "pitch": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 8000
+        },
+        "slide": {
+          "type": "number",
+          "minimum": -72,
+          "maximum": 72
+        },
+        "length": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 4
+        },
+        "noise": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "punch": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "tone": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "sweep": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "attack": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "duty": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 0.5
+        },
+        "jump": {
+          "type": "number",
+          "minimum": -36,
+          "maximum": 36
+        },
+        "jumpAt": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vibrato": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vibRate": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 40
+        },
+        "repeat": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "crush": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "echo": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reverb": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vary": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "key": {
+          "type": "boolean",
+          "description": "tuned to the nearest note of the chord playing"
+        },
+        "at": {
+          "enum": [
+            "now",
+            "step",
+            "beat"
+          ],
+          "description": "when it starts: now (default), the next step or the next beat"
+        },
+        "duck": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         }
       }
     },

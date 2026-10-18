@@ -42,6 +42,9 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'state': e.emitState(); break;
         case 'preview': e.preview(m.inst, m.events, m.options); break;
         case 'stopPreview': e.stopPreview(); break;
+        case 'sound': e.sound(m.def || m.id, m.options); break;
+        case 'stopSounds': e.stopSounds(); break;
+        case 'soundVolume': e.setSoundVolume(m.v); break;
         case 'keyOn': e.keyOn(m.inst, m.note, m.options); break;
         case 'keyOff': e.keyOff(m.note); break;
       }

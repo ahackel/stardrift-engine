@@ -193,6 +193,9 @@ export function prepareSong(raw) {
     chordList: parseChords(x.chords),
   }));
   s.stingMap = Object.fromEntries(s.stingers.map((x) => [x.id, x]));
+  // game sounds (sfx.js): the game plays them by id
+  s.sounds = (raw.sounds || []).filter((x) => x && x.id);
+  s.soundMap = Object.fromEntries(s.sounds.map((x) => [x.id, x]));
 
   // blocks (clips) are a pool: a track lists the ones it plays (tracks[].clips), and one block can be on several
   // tracks. Older songs name the track on the block instead.

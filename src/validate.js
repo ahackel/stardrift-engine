@@ -9,6 +9,7 @@ import { migrateSong } from './engine/plays.js';
 import { KITS } from './engine/drums.js';
 import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
 import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
+import { SFX_DEFAULTS, SFX_WAVES, SFX_AT, SFX_RANGES } from './engine/sfx.js';
 
 export const KEYS = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
 export const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
@@ -20,7 +21,7 @@ export const SWITCH = ['bar', 'phrase', 'section'];
 export const FIELDS = {
   song: ['$schema', 'format', 'name', 'bpm', 'key', 'scale', 'stepsPerBeat', 'beatsPerBar', 'swing', 'humanize', 'variation', 'blockChange', 'fillChance',
     'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'effectTracks', 'blocks', 'sections',
-    'progressions', 'moods', 'stingers'],
+    'progressions', 'moods', 'stingers', 'sounds'],
   instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'wave', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'kit', 'preset', 'unison',
     'detune', 'ensemble', 'breath', 'env', 'gain', 'glide', 'scoop', 'vibrato', 'body', 'wah', 'drive', 'amp', 'cutoff', 'resonance', 'filter',
     'swell', 'filterEnv', 'crush', 'eq', 'phaser', 'chorus', 'tremolo', 'autopan'],
@@ -34,6 +35,7 @@ export const FIELDS = {
   part: ['track', 'pattern', 'block', 'mode'],
   breath: ['every', 'bars', 'keep'],
   fx: ['kind', 'from', 'to', 'shape', 'beats', 'rate'],
+  sound: ['id', 'name', 'color', ...Object.keys(SFX_DEFAULTS)],
 };
 
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -280,6 +282,16 @@ export function validateSong(raw, { samples } = {}) {
     } else if (!Object.values(m.sections || {}).some((w) => w > 0)) warn(`${where}: names no section, so it leads nowhere`);
   }
   if (s.startMood !== undefined && !(isObj(s.moods) && Array.isArray(s.moods[s.startMood]?.flow))) err(`the song: "startMood" names no mood with a flow: "${s.startMood}"`);
+
+  // game sounds
+  for (const x of byId(s.sounds, 'sound').values()) {
+    const where = `sound "${x.id}"`;
+    fields(x, 'sound', where);
+    if (x.wave !== undefined && !SFX_WAVES.includes(x.wave)) err(`${where}: "wave" must be ${list(SFX_WAVES)}`);
+    if (x.at !== undefined && !SFX_AT.includes(x.at)) err(`${where}: "at" must be ${list(SFX_AT)}`);
+    if (x.key !== undefined && typeof x.key !== 'boolean') err(`${where}: "key" must be true or false`);
+    inRange(x, SFX_RANGES, where);
+  }
 
   // stingers
   for (const x of stingers.values()) {

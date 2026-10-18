@@ -222,6 +222,24 @@ A song can also be laid out like a sequencer's arrangement: each section holds b
 
 `{ id, at, beats, chords, duck, parts, then }`: a short phrase for a game event, from the next `at` (`step beat half bar`). `parts` `[{ track, pattern, mode }]` each borrow a track for the stinger's `beats` (a pattern of `beats × 4` steps), or `[{ track, block }]` play a block's notes. `chords`: its own, like a progression's. `duck` 0–1: how far the rest of the music ducks under it. `then`: a mood with a flow; as the stinger ends the music is there at once, its bar line where the stinger ends, with no fill (the stinger was the way in): `{ "id": "boss_appears", "beats": 4, "then": "action", "parts": [{ "track": "drums", "block": "hit" }] }`.
 
+## Game sounds
+
+`sounds` lists the song's game sounds: short sound effects made by synthesis, so a game ships no audio files. The game plays one with `music.sound('coin')`, over the music (and with the music paused).
+
+```json
+"sounds": [
+  { "id": "jump", "wave": "square", "pitch": 260, "slide": 14, "length": 0.22, "punch": 0.3, "duty": 0.25 },
+  { "id": "coin", "pitch": 990, "jump": 5, "jumpAt": 0.25, "length": 0.3, "key": true }
+]
+```
+
+- `wave`: `square` (default), `triangle`, `saw`, `sine` or `noise`. `pitch`: Hz at the start (440); `slide`: semitones it moves over the sound (−: down); `jump`: semitones it jumps by at `jumpAt` (0–1 of the length, 0.3); `vibrato` 0–1 (up to a semitone) at `vibRate` Hz (12); `repeat`: seconds after which the pitch starts over, the slide and the jump running over each repeat (an alarm), 0 for once.
+- `length`: seconds (0.25). `attack` 0–1 of the length (0); `punch` 0–1 (0.5): 0 holds on and fades at the end, 1 hits and dies away at once.
+- `noise` 0–1: noise mixed in, pitched by `pitch`. `tone` 0–1 (1): a low pass, dark to open; `sweep` −1–1: it moves over the sound. `duty` 0.05–0.5: the square's width. `crush` 0–1: fewer bits, a lower rate.
+- `volume` 0–1 (0.7); `echo` and `reverb` 0–1: sends to the song's echo and reverb (0, 0.1); `duck` 0–1: the music gets this much quieter while it sounds.
+- `vary` 0–1 (0.15): how much each play differs in pitch, length and tone, so a sound heard again and again doesn't repeat itself. `key`: tuned to the nearest note of the chord playing, and a `jump` to the next chord tone (coins play along with the music). `at`: `now` (default), `step` or `beat`: when it starts.
+- `music.sound(id, { pitch, volume, pan, at })`: `pitch` × (1.2: higher), `volume` ×, `pan` −1–1, `at` for this play. `music.sound({ … })` plays a sound's own settings; `music.setSoundVolume(v)` sets the sounds' volume, `music.stopSounds()` stops them.
+
 ## Writing a good song
 
 - Give the song its own sounds; the example's are one palette of many. Bells, e-pianos and marimbas: `fm` (`ratio` 3–7, short `env`); strings: `wave` `saw`, `smooth`, `unison` 3, `ensemble`, `body` `strings`; brass: `body` `brass` with a `filterEnv`; plucks and guitars: `string` (rock: `drive` and `amp` `guitar`); choirs: `wave` `saw` with `body` `ah` or `oo`; real instruments: `sample`.

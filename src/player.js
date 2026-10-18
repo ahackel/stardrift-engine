@@ -32,6 +32,7 @@ const warnAbout = (song) => import('./validate.js').then(({ validateSong }) => {
 //   music.play();
 //   music.setMood('relaxed');                 // or 'tension', 'danger', 'wonder' … (the song's moods), 'auto'
 //   music.sting('discovery');                 // a short phrase for a game event, in key and on the beat
+//   music.sound('coin');                      // a game sound (song.sounds), made by synthesis: no audio files
 //
 export class StardriftPlayer {
   constructor() {
@@ -72,6 +73,7 @@ export class StardriftPlayer {
     if (this.meters) this.send({ type: 'meters', on: true });
     if (this.song) this.send({ type: 'load', song: this.song, seed: this.seed, restart: true });
     if (this.mood) this.send({ type: 'mood', ...this.mood }); // asked for before there was audio
+    if (this.soundVolume !== undefined) this.send({ type: 'soundVolume', v: this.soundVolume });
     this.library = library;
     this.requested = new Set();
     if (this.song) this.need(songSamples(this.song));
@@ -237,6 +239,18 @@ export class StardriftPlayer {
     this.warnUnless(this.song?.stingers?.some((x) => x.id === id), `no stinger "${id}"`, (this.song?.stingers || []).map((x) => x.id));
     this.send({ type: 'sting', id, options });
   }
+  // A game sound (song.sounds) by its id, or a sound's own settings: over the music, at once (or from the next step or
+  // beat: options.at, else the sound's own). options: { pitch: × (1.2: higher), volume, pan: −1–1, at: 'now' | 'step' | 'beat' }.
+  // With the music paused it still sounds (the song stands still).
+  async sound(ref, options) {
+    const def = typeof ref === 'string' ? this.song?.sounds?.find((x) => x.id === ref) : ref;
+    if (typeof ref === 'string') this.warnUnless(def, `no sound "${ref}"`, (this.song?.sounds || []).map((x) => x.id));
+    if (!this.ctx || !def) return;
+    if (!this.playing) await this.audition((+def.length || 0.25) + 2);
+    this.send(typeof ref === 'string' ? { type: 'sound', id: ref, options } : { type: 'sound', def: ref, options });
+  }
+  stopSounds() { this.send({ type: 'stopSounds' }); }
+  setSoundVolume(v) { this.soundVolume = v; this.send({ type: 'soundVolume', v }); } // the sounds' own volume (setVolume: everything)
   // a game's call that names nothing in the song does nothing: it says so in the console
   warnUnless(ok, text, names) { if (this.song && !ok) console.warn(`stardrift: ${this.song.name || 'the song'} has ${text} (${names.join(', ') || 'none'})`); }
   setMute(track, on) { this.send({ type: 'mute', track, on }); }

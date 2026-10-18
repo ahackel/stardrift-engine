@@ -8,6 +8,7 @@ import { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTa
 import { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } from './dsp.js';
 import { clamp, clamp01 } from './theory.js';
 import { Moves } from './moves.js';
+import { SfxVoice } from './sfx.js';
 
 const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
 
@@ -858,6 +859,8 @@ export class Synth {
     this.duck = null;
     this.kick = 0; this.kickT = 0; this.kickRel = 0.999; // sidechain envelope: jumps on every kick, recovers
     this.samples = {}; // the sample library, once loaded (Engine.setSamples)
+    this.sfx = []; this.sfxGain = 1; // game sounds playing (sfx.js), over the music and its effect rows
+    this.dk = 0; this.dkAtt = 1 - Math.exp(-1 / (0.005 * sr)); this.dkRel = 1 - Math.exp(-1 / (0.2 * sr)); // a sound's duck on the music
   }
   // a bus for a sound with `poly` voices (a drum kit: 6): the old one while it fits, else a new one
   busFor(bus, def, poly) {
@@ -923,6 +926,16 @@ export class Synth {
     this.mix = new Moves(this.sr, 2);
     for (const b of this.list) b.mv = new Moves(this.sr);
   }
+  // a game sound (a play's settings, sfx.js playOf): on a free voice of 8, else in place of the one playing longest
+  sound(p) {
+    let v = this.sfx.find((x) => x.done);
+    if (!v) {
+      if (this.sfx.length < 8) this.sfx.push((v = new SfxVoice(this.sr)));
+      else v = this.sfx.reduce((a, b) => (b.t > a.t ? b : a));
+    }
+    v.start(p);
+  }
+  stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
   release(id) { this.tracks[id]?.release(); }
   drum(id, hits, vel) {
@@ -1010,6 +1023,16 @@ export class Synth {
       const x = kb.render();
       l += x * kb.pl; r += x * kb.pr; e += x * kb.echo; v += x * kb.rev;
     }
+    let sl = 0, sr = 0, dk = 0; // the game sounds
+    if (this.sfx.length) {
+      for (const sv of this.sfx) {
+        if (sv.done) continue;
+        const x = sv.render() * this.sfxGain;
+        sl += x * sv.pl; sr += x * sv.pr; e += x * sv.p.echo; v += x * sv.p.reverb;
+        if (sv.p.duck > dk) dk = sv.p.duck;
+      }
+    }
+    this.dk += (dk - this.dk) * (dk > this.dk ? this.dkAtt : this.dkRel);
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;
     this.reverb.process(v + (el + er) * 0.5 * this.echoToRev);
@@ -1018,6 +1041,8 @@ export class Synth {
     r = (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m;
     mix.tick();
     if (mix.on) { l = mix.run(l, 0); r = mix.run(r, 1); }
+    if (this.dk > 1e-4) { l *= 1 - this.dk; r *= 1 - this.dk; }
+    l += sl; r += sr;
     bus.process(l, r);
     const al = bus.l < 0 ? -bus.l : bus.l, ar = bus.r < 0 ? -bus.r : bus.r; // before the soft clip: above 1 it squashes
     if (al > this.peakL) this.peakL = al;

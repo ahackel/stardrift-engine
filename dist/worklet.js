@@ -610,6 +610,9 @@ function prepareSong(raw) {
     chordList: parseChords(x.chords),
   }));
   s.stingMap = Object.fromEntries(s.stingers.map((x) => [x.id, x]));
+  // game sounds (sfx.js): the game plays them by id
+  s.sounds = (raw.sounds || []).filter((x) => x && x.id);
+  s.soundMap = Object.fromEntries(s.sounds.map((x) => [x.id, x]));
 
   // blocks (clips) are a pool: a track lists the ones it plays (tracks[].clips), and one block can be on several
   // tracks. Older songs name the track on the block instead.
@@ -1152,12 +1155,183 @@ class Moves {
 return { FX_KINDS, FX_SHAPES, Moves, fxAt, fxJoin, onMix };
 })();
 
+const $engine_sfx = (() => {
+const { blep, svfSet, svf, LP, TWO_PI } = $engine_dsp;
+const { Rng } = $engine_rng;
+// Game sounds (song.sounds): short sound effects made by synthesis, so a game ships no audio files: a jump, a coin, a
+// hit, an explosion. One oscillator (or noise) whose pitch slides and jumps, a low pass, an envelope; each play varies
+// a little (vary), can be tuned to the chord playing (key) and can wait for the beat (at). SfxVoice plays one;
+// renderSound puts one into a buffer (the editor's picture of it, a WAV for another engine).
+
+const SFX_WAVES = ['square', 'triangle', 'saw', 'sine', 'noise'];
+// every setting, and what it is when a sound leaves it out
+const SFX_DEFAULTS = {
+  wave: 'square',
+  pitch: 440, // Hz at the start
+  slide: 0, // semitones the pitch moves over the sound (−: down)
+  length: 0.25, // seconds
+  noise: 0, // 0–1: noise mixed in (pitched: it follows the pitch)
+  punch: 0.5, // 0–1: 0 holds on and fades at the end, 1 hits and dies away at once
+  tone: 1, // 0–1: the low pass, dark to open
+  sweep: 0, // −1–1: the low pass moves over the sound (by up to 5 octaves)
+  attack: 0, // 0–1 of the length: how slowly it comes in
+  duty: 0.5, // the square's width, 0.05–0.5 (thinner: nasal)
+  jump: 0, // semitones the pitch jumps by, at jumpAt (a coin: up a fourth)
+  jumpAt: 0.3, // 0–1 of the length
+  vibrato: 0, // 0–1: up to a semitone
+  vibRate: 12, // Hz
+  repeat: 0, // seconds: the pitch starts over this often, its slide and jump over each repeat (an alarm, a ratchet); 0: once
+  crush: 0, // 0–1: fewer bits, a lower rate
+  echo: 0, // 0–1: send to the song's echo
+  reverb: 0.1, // 0–1: send to the song's reverb
+  volume: 0.7,
+  vary: 0.15, // 0–1: how much each play differs (pitch, length, tone)
+  key: false, // tuned to the nearest note of the chord playing (and a jump to the next one)
+  at: 'now', // 'now' | 'step' | 'beat': when it starts
+  duck: 0, // 0–1: the music gets this much quieter while it sounds
+};
+const KEYS = Object.keys(SFX_DEFAULTS);
+const SFX_AT = ['now', 'step', 'beat'];
+// the numbers' ranges: [key, min, max]
+const SFX_RANGES = [['pitch', 20, 8000], ['slide', -72, 72], ['length', 0.01, 4], ['noise', 0, 1], ['punch', 0, 1], ['tone', 0, 1], ['sweep', -1, 1],
+  ['attack', 0, 1], ['duty', 0.05, 0.5], ['jump', -36, 36], ['jumpAt', 0, 1], ['vibrato', 0, 1], ['vibRate', 0.5, 40], ['repeat', 0, 4], ['crush', 0, 1],
+  ['echo', 0, 1], ['reverb', 0, 1], ['volume', 0, 1], ['vary', 0, 1], ['duck', 0, 1]];
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+
+// a sound with every setting there, in range
+function soundOf(def = {}) {
+  const d = SFX_DEFAULTS, s = {};
+  for (const k of KEYS) s[k] = def[k] ?? d[k];
+  s.wave = SFX_WAVES.includes(s.wave) ? s.wave : d.wave;
+  s.pitch = clamp(num(s.pitch, d.pitch), 20, 8000);
+  s.slide = clamp(num(s.slide, 0), -72, 72);
+  s.length = clamp(num(s.length, d.length), 0.01, 4);
+  for (const k of ['noise', 'punch', 'tone', 'attack', 'vibrato', 'crush', 'echo', 'reverb', 'volume', 'vary', 'duck', 'jumpAt']) s[k] = clamp(num(s[k], d[k]), 0, 1);
+  s.sweep = clamp(num(s.sweep, 0), -1, 1);
+  s.duty = clamp(num(s.duty, d.duty), 0.05, 0.5);
+  s.jump = clamp(num(s.jump, 0), -36, 36);
+  s.vibRate = clamp(num(s.vibRate, d.vibRate), 0.5, 40);
+  s.repeat = clamp(num(s.repeat, 0), 0, 4);
+  s.key = !!s.key;
+  return s;
+}
+
+// One play's settings, worked out once: the sound, varied by rng, opts ({ pitch: × , volume, pan }), and tuned
+// by snap (midi → the chord tone to play, or null)
+function playOf(def, rng, opts = {}, snap = null) {
+  const s = soundOf(def), v = s.vary;
+  const r = () => rng.next() * 2 - 1;
+  let pitch = s.pitch * num(opts.pitch, 1) * Math.pow(2, (r() * v * 3) / 12), jump = s.jump;
+  if (snap && s.key) {
+    const m = 69 + 12 * Math.log2(pitch / 440), m0 = snap(m, 0);
+    if (m0 != null) {
+      pitch = 440 * Math.pow(2, (m0 - 69) / 12);
+      if (jump) { const mj = snap(m0 + jump, Math.sign(jump)); if (mj != null && mj !== m0) jump = mj - m0; }
+    }
+  }
+  return {
+    ...s, pitch, jump,
+    length: s.length * (1 + r() * v * 0.3),
+    tone: clamp(s.tone + r() * v * 0.15, 0, 1),
+    gain: s.volume * s.volume * clamp(num(opts.volume, 1), 0, 2),
+    pan: clamp(num(opts.pan, 0), -1, 1),
+    seed: (rng.next() * 4294967296) >>> 0,
+  };
+}
+
+const CTL = 32; // samples between control values (pitch, envelope, the low pass)
+
+// One sound playing. start(p) with a play's settings (playOf); render() returns its next (mono) sample; done once over.
+class SfxVoice {
+  constructor(sr) {
+    this.sr = sr;
+    this.done = true;
+    this.f = { mode: LP, k: 1.2, a1: 0, a2: 0, a3: 0 };
+    this.st = { ic1: 0, ic2: 0 };
+  }
+  start(p) {
+    const sr = this.sr;
+    this.p = p;
+    this.n = Math.max(CTL, Math.round(p.length * sr));
+    this.t = 0;
+    this.ph = 0; this.inc = 0; this.nz = 0; this.nzPh = 0;
+    this.env = 0; this.envTo = 0; this.envD = 0;
+    this.att = Math.max(Math.round(0.001 * sr), Math.round(p.attack * this.n));
+    this.pow = 0.5 + 3 * p.punch;
+    this.rep = p.repeat > 0 ? Math.max(CTL, Math.round(p.repeat * sr)) : 0;
+    this.cut0 = 200 * Math.pow(2, p.tone * 6.7);
+    this.filt = p.tone < 0.999 || p.sweep !== 0;
+    this.st.ic1 = this.st.ic2 = 0;
+    this.rng = new Rng(p.seed || 1);
+    this.levels = Math.pow(2, 11 - 9 * p.crush); this.cStep = Math.pow(2, -4 * p.crush); this.cPh = 1; this.hold = 0;
+    this.pl = Math.sqrt(0.5 * (1 - p.pan)); this.pr = Math.sqrt(0.5 * (1 + p.pan));
+    this.done = false;
+    this.control();
+  }
+  // the next control values: where the pitch, the envelope and the low pass are CTL samples on
+  control() {
+    const p = this.p, sr = this.sr, t = this.t, n = this.n, u = t / n;
+    const up = this.rep ? (t % this.rep) / this.rep : u; // with repeat, the slide and the jump run over each repeat
+    let semis = p.slide * up + (p.jump && up >= p.jumpAt ? p.jump : 0);
+    if (p.vibrato) semis += p.vibrato * Math.sin((TWO_PI * p.vibRate * t) / sr);
+    const f = Math.min(sr * 0.45, p.pitch * Math.pow(2, semis / 12));
+    this.inc = f / sr;
+    const te = Math.min(n, t + CTL);
+    const e = te < this.att ? te / this.att : Math.pow(Math.max(0, 1 - (te - this.att) / Math.max(1, n - this.att)), this.pow);
+    this.envD = (e - this.env) / CTL;
+    if (this.filt) svfSet(this.f, Math.min(sr * 0.45, this.cut0 * Math.pow(2, p.sweep * 5 * u)), 1.2, sr).mode = LP;
+  }
+  render() {
+    if (this.done) return 0;
+    const p = this.p;
+    if (this.t % CTL === 0 && this.t) this.control();
+    const dt = this.inc;
+    let ph = this.ph + dt;
+    if (ph >= 1) ph -= 1;
+    this.ph = ph;
+    let x = 0;
+    if (p.noise < 1 && p.wave !== 'noise') {
+      if (p.wave === 'square') { x = ph < p.duty ? 1 : -1; x += blep(ph, dt); let q = ph - p.duty; if (q < 0) q += 1; x -= blep(q, dt); }
+      else if (p.wave === 'saw') x = 2 * ph - 1 - blep(ph, dt);
+      else if (p.wave === 'triangle') x = ph < 0.5 ? 4 * ph - 1 : 3 - 4 * ph;
+      else x = Math.sin(TWO_PI * ph);
+    }
+    const nAmt = p.wave === 'noise' ? 1 : p.noise;
+    if (nAmt > 0) {
+      if ((this.nzPh += dt * 32) >= 1) { this.nzPh -= Math.floor(this.nzPh); this.nz = this.rng.next() * 2 - 1; } // a new value 32 times a period
+      x = x * (1 - nAmt) + this.nz * nAmt;
+    }
+    if (this.filt) x = svf(this.f, this.st, x);
+    if (p.crush > 0.001) {
+      if ((this.cPh += this.cStep) >= 1) { this.cPh -= 1; this.hold = Math.round(x * this.levels) / this.levels; }
+      x = this.hold;
+    }
+    this.env += this.envD;
+    if (++this.t >= this.n) this.done = true;
+    return x * (this.env > 0 ? this.env : 0) * p.gain * 0.8;
+  }
+}
+
+// A sound into a buffer, dry and mono: Float32Array at sr. seed varies it (vary 0: always the same).
+function renderSound(def, { sr = 48000, seed = 1, opts } = {}) {
+  const p = playOf(def, new Rng(seed), opts), v = new SfxVoice(sr);
+  v.start(p);
+  const out = new Float32Array(v.n);
+  for (let i = 0; i < out.length; i++) out[i] = v.render();
+  return out;
+}
+
+return { SFX_AT, SFX_DEFAULTS, SFX_RANGES, SFX_WAVES, SfxVoice, playOf, renderSound, soundOf };
+})();
+
 const $engine_synth = (() => {
 const { DrumVoice, compileKit } = $engine_drums;
 const { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTables, levelLimits, cachedTables } = $engine_wavetable;
 const { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } = $engine_dsp;
 const { clamp, clamp01 } = $engine_theory;
 const { Moves } = $engine_moves;
+const { SfxVoice } = $engine_sfx;
 // Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
 // (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
 // section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, auto-pan, ping-pong echo and a small Freeverb.
@@ -2013,6 +2187,8 @@ class Synth {
     this.duck = null;
     this.kick = 0; this.kickT = 0; this.kickRel = 0.999; // sidechain envelope: jumps on every kick, recovers
     this.samples = {}; // the sample library, once loaded (Engine.setSamples)
+    this.sfx = []; this.sfxGain = 1; // game sounds playing (sfx.js), over the music and its effect rows
+    this.dk = 0; this.dkAtt = 1 - Math.exp(-1 / (0.005 * sr)); this.dkRel = 1 - Math.exp(-1 / (0.2 * sr)); // a sound's duck on the music
   }
   // a bus for a sound with `poly` voices (a drum kit: 6): the old one while it fits, else a new one
   busFor(bus, def, poly) {
@@ -2078,6 +2254,16 @@ class Synth {
     this.mix = new Moves(this.sr, 2);
     for (const b of this.list) b.mv = new Moves(this.sr);
   }
+  // a game sound (a play's settings, sfx.js playOf): on a free voice of 8, else in place of the one playing longest
+  sound(p) {
+    let v = this.sfx.find((x) => x.done);
+    if (!v) {
+      if (this.sfx.length < 8) this.sfx.push((v = new SfxVoice(this.sr)));
+      else v = this.sfx.reduce((a, b) => (b.t > a.t ? b : a));
+    }
+    v.start(p);
+  }
+  stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
   release(id) { this.tracks[id]?.release(); }
   drum(id, hits, vel) {
@@ -2165,6 +2351,16 @@ class Synth {
       const x = kb.render();
       l += x * kb.pl; r += x * kb.pr; e += x * kb.echo; v += x * kb.rev;
     }
+    let sl = 0, sr = 0, dk = 0; // the game sounds
+    if (this.sfx.length) {
+      for (const sv of this.sfx) {
+        if (sv.done) continue;
+        const x = sv.render() * this.sfxGain;
+        sl += x * sv.pl; sr += x * sv.pr; e += x * sv.p.echo; v += x * sv.p.reverb;
+        if (sv.p.duck > dk) dk = sv.p.duck;
+      }
+    }
+    this.dk += (dk - this.dk) * (dk > this.dk ? this.dkAtt : this.dkRel);
     this.echo.process(e);
     const el = this.echo.outL, er = this.echo.outR;
     this.reverb.process(v + (el + er) * 0.5 * this.echoToRev);
@@ -2173,6 +2369,8 @@ class Synth {
     r = (r + er * this.echoLevel + this.reverb.outR * this.revLevel) * m;
     mix.tick();
     if (mix.on) { l = mix.run(l, 0); r = mix.run(r, 1); }
+    if (this.dk > 1e-4) { l *= 1 - this.dk; r *= 1 - this.dk; }
+    l += sl; r += sr;
     bus.process(l, r);
     const al = bus.l < 0 ? -bus.l : bus.l, ar = bus.r < 0 ? -bus.r : bus.r; // before the soft clip: above 1 it squashes
     if (al > this.peakL) this.peakL = al;
@@ -2339,6 +2537,7 @@ const { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod
 const { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } = $engine_pattern;
 const { Synth } = $engine_synth;
 const { FX_KINDS, fxAt, fxJoin, onMix } = $engine_moves;
+const { playOf } = $engine_sfx;
 const { autoFade } = $engine_params;
 const { weightIn, chanceIn } = $engine_plays;
 // The engine = conductor (decides WHAT plays) + sequencer (WHEN) + synth (HOW it sounds).
@@ -2394,6 +2593,8 @@ class Engine {
     if (seed !== undefined) this.seed = seed >>> 0;
     this.rng = new Rng(this.seed);
     this.vrng = new Rng(this.seed ^ 0x9e3779b9); // velocity humanizing has its own stream: it never changes the arrangement
+    this.srng = new Rng(this.seed ^ 0x51ed270b); // so has the game sounds' variation
+    this.sfxQ = []; // game sounds waiting for their step or beat: {def, opts, q}
     this.step = 0;
     this.stepTimer = 0;
     this.clock = 0; this.later = []; // samples played; notes waiting to start (lagOf)
@@ -2678,6 +2879,33 @@ class Engine {
     return true;
   }
 
+  // A game sound (song.sounds, by id; or a sound's own settings): at once, or from the next step or beat (opts.at, else
+  // the sound's `at`). opts: { pitch: × (1.2: higher), volume, pan, at }. While held (editor) it plays at once.
+  sound(ref, opts = {}) {
+    const def = typeof ref === 'string' ? this.song.soundMap[ref] : ref;
+    if (!def || typeof def !== 'object') return false;
+    const q = { step: 1, beat: this.song.spb }[opts.at || def.at];
+    if (q && !this.hold) this.sfxQ.push({ def, opts, q });
+    else this.playSound(def, opts);
+    return true;
+  }
+  playSound(def, opts) { this.synth.sound(playOf(def, this.srng, opts, (m, dir) => this.snap(m, dir))); }
+  stopSounds() { this.sfxQ = []; this.synth.stopSounds(); }
+  setSoundVolume(v) { this.synth.sfxGain = Math.max(0, +v || 0); }
+  // midi m (a fraction too) → the nearest tone of the chord playing (with no chord: of the scale); dir 1: the nearest
+  // above m, −1: below
+  snap(m, dir = 0) {
+    const scale = this.scaleNow(), chord = this.chord, L = scale.length, kr = this.song.keyRoot;
+    const pcs = chord.nc ? Array.from({ length: L }, (_, i) => mod(kr + degSemis(scale, i), 12))
+      : chord.shape.map((o) => mod(kr + degSemis(scale, foldDegree(chord.degree, L) + o), 12));
+    let best = null;
+    for (let k = Math.floor(m) - 12; k <= Math.ceil(m) + 12; k++) {
+      if (!pcs.includes(mod(k, 12)) || (dir > 0 && k <= m) || (dir < 0 && k >= m)) continue;
+      if (best === null || Math.abs(k - m) < Math.abs(best - m)) best = k;
+    }
+    return best;
+  }
+
   setMute(id, on) { this.synth.setMute(id, on); }
   setSolo(id, on) { this.synth.setSolo(id, on); }
 
@@ -2685,6 +2913,7 @@ class Engine {
   setHold(on) {
     on = !!on;
     if (on && !this.hold) { this.later = []; this.synth.releaseAll(); } // no late notes after the pause
+    if (on && this.sfxQ.length) { for (const x of this.sfxQ) this.playSound(x.def, x.opts); this.sfxQ = []; } // the beat they waited for won't come
     this.hold = on;
   }
 
@@ -2696,6 +2925,7 @@ class Engine {
     syn.pvQ = [];
     syn.pvI = 0;
     this.nextSting = null;
+    this.stopSounds();
     if (this.curSting) this.endSting(this.hold);
   }
   keyOn(inst, note, opts) { this.synth.keyOn(inst, note, opts); }
@@ -2744,6 +2974,7 @@ class Engine {
     const li = this.leadIn; // only while its section is still the one coming next (a mood change may have re-routed)
     const chordChanged = this.setChord(this.stingChord() || this.liveChord
       || (li && this.step >= li.start && this.nextSection === li.sec ? li.chord : this.chordAt(this.step)));
+    if (this.sfxQ.length) this.sfxQ = this.sfxQ.filter((x) => (this.step % x.q ? true : (this.playSound(x.def, x.opts), false)));
 
     const pos = {}, sg = this.curSting;
     for (const tr of s.tracks) {
@@ -3550,6 +3781,9 @@ class StardriftProcessor extends AudioWorkletProcessor {
         case 'state': e.emitState(); break;
         case 'preview': e.preview(m.inst, m.events, m.options); break;
         case 'stopPreview': e.stopPreview(); break;
+        case 'sound': e.sound(m.def || m.id, m.options); break;
+        case 'stopSounds': e.stopSounds(); break;
+        case 'soundVolume': e.setSoundVolume(m.v); break;
         case 'keyOn': e.keyOn(m.inst, m.note, m.options); break;
         case 'keyOff': e.keyOff(m.note); break;
       }
