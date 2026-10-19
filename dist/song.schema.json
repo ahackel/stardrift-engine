@@ -421,207 +421,12 @@
             }
           }
         },
-        "body": {
-          "oneOf": [
-            {
-              "enum": [
-                "violin",
-                "cello",
-                "strings",
-                "horn",
-                "brass",
-                "ah",
-                "oh",
-                "oo",
-                "ee"
-              ]
-            },
-            {
-              "type": "array"
-            }
-          ]
-        },
-        "wah": {
-          "type": "object",
-          "properties": {
-            "depth": {
-              "type": "number",
-              "minimum": 0.05,
-              "maximum": 1
-            },
-            "beats": {
-              "type": "number",
-              "minimum": 0.25,
-              "maximum": 8
-            },
-            "resonance": {
-              "type": "number",
-              "minimum": 1,
-              "maximum": 10
-            },
-            "mode": {
-              "enum": [
-                "note"
-              ]
-            }
-          }
-        },
-        "drive": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 2
-        },
-        "amp": {
-          "enum": [
-            "guitar",
-            "bass"
-          ]
-        },
-        "cutoff": {
-          "type": "number",
-          "minimum": 60,
-          "maximum": 16000
-        },
-        "resonance": {
-          "type": "number",
-          "minimum": 0.3,
-          "maximum": 6
-        },
-        "filter": {
-          "enum": [
-            "low",
-            "high"
-          ]
-        },
-        "swell": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 3
-        },
-        "filterEnv": {
-          "type": "object",
-          "properties": {
-            "amount": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 5
-            },
-            "decay": {
-              "type": "number",
-              "minimum": 0.02,
-              "maximum": 2
-            }
-          }
-        },
-        "crush": {
-          "type": "object",
-          "properties": {
-            "bits": {
-              "type": "number",
-              "minimum": 2,
-              "maximum": 12
-            },
-            "rate": {
-              "type": "number",
-              "minimum": 1000,
-              "maximum": 48000
-            }
-          }
-        },
-        "eq": {
-          "type": "object",
-          "properties": {
-            "low": {
-              "type": "number",
-              "minimum": -12,
-              "maximum": 12
-            },
-            "mid": {
-              "type": "number",
-              "minimum": -12,
-              "maximum": 12
-            },
-            "midHz": {
-              "type": "number",
-              "minimum": 200,
-              "maximum": 5000
-            },
-            "high": {
-              "type": "number",
-              "minimum": -12,
-              "maximum": 12
-            }
-          }
-        },
-        "phaser": {
-          "type": "object",
-          "properties": {
-            "depth": {
-              "type": "number",
-              "minimum": 0.05,
-              "maximum": 1
-            },
-            "beats": {
-              "type": "number",
-              "minimum": 0.25,
-              "maximum": 16
-            },
-            "feedback": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 0.9
-            }
-          }
-        },
-        "chorus": {
-          "type": "object",
-          "properties": {
-            "depth": {
-              "type": "number",
-              "minimum": 0.05,
-              "maximum": 1
-            },
-            "beats": {
-              "type": "number",
-              "minimum": 0.25,
-              "maximum": 16
-            },
-            "mode": {
-              "enum": [
-                "flanger"
-              ]
-            }
-          }
-        },
-        "tremolo": {
-          "type": "object",
-          "properties": {
-            "depth": {
-              "type": "number",
-              "minimum": 0.05,
-              "maximum": 1
-            },
-            "beats": {
-              "type": "number",
-              "minimum": 0.0625,
-              "maximum": 4
-            }
-          }
-        },
-        "autopan": {
-          "type": "object",
-          "properties": {
-            "depth": {
-              "type": "number",
-              "minimum": 0.05,
-              "maximum": 1
-            },
-            "beats": {
-              "type": "number",
-              "minimum": 0.125,
-              "maximum": 16
-            }
-          }
+        "fx": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/effect"
+          },
+          "description": "its effects, in the order the sound goes through them"
         }
       }
     },
@@ -880,7 +685,7 @@
                 "ramp",
                 "hump",
                 "wave",
-                "hold"
+                "step"
               ],
               "description": "ramp (default): from → to across its bars; hump: from → to → from; wave: between them every \"beats\"; hold: at to"
             },
@@ -895,7 +700,8 @@
               "minimum": 0.0625,
               "maximum": 4,
               "description": "a gate: beats per chop (0.25)"
-            }
+            },
+            "at": {}
           }
         }
       }
@@ -1170,7 +976,8 @@
     "sound": {
       "type": "object",
       "required": [
-        "id"
+        "id",
+        "layers"
       ],
       "additionalProperties": false,
       "properties": {
@@ -1184,86 +991,7 @@
         "color": {
           "type": "string"
         },
-        "wave": {
-          "enum": [
-            "square",
-            "triangle",
-            "saw",
-            "sine",
-            "noise"
-          ]
-        },
-        "pitch": {
-          "type": "number",
-          "minimum": 20,
-          "maximum": 8000
-        },
-        "slide": {
-          "type": "number",
-          "minimum": -72,
-          "maximum": 72
-        },
-        "length": {
-          "type": "number",
-          "minimum": 0.01,
-          "maximum": 4
-        },
-        "noise": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "punch": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "tone": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "sweep": {
-          "type": "number",
-          "minimum": -1,
-          "maximum": 1
-        },
-        "attack": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "duty": {
-          "type": "number",
-          "minimum": 0.05,
-          "maximum": 0.5
-        },
-        "jump": {
-          "type": "number",
-          "minimum": -36,
-          "maximum": 36
-        },
-        "jumpAt": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "vibrato": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "vibRate": {
-          "type": "number",
-          "minimum": 0.5,
-          "maximum": 40
-        },
-        "repeat": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 4
-        },
-        "crush": {
+        "volume": {
           "type": "number",
           "minimum": 0,
           "maximum": 1
@@ -1278,7 +1006,7 @@
           "minimum": 0,
           "maximum": 1
         },
-        "volume": {
+        "duck": {
           "type": "number",
           "minimum": 0,
           "maximum": 1
@@ -1300,10 +1028,291 @@
           ],
           "description": "when it starts: now (default), the next step or the next beat"
         },
-        "duck": {
+        "layers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/layer"
+          },
+          "minItems": 1,
+          "maxItems": 3,
+          "description": "the sources, summed: a wave or noise each, with its own envelope"
+        },
+        "fx": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/effect"
+          },
+          "description": "the effects the layers go through, in order"
+        }
+      }
+    },
+    "layer": {
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "wave": {
+          "enum": [
+            "square",
+            "triangle",
+            "saw",
+            "sine",
+            "noise"
+          ]
+        },
+        "off": {
+          "type": "boolean",
+          "description": "muted for now"
+        },
+        "pitch": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 8000
+        },
+        "length": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 4
+        },
+        "attack": {
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "punch": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "noise": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "duty": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 0.5
+        },
+        "level": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "delay": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "moves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/move",
+            "description": "on: pitch, level, noise, duty"
+          }
+        }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "body",
+            "wah",
+            "drive",
+            "filter",
+            "crush",
+            "eq",
+            "ring",
+            "vowel",
+            "delay",
+            "phaser",
+            "chorus",
+            "tremolo",
+            "autopan"
+          ]
+        },
+        "off": {
+          "type": "boolean",
+          "description": "bypassed for now"
+        },
+        "type": {
+          "description": "a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, ah, oh, oo, ee"
+        },
+        "bands": {
+          "type": "array",
+          "description": "a body of its own: [kind, Hz, Q, dB] each"
+        },
+        "depth": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 1
+        },
+        "resonance": {
+          "type": "number",
+          "minimum": 0.3,
+          "maximum": 6
+        },
+        "beats": {
+          "type": "number",
+          "description": "in music: how long one sweep takes, in beats"
+        },
+        "rate": {
+          "type": "number",
+          "description": "in a sound: how fast it goes, Hz (a crush: its sample rate)"
+        },
+        "mode": {
+          "enum": [
+            "note",
+            "flanger"
+          ],
+          "description": "a wah that follows the notes; a chorus as a flanger"
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "amp": {
+          "enum": [
+            "guitar",
+            "bass"
+          ]
+        },
+        "cutoff": {
+          "type": "number",
+          "minimum": 40,
+          "maximum": 16000
+        },
+        "env": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "decay": {
+          "type": "number",
+          "minimum": 0.02,
+          "maximum": 2
+        },
+        "swell": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "bits": {
+          "type": "number",
+          "minimum": 2,
+          "maximum": 12
+        },
+        "low": {
+          "type": "number",
+          "minimum": -12,
+          "maximum": 12
+        },
+        "mid": {
+          "type": "number",
+          "minimum": -12,
+          "maximum": 12
+        },
+        "midHz": {
+          "type": "number",
+          "minimum": 200,
+          "maximum": 5000
+        },
+        "high": {
+          "type": "number",
+          "minimum": -12,
+          "maximum": 12
+        },
+        "freq": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 4000
+        },
+        "mix": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vowel": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "time": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 1
+        },
+        "feedback": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.9
+        },
+        "square": {
+          "type": "boolean",
+          "description": "a tremolo that chops"
+        },
+        "moves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/move"
+          }
+        }
+      }
+    },
+    "move": {
+      "type": "object",
+      "required": [
+        "on",
+        "to"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "type": "string",
+          "description": "the setting it moves"
+        },
+        "shape": {
+          "enum": [
+            "ramp",
+            "hump",
+            "wave",
+            "step"
+          ],
+          "description": "ramp (default), hump, wave, or step (at `at`)"
+        },
+        "to": {
+          "type": "number",
+          "description": "where the setting goes, in its own units"
+        },
+        "beats": {
+          "type": "number",
+          "minimum": 0.0625,
+          "maximum": 16,
+          "description": "in music: how long it takes from each note (a wave: its period)"
+        },
+        "rate": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 60,
+          "description": "in a sound: a wave's, Hz"
+        },
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "a step: where it steps, of the way through"
+        },
+        "every": {
+          "type": "number",
+          "minimum": 0,
+          "description": "it starts over this often: beats in music, seconds in a sound; 0 once"
         }
       }
     },

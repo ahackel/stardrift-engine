@@ -7,9 +7,10 @@ import { expandTokens, parseToken, FORMS } from './engine/pattern.js';
 import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_NAMES, getAt } from './engine/params.js';
 import { migrateSong } from './engine/plays.js';
 import { KITS } from './engine/drums.js';
-import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
+import { WAVE_PRESETS } from './engine/synth.js';
 import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
-import { SFX_DEFAULTS, SFX_WAVES, SFX_AT, SFX_RANGES } from './engine/sfx.js';
+import { SFX_WAVES, SFX_AT, SFX_PARAMS, LAYER_PARAMS, LAYER_MOVES, SFX_MAX_LAYERS } from './engine/sfx.js';
+import { EFFECT_KINDS, FX_OPTIONS, MOVE_SHAPES, MOVE_PARAMS, fxParams } from './engine/fx.js';
 
 export const KEYS = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
 export const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
@@ -23,8 +24,7 @@ export const FIELDS = {
     'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'effectTracks', 'blocks', 'sections',
     'progressions', 'moods', 'stingers', 'sounds'],
   instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'wave', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'kit', 'preset', 'unison',
-    'detune', 'ensemble', 'breath', 'env', 'gain', 'glide', 'scoop', 'vibrato', 'body', 'wah', 'drive', 'amp', 'cutoff', 'resonance', 'filter',
-    'swell', 'filterEnv', 'crush', 'eq', 'phaser', 'chorus', 'tremolo', 'autopan'],
+    'detune', 'ensemble', 'breath', 'env', 'gain', 'glide', 'scoop', 'vibrato', 'fx'],
   track: ['id', 'name', 'color', 'instrument', 'octave', 'clips', 'mode', 'follow', 'stickiness', 'volume', 'pan', 'echo', 'reverb', 'double', 'pump', 'fade'],
   effectTrack: ['id', 'name', 'color', 'target', 'except', 'clips'],
   block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track', 'fx'],
@@ -34,8 +34,11 @@ export const FIELDS = {
   stinger: ['id', 'name', 'at', 'beats', 'chords', 'duck', 'parts', 'then'],
   part: ['track', 'pattern', 'block', 'mode'],
   breath: ['every', 'bars', 'keep'],
-  fx: ['kind', 'from', 'to', 'shape', 'beats', 'rate'],
-  sound: ['id', 'name', 'color', ...Object.keys(SFX_DEFAULTS)],
+  fx: ['kind', 'from', 'to', 'shape', 'beats', 'rate', 'at'],
+  sound: ['id', 'name', 'color', ...Object.keys(SFX_PARAMS), 'key', 'at', 'layers', 'fx'],
+  layer: ['wave', 'off', ...Object.keys(LAYER_PARAMS), 'moves'],
+  effect: ['kind', 'off', ...new Set(Object.values(EFFECT_KINDS).flatMap((k) => [...Object.keys(k.params), ...(k.beats ? ['beats'] : []), ...(k.rate ? ['rate'] : []), ...(k.opts || [])])), 'moves'],
+  move: ['on', 'shape', 'to', 'beats', 'rate', 'at', 'every'],
 };
 
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -58,6 +61,41 @@ export function validateSong(raw, { samples } = {}) {
       else if (v < min || v > max) warn(`${where}: "${path}" is ${v}, outside ${min}–${max}`);
     }
   };
+  // moves (of a sound's layer, of an effect) and effects (an instrument's, a sound's): music in beats, a sound in Hz
+  const ranges = (params) => Object.entries(params).map(([k, p]) => [k, p.min, p.max]);
+  const moves = (ms, params, music, where) => {
+    if (ms === undefined) return;
+    if (!Array.isArray(ms)) return err(`${where}: "moves" must be a list`);
+    const mp = music ? MOVE_PARAMS.music : MOVE_PARAMS.sound;
+    ms.forEach((m, i) => {
+      const at = `${where} move ${i + 1}`;
+      if (!isObj(m)) return err(`${at}: must be an object { on, shape, to }`);
+      fields(m, 'move', at);
+      if (!params[m.on]) return err(`${at}: "on" must be ${list(Object.keys(params))}`);
+      if (m.shape !== undefined && !MOVE_SHAPES.includes(m.shape)) err(`${at}: "shape" must be ${list(MOVE_SHAPES)}`);
+      if (music ? m.rate !== undefined : m.beats !== undefined) warn(`${at}: "${music ? 'rate' : 'beats'}" is a ${music ? 'sound' : 'track'}'s; ${music ? 'music goes in beats' : 'a sound goes in rate (Hz)'} (ignored)`);
+      inRange(m, [['to', params[m.on].min, params[m.on].max], ...ranges(mp)], at);
+    });
+  };
+  const effects = (fx, music, where) => {
+    if (fx === undefined) return;
+    if (!Array.isArray(fx)) return err(`${where}: "fx" must be a list of effects { kind, … }`);
+    const seen = new Set();
+    fx.forEach((f, i) => {
+      const at = `${where} effect ${i + 1}`;
+      if (!isObj(f)) return err(`${at}: must be an object { kind }`);
+      const params = fxParams(f.kind, music);
+      if (!params) return err(`${at}: "kind" must be ${list(Object.keys(EFFECT_KINDS))}`);
+      if (seen.has(f.kind)) warn(`${at}: a second ${f.kind} (only the first plays)`);
+      seen.add(f.kind);
+      fields(f, 'effect', at);
+      for (const [o, vals] of Object.entries(FX_OPTIONS[f.kind] || {})) if (f[o] !== undefined && !vals.includes(f[o]) && !(o === 'type' && f.kind === 'body' && f.bands)) err(`${at}: "${o}" must be ${list(vals)}`);
+      if (music ? f.rate !== undefined && f.kind !== 'crush' : f.beats !== undefined) warn(`${at}: "${music ? 'rate' : 'beats'}" is a ${music ? 'sound' : 'track'}'s (ignored)`);
+      inRange(f, ranges(params), at);
+      moves(f.moves, params, music, at);
+    });
+  };
+
   // a list of objects with unique ids, as a map
   const byId = (items, kind) => {
     const out = new Map();
@@ -132,11 +170,10 @@ export function validateSong(raw, { samples } = {}) {
     fields(d, 'instrument', where);
     if (d.type !== undefined && !TYPES.includes(d.type)) err(`${where}: no type ${JSON.stringify(d.type)} (${list(TYPES)})`);
     inRange(d, SOUND_PARAMS, where);
+    effects(d.fx, true, where);
     if (d.type === 'sample' && typeof d.sample !== 'string') err(`${where}: a sample instrument needs "sample": the recording's name`);
     if (d.type === 'sample' && samples && typeof d.sample === 'string' && !samples.includes(d.sample)) err(`${where}: no recording "${d.sample}" (${list(samples)})`);
     if (d.wave !== undefined && !WAVE_PRESETS.includes(d.wave) && !(Array.isArray(d.wave) && d.wave.length === 32 && d.wave.every((v) => v >= 0 && v <= 15))) err(`${where}: "wave" must be ${list(WAVE_PRESETS)} or 32 numbers 0–15`);
-    if (d.amp !== undefined && !AMPS[d.amp]) err(`${where}: no amp ${JSON.stringify(d.amp)} (${list(Object.keys(AMPS))})`);
-    if (typeof d.body === 'string' && !BODIES[d.body]) err(`${where}: no body "${d.body}" (${list(Object.keys(BODIES))})`);
     if (d.filter !== undefined && d.filter !== 'high' && d.filter !== 'low') err(`${where}: "filter" is "high" (a high pass) or left out (low pass)`);
     if (d.type === 'drums') {
       const preset = typeof d.kit === 'string' ? d.kit : d.preset;
@@ -287,10 +324,22 @@ export function validateSong(raw, { samples } = {}) {
   for (const x of byId(s.sounds, 'sound').values()) {
     const where = `sound "${x.id}"`;
     fields(x, 'sound', where);
-    if (x.wave !== undefined && !SFX_WAVES.includes(x.wave)) err(`${where}: "wave" must be ${list(SFX_WAVES)}`);
     if (x.at !== undefined && !SFX_AT.includes(x.at)) err(`${where}: "at" must be ${list(SFX_AT)}`);
     if (x.key !== undefined && typeof x.key !== 'boolean') err(`${where}: "key" must be true or false`);
-    inRange(x, SFX_RANGES, where);
+    inRange(x, ranges(SFX_PARAMS), where);
+    if (!Array.isArray(x.layers) || !x.layers.length) err(`${where}: "layers" must be a list of 1 to ${SFX_MAX_LAYERS} layers`);
+    else {
+      if (x.layers.length > SFX_MAX_LAYERS) warn(`${where}: has ${x.layers.length} layers; only the first ${SFX_MAX_LAYERS} play`);
+      x.layers.forEach((l, i) => {
+        const at = `${where} layer ${i + 1}`;
+        if (!isObj(l)) return err(`${at}: must be an object { wave, pitch, length }`);
+        fields(l, 'layer', at);
+        if (l.wave !== undefined && !SFX_WAVES.includes(l.wave)) err(`${at}: "wave" must be ${list(SFX_WAVES)}`);
+        inRange(l, ranges(LAYER_PARAMS), at);
+        moves(l.moves, Object.fromEntries(LAYER_MOVES.map((k) => [k, LAYER_PARAMS[k]])), false, at);
+      });
+    }
+    effects(x.fx, false, where);
   }
 
   // stingers

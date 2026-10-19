@@ -5,9 +5,10 @@ import { SCALES, SHAPES } from './engine/theory.js';
 import { FORMS } from './engine/pattern.js';
 import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS } from './engine/params.js';
 import { KITS } from './engine/drums.js';
-import { AMPS, BODIES, WAVE_PRESETS } from './engine/synth.js';
+import { WAVE_PRESETS } from './engine/synth.js';
 import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
-import { SFX_WAVES, SFX_AT, SFX_RANGES } from './engine/sfx.js';
+import { SFX_WAVES, SFX_AT, SFX_PARAMS, LAYER_PARAMS, LAYER_MOVES, SFX_MAX_LAYERS } from './engine/sfx.js';
+import { EFFECT_KINDS, FX_OPTIONS, MOVE_SHAPES, MOVE_PARAMS } from './engine/fx.js';
 import { KEYS, TYPES, MODES, STING_AT, FIELDS, FLOW_THEN, SWITCH } from './validate.js';
 
 const num = (min, max, description) => ({ type: 'number', minimum: min, maximum: max, ...(description && { description }) });
@@ -74,11 +75,7 @@ export const songSchema = () => ({
       sample: { type: 'string', description: 'a recording in the library, e.g. cello, flute, violins' },
       kit: { oneOf: [{ enum: Object.keys(KITS) }, { type: 'object', description: 'per-pad overrides { k: { pitch, decay, level } }' }] },
       preset: { enum: Object.keys(KITS) },
-      body: { oneOf: [{ enum: Object.keys(BODIES) }, { type: 'array' }] },
-      amp: { enum: Object.keys(AMPS) },
-      filter: { enum: ['low', 'high'] },
-      wah: { ...sound.wah, properties: { ...sound.wah.properties, mode: { enum: ['note'] } } },
-      chorus: { ...sound.chorus, properties: { ...sound.chorus.properties, mode: { enum: ['flanger'] } } },
+      fx: { type: 'array', items: ref('effect'), description: 'its effects, in the order the sound goes through them' },
     }, ['type']),
     track: obj('track', {
       ...ranged(TRACK_PARAMS),
@@ -150,10 +147,36 @@ export const songSchema = () => ({
     }, ['id', 'beats', 'parts']),
     sound: obj('sound', {
       id: id('jump, coin, hit, or your own: music.sound(id)'), name: { type: 'string' }, color: { type: 'string' },
-      wave: { enum: SFX_WAVES }, at: { enum: SFX_AT, description: 'when it starts: now (default), the next step or the next beat' },
+      ...Object.fromEntries(Object.entries(SFX_PARAMS).map(([k, p]) => [k, num(p.min, p.max)])),
+      at: { enum: SFX_AT, description: 'when it starts: now (default), the next step or the next beat' },
       key: { type: 'boolean', description: 'tuned to the nearest note of the chord playing' },
-      ...Object.fromEntries(SFX_RANGES.map(([k, a, b]) => [k, num(a, b)])),
-    }, ['id']),
+      layers: { type: 'array', items: ref('layer'), minItems: 1, maxItems: SFX_MAX_LAYERS, description: 'the sources, summed: a wave or noise each, with its own envelope' },
+      fx: { type: 'array', items: ref('effect'), description: 'the effects the layers go through, in order' },
+    }, ['id', 'layers']),
+    layer: obj('layer', {
+      wave: { enum: SFX_WAVES }, off: { type: 'boolean', description: 'muted for now' },
+      ...Object.fromEntries(Object.entries(LAYER_PARAMS).map(([k, p]) => [k, num(p.min, p.max)])),
+      moves: { type: 'array', items: { ...ref('move'), description: `on: ${LAYER_MOVES.join(', ')}` } },
+    }),
+    effect: obj('effect', {
+      kind: { enum: Object.keys(EFFECT_KINDS) }, off: { type: 'boolean', description: 'bypassed for now' },
+      ...Object.fromEntries(Object.values(EFFECT_KINDS).flatMap((k) => Object.entries(k.params)).map(([k, p]) => [k, num(p.min, p.max)])),
+      beats: { type: 'number', description: 'in music: how long one sweep takes, in beats' },
+      rate: { type: 'number', description: 'in a sound: how fast it goes, Hz (a crush: its sample rate)' },
+      type: { description: `a filter's: ${FX_OPTIONS.filter.type.join(', ')}; a body's: ${FX_OPTIONS.body.type.join(', ')}` },
+      bands: { type: 'array', description: 'a body of its own: [kind, Hz, Q, dB] each' },
+      amp: { enum: FX_OPTIONS.drive.amp }, mode: { enum: ['note', 'flanger'], description: 'a wah that follows the notes; a chorus as a flanger' },
+      square: { type: 'boolean', description: 'a tremolo that chops' },
+      moves: { type: 'array', items: ref('move') },
+    }, ['kind']),
+    move: obj('move', {
+      on: id('the setting it moves'), shape: { enum: MOVE_SHAPES, description: 'ramp (default), hump, wave, or step (at `at`)' },
+      to: { type: 'number', description: 'where the setting goes, in its own units' },
+      beats: num(MOVE_PARAMS.music.beats.min, MOVE_PARAMS.music.beats.max, 'in music: how long it takes from each note (a wave: its period)'),
+      rate: num(MOVE_PARAMS.sound.rate.min, MOVE_PARAMS.sound.rate.max, 'in a sound: a wave\'s, Hz'),
+      at: num(0, 1, 'a step: where it steps, of the way through'),
+      every: { type: 'number', minimum: 0, description: 'it starts over this often: beats in music, seconds in a sound; 0 once' },
+    }, ['on', 'to']),
     part: obj('part', { track: id('the track it borrows'), pattern: PATTERN, block: id('or: a block whose notes it plays'), mode: { enum: MODES } }, ['track']),
     breath: obj('breath', {
       every: { type: 'number', minimum: 1, description: 'about every this many bars the music thins out' },

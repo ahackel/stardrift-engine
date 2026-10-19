@@ -14,7 +14,7 @@ Check a song with `validateSong(song)` (`import { validateSong } from 'stardrift
   "key": "D",
   "scale": "dorian",
   "instruments": {
-    "pad": { "type": "wave", "wave": "warm", "smooth": true, "poly": 4, "env": { "a": 0.4, "d": 1, "s": 0.8, "r": 1.2 }, "cutoff": 2500 },
+    "pad": { "type": "wave", "wave": "warm", "smooth": true, "poly": 4, "env": { "a": 0.4, "d": 1, "s": 0.8, "r": 1.2 }, "fx": [{ "kind": "filter", "cutoff": 2500 }] },
     "bass": { "type": "triangle", "env": { "a": 0.005, "d": 0.3, "s": 0.7, "r": 0.1 } },
     "lead": { "type": "pulse", "duty": 0.25, "env": { "a": 0.01, "d": 0.2, "s": 0.6, "r": 0.3 }, "vibrato": { "depth": 0.1, "rate": 5, "delay": 0.2 } },
     "drums": { "type": "drums", "kit": "chip" }
@@ -122,19 +122,32 @@ Every setting, with its range and (default):
 | `breath` | air in the note 0–1 |
 | `glide`, `scoop` | 0–0.5 s; 0–2 |
 | `vibrato` | `depth` 0–1, `rate` 0.1–12 (5), `delay` 0–2 (0) |
-| `cutoff`, `resonance`, `filter` | 60–16000 Hz (16000); 0.3–6 (0.707); `"high"`: a high pass (default low pass) |
-| `swell` | 0–3: the filter follows the note's loudness |
-| `filterEnv` | `amount` 0–5, `decay` 0.02–2 (0.2): the filter opens on each note |
-| `body` | fixed resonances: `violin cello strings horn brass`, vowels `ah oh oo ee`, or a list of `[kind, Hz, Q, dB]` |
-| `wah` | `depth` 0.05–1 (0.7), `beats` 0.25–8 (1), `resonance` 1–10 (4), `mode: "note"` (sweeps with each note) |
-| `drive`, `amp` | distortion 0–2; `guitar` or `bass`: through an amp and a cabinet |
-| `crush` | `bits` 2–12 (6), `rate` 1000–48000 (11025) |
-| `eq` | `low`, `mid`, `high` −12–12 dB, `midHz` 200–5000 (1000) |
-| `phaser` | `depth` 0.05–1 (0.7), `beats` 0.25–16 (4), `feedback` 0–0.9 (0.5) |
-| `chorus` | `depth` 0.05–1 (0.5), `beats` 0.25–16 (4), `mode: "flanger"` |
-| `tremolo`, `autopan` | `depth` 0.05–1, `beats` 0.0625–4 (0.25) / 0.125–16 (2) |
 
-The chain: pitch → source → envelope → breath → body → wah → drive → filter → crush → EQ → phaser → chorus → tremolo → auto-pan.
+The chain: pitch → source → envelope → breath, then the instrument's **effects**, `fx`, in the order it lists them.
+
+### Effects
+
+`fx` is a list, `[{ kind, …settings, off, moves }]`, each kind once; `off`: bypassed for now. An instrument and a game sound (`sound.fx`) take the same effects. A setting that goes in time is `beats` in an instrument (in time with the song) and `rate` in Hz in a sound.
+
+| `kind` | Settings (default) |
+|---|---|
+| `body` | fixed resonances: `type` `violin cello strings horn brass`, vowels `ah oh oo ee`, or `bands`: a list of `[kind, Hz, Q, dB]` |
+| `wah` | `depth` 0.05–1 (0.7), `resonance` 1–10 (4); `beats` 0.25–8 (1) / `rate` 0.1–20 Hz (2); `mode: "note"`: it opens with each note |
+| `drive` | `amount` 0–2 (0.6): crunch at 1, high gain at 2; `amp` `guitar` or `bass`: through an amp and a cabinet |
+| `filter` | `type` `low` (default), `high` or `band`; `cutoff` 40–16000 Hz (2000), `resonance` 0.3–6 (0.707); `env` 0–5 octaves it opens on each note, closing over `decay` 0.02–2 s (0.2); `swell` 0–3: it follows the note's loudness |
+| `crush` | `bits` 2–12 (6), `rate` 1000–48000 Hz (11025) |
+| `eq` | `low`, `mid`, `high` −12–12 dB (0), `midHz` 200–5000 (1000) |
+| `ring` | `freq` 20–4000 Hz (300), `mix` 0–1 (1): ring modulation, for metal and robots |
+| `vowel` | `vowel` 0–4 (0): a e i o u and between them, `mix` 0–1 (1): formants, for voices and creatures |
+| `delay` | `time` 0.001–1 s (0.25), `feedback` 0–0.95 (0.3), `mix` 0–1 (0.4): a slap or an echo; very short and fed back, a comb |
+| `phaser` | `depth` 0.05–1 (0.7), `feedback` 0–0.9 (0.5); `beats` 0.25–16 (4) / `rate` 0.05–20 Hz (1.5) |
+| `chorus` | `depth` 0.05–1 (0.5); `beats` 0.25–16 (4) / `rate` 0.05–10 Hz (1); `mode: "flanger"` |
+| `tremolo` | `depth` 0.05–1 (0.5); `beats` 0.0625–4 (0.25) / `rate` 0.5–60 Hz (8); `square`: it chops |
+| `autopan` | `depth` 0.05–1 (0.7); `beats` 0.125–16 (2) / `rate` 0.1–20 Hz (1) |
+
+**Moves**: any setting of an effect can move, `moves: [{ on, to, shape, … }]`: from its own value to `to`, as a `ramp` (default), a `hump` there and back, a `wave` between them, or a `step` to `to` at `at` (0–1 of the way, 0.3); `every`: it starts over this often (0: once). A frequency moves in octaves; two moves on one setting add up. In an instrument each note starts its moves again and they go in beats: `beats` 0.0625–16 (1) is how long a ramp, hump or step takes, or a wave's period; `every` in beats. In a sound they run over the sound, in seconds; a wave's `rate` in Hz. `{ "kind": "filter", "type": "band", "cutoff": 500, "moves": [{ "on": "cutoff", "to": 3000, "shape": "hump", "beats": 0.5 }] }` is a wah on every note.
+
+Songs from before effects were a list (`cutoff`, `drive`, `eq` … on the instrument) are read as they were, in the old fixed order.
 
 ## Tracks
 
@@ -214,7 +227,7 @@ A song can also be laid out like a sequencer's arrangement: each section holds b
 - An effect track is `{ id, target, clips }` (its id not a track's too), and `section.blocks` places its effect blocks like a track's.
 - `target`: the tracks it moves, ids or `"*"` for all; with `"*"`, `except` leaves some out. `"*"` with no `except` moves the whole mix, echo and reverb included (filter, highpass, volume, gate, crush; pan, echo and reverb move every track).
 - `fx.kind`: `filter` (a low pass, 60–16000 Hz), `highpass` (20–8000 Hz), `volume` 0–1 (a fader), `echo` and `reverb` 0–1 (more send), `pan` −1–1, `gate` 0–1 (chops the sound every `rate` beats, 0.25), `crush` 0–1 (fewer bits, a lower rate).
-- `fx.from`, `fx.to` and `fx.shape`: `ramp` (default) from → to across its bars, `hump` from → to → from, `wave` between them every `beats` (4), `hold` at `to`.
+- `fx.from`, `fx.to` and `fx.shape` (the shapes of a move): `ramp` (default) from → to across its bars, `hump` from → to → from, `wave` between them every `beats` (4), `step` to `to` at `at` (0–1 of the way; 0, the default: at `to` all along). Older songs' `hold` is a step at 0.
 - Two rows moving one setting: the lower low pass and the higher high pass win, faders multiply, the rest add.
 - `startMood`: the mood whose flow plays until the game asks for one (default: the first mood with a flow).
 
@@ -224,25 +237,26 @@ A song can also be laid out like a sequencer's arrangement: each section holds b
 
 ## Game sounds
 
-`sounds` lists the song's game sounds: short sound effects made by synthesis, so a game ships no audio files. The game plays one with `music.sound('coin')`, over the music (and with the music paused).
+`sounds` lists the song's game sounds: short sound effects made by synthesis, so a game ships no audio files. The game plays one with `music.sound('coin')`, over the music (and with the music paused). A sound is up to three **layers**, summed and put through its **effects** in order; any setting of a layer or an effect can **move** over the sound.
 
 ```json
 "sounds": [
-  { "id": "jump", "wave": "square", "pitch": 260, "slide": 14, "length": 0.22, "punch": 0.3, "duty": 0.25 },
-  { "id": "coin", "pitch": 990, "jump": 5, "jumpAt": 0.25, "length": 0.3, "key": true }
+  { "id": "jump", "layers": [{ "wave": "square", "pitch": 300, "length": 0.22, "duty": 0.25, "moves": [{ "on": "pitch", "to": 530 }] }] },
+  { "id": "coin", "key": true, "layers": [{ "pitch": 1000, "length": 0.35, "punch": 0.6, "moves": [{ "on": "pitch", "shape": "step", "to": 1335, "at": 0.2 }] }] },
+  { "id": "boom", "duck": 0.5, "layers": [{ "wave": "noise", "pitch": 90, "length": 0.9, "punch": 0.7 }, { "wave": "sine", "pitch": 70, "length": 0.3, "punch": 0.9, "moves": [{ "on": "pitch", "to": 35 }] }],
+    "fx": [{ "kind": "filter", "cutoff": 3000, "moves": [{ "on": "cutoff", "to": 200 }] }, { "kind": "drive", "amount": 0.6 }] }
 ]
 ```
 
-- `wave`: `square` (default), `triangle`, `saw`, `sine` or `noise`. `pitch`: Hz at the start (440); `slide`: semitones it moves over the sound (−: down); `jump`: semitones it jumps by at `jumpAt` (0–1 of the length, 0.3); `vibrato` 0–1 (up to a semitone) at `vibRate` Hz (12); `repeat`: seconds after which the pitch starts over, the slide and the jump running over each repeat (an alarm), 0 for once.
-- `length`: seconds (0.25). `attack` 0–1 of the length (0); `punch` 0–1 (0.5): 0 holds on and fades at the end, 1 hits and dies away at once.
-- `noise` 0–1: noise mixed in, pitched by `pitch`. `tone` 0–1 (1): a low pass, dark to open; `sweep` −1–1: it moves over the sound. `duty` 0.05–0.5: the square's width. `crush` 0–1: fewer bits, a lower rate.
-- `volume` 0–1 (0.7); `echo` and `reverb` 0–1: sends to the song's echo and reverb (0, 0.1); `duck` 0–1: the music gets this much quieter while it sounds.
-- `vary` 0–1 (0.15): how much each play differs in pitch, length and tone, so a sound heard again and again doesn't repeat itself. `key`: tuned to the nearest note of the chord playing, and a `jump` to the next chord tone (coins play along with the music). `at`: `now` (default), `step` or `beat`: when it starts.
+- A **layer** (1–3): `wave` `square` (default), `triangle`, `saw`, `sine` or `noise`; `pitch` Hz (440); `length` seconds (0.25); `attack` 0–1 of the length (0); `punch` 0–1 (0.5): 0 holds on and fades at the end, 1 hits and dies away at once; `noise` 0–1 mixed in, pitched by `pitch`; `duty` 0.05–0.5, the square's width; `level` 0–1 (1); `delay` 0–2 seconds after the sound starts; `off`: muted for now. A sound lasts to the end of its last layer.
+- **Effects**, `fx` in order: the same as an instrument's (Effects, above), in Hz where an instrument goes in beats.
+- A **move**, in a layer's or an effect's `moves`: `{ on, to, shape, rate, at, every }`, as an instrument's but over the sound. It takes the setting `on` (a layer's `pitch`, `level`, `noise`, `duty`; any of an effect's settings) from its own value to `to`: `ramp` (default) across the layer (an effect: the sound), `hump` there and back, `wave` between them `rate` times a second (0.1–60 Hz, 6), `step` to `to` at `at` (0–1 of the way, 0.3). `every` (seconds, 0–4): it starts over that often, an alarm or a power-up. A pitch or a frequency moves in octaves; two moves on one setting add up. So a slide is a pitch that ramps, a vibrato a pitch on a wave, a coin's ding-ding a pitch step.
+- The sound's own: `volume` 0–1 (0.7); `echo` and `reverb` 0–1: sends to the song's echo and reverb (0, 0.1); `duck` 0–1: the music gets this much quieter while it sounds. `vary` 0–1 (0.15): how much each play differs in pitch, length and filter, so a sound heard again and again doesn't repeat itself. `key`: tuned to the nearest note of the chord playing (every layer with it), and a pitch step to the next chord tone (coins play along with the music). `at`: `now` (default), `step` or `beat`: when it starts.
 - `music.sound(id, { pitch, volume, pan, at })`: `pitch` × (1.2: higher), `volume` ×, `pan` −1–1, `at` for this play. `music.sound({ … })` plays a sound's own settings; `music.setSoundVolume(v)` sets the sounds' volume, `music.stopSounds()` stops them.
 
 ## Writing a good song
 
-- Give the song its own sounds; the example's are one palette of many. Bells, e-pianos and marimbas: `fm` (`ratio` 3–7, short `env`); strings: `wave` `saw`, `smooth`, `unison` 3, `ensemble`, `body` `strings`; brass: `body` `brass` with a `filterEnv`; plucks and guitars: `string` (rock: `drive` and `amp` `guitar`); choirs: `wave` `saw` with `body` `ah` or `oo`; real instruments: `sample`.
+- Give the song its own sounds; the example's are one palette of many. Bells, e-pianos and marimbas: `fm` (`ratio` 3–7, short `env`); strings: `wave` `saw`, `smooth`, `unison` 3, `ensemble`, a `body` `strings`; brass: a `body` `brass` and a `filter` with an `env`; plucks and guitars: `string` (rock: a `drive` with `amp` `guitar`); choirs: `wave` `saw` with a `body` `ah` or `oo`; real instruments: `sample`.
 - Give each track 2–4 blocks and each section its own mix (`section.tracks`, `block.sections`): the variety comes from the choices.
 - Keep bass and chords simple and repetitive; put the tune in one theme block and quote it with `from` and `forms`.
 - Calm sections thin out (fewer tracks, soft drums), action sections fill up; `next` links lead from calm to action and back.

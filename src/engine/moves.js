@@ -3,6 +3,7 @@
 // an echo throw. Here: the kinds, their curves (fxAt, which the editor draws with too) and Moves, which plays them
 // on a bus. The engine works out each row's value once a step; Moves ramps there over the step.
 import { svfSet, svf, LP, HP } from './dsp.js';
+import { MOVE_SHAPES } from './fx.js';
 
 // each kind: its range, the value that changes nothing (off), its default from and to; log: moves in octaves (Hz)
 export const FX_KINDS = {
@@ -15,14 +16,14 @@ export const FX_KINDS = {
   gate: { min: 0, max: 1, off: 0, def: [0, 1] }, // chops the sound in time: depth (rate: beats, 0.25)
   crush: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // fewer bits, a lower rate
 };
-export const FX_SHAPES = ['ramp', 'hump', 'wave', 'hold'];
+export const FX_SHAPES = MOVE_SHAPES; // the same shapes as the moves of an instrument's or a sound's knobs
 // the kinds the whole mix takes on the master; the rest are each track's (its pan, its sends)
 const MIX_KINDS = new Set(['filter', 'highpass', 'volume', 'gate', 'crush']);
 export const onMix = (kind) => MIX_KINDS.has(kind);
 
 const clampTo = (k, v) => Math.min(k.max, Math.max(k.min, +v));
 // fx's value u (0–1) of the way through the bars it plays on, b beats in: ramp from → to, hump from → to → from,
-// wave between them every `beats` (4), hold at to
+// wave between them every `beats` (4), step from → to at `at` of the way (0: at to all along; older songs: hold)
 export function fxAt(fx, u, b) {
   const k = FX_KINDS[fx?.kind];
   if (!k) return null;
@@ -30,7 +31,7 @@ export function fxAt(fx, u, b) {
   let t;
   if (fx.shape === 'hump') t = 0.5 - 0.5 * Math.cos(2 * Math.PI * u);
   else if (fx.shape === 'wave') t = 0.5 - 0.5 * Math.cos((2 * Math.PI * b) / Math.max(0.25, fx.beats || 4));
-  else if (fx.shape === 'hold') t = 1;
+  else if (fx.shape === 'step' || fx.shape === 'hold') t = u >= (fx.shape === 'hold' ? 0 : +fx.at || 0) ? 1 : 0;
   else t = Math.min(1, Math.max(0, u));
   return k.log ? from * Math.pow(to / from, t) : from + (to - from) * t;
 }

@@ -16,9 +16,8 @@ export interface Instrument {
   kit?: 'clean' | 'chip' | 'rock' | 'orchestra' | Record<string, { pitch?: number; decay?: number; level?: number; sample?: string }>;
   preset?: 'clean' | 'chip' | 'rock' | 'orchestra';
   env?: { a?: number; d?: number; s?: number; r?: number };
-  filter?: 'low' | 'high';
-  body?: string | [string, number, number?, number?][];
-  amp?: 'guitar' | 'bass';
+  /** its effects, in the order the sound goes through them */
+  fx?: Effect[];
   /** every other setting (SONG_FORMAT.md, src/engine/params.js) */
   [setting: string]: unknown;
 }
@@ -60,7 +59,9 @@ export interface Fx {
   kind: FxKind;
   from?: number;
   to?: number;
-  shape?: 'ramp' | 'hump' | 'wave' | 'hold';
+  shape?: 'ramp' | 'hump' | 'wave' | 'step';
+  /** a step: where it steps, 0–1 of the way (0) */
+  at?: number;
   /** a wave: beats per cycle (4) */
   beats?: number;
   /** a gate: beats per chop (0.25) */
@@ -116,16 +117,11 @@ export interface Stinger {
 export interface Sound {
   id: string;
   name?: string;
-  wave?: 'square' | 'triangle' | 'saw' | 'sine' | 'noise';
-  /** Hz at the start */
-  pitch?: number;
-  /** semitones over the sound */
-  slide?: number;
-  /** seconds */
-  length?: number;
-  noise?: number; punch?: number; tone?: number; sweep?: number; attack?: number; duty?: number;
-  jump?: number; jumpAt?: number; vibrato?: number; vibRate?: number; repeat?: number;
-  crush?: number; echo?: number; reverb?: number; volume?: number;
+  /** the sources, summed (1–3) */
+  layers: SoundLayer[];
+  /** the effects the layers go through, in order */
+  fx?: Effect[];
+  echo?: number; reverb?: number; volume?: number;
   /** how much each play differs, 0–1 */
   vary?: number;
   /** tuned to the chord playing */
@@ -133,6 +129,56 @@ export interface Sound {
   at?: SoundAt;
   /** how much quieter the music gets under it, 0–1 */
   duck?: number;
+}
+export interface SoundLayer {
+  wave?: 'square' | 'triangle' | 'saw' | 'sine' | 'noise';
+  /** Hz */
+  pitch?: number;
+  /** seconds */
+  length?: number;
+  attack?: number; punch?: number; noise?: number; duty?: number; level?: number;
+  /** seconds after the sound starts */
+  delay?: number;
+  /** muted for now */
+  off?: boolean;
+  /** on: pitch, level, noise, duty */
+  moves?: SoundMove[];
+}
+/** an effect of an instrument's chain or a sound's (the same kinds in both) */
+export interface Effect {
+  kind: 'body' | 'wah' | 'drive' | 'filter' | 'crush' | 'eq' | 'ring' | 'vowel' | 'delay' | 'phaser' | 'chorus' | 'tremolo' | 'autopan';
+  /** bypassed for now */
+  off?: boolean;
+  /** a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, ah, oh, oo, ee */
+  type?: string;
+  bands?: [string, number, number?, number?][];
+  amp?: 'guitar' | 'bass';
+  /** a wah that follows the notes ('note'); a chorus as a flanger ('flanger') */
+  mode?: 'note' | 'flanger';
+  /** a tremolo that chops */
+  square?: boolean;
+  /** in music: how long one sweep takes, in beats */
+  beats?: number;
+  /** in a sound: how fast it goes, Hz (a crush: its sample rate) */
+  rate?: number;
+  amount?: number; cutoff?: number; resonance?: number; env?: number; decay?: number; swell?: number; bits?: number;
+  low?: number; mid?: number; midHz?: number; high?: number; depth?: number; feedback?: number;
+  freq?: number; mix?: number; vowel?: number; time?: number;
+  moves?: SoundMove[];
+}
+/** a setting that moves: from its own value to `to`; in music from each note, in beats; in a sound over it, in seconds */
+export interface SoundMove {
+  on: string;
+  to: number;
+  shape?: 'ramp' | 'hump' | 'wave' | 'step';
+  /** in music: how long it takes (a wave: its period), in beats */
+  beats?: number;
+  /** in a sound: a wave's, Hz */
+  rate?: number;
+  /** a step's, 0–1 of the way through */
+  at?: number;
+  /** it starts over this often (beats in music, seconds in a sound); 0 once */
+  every?: number;
 }
 export type SoundAt = 'now' | 'step' | 'beat';
 export interface SoundOptions { pitch?: number; volume?: number; pan?: number; at?: SoundAt }
@@ -265,5 +311,5 @@ export function isZip(buffer: ArrayBuffer | Uint8Array): boolean;
 export function renderSound(sound: Omit<Sound, 'id'>, options?: { sr?: number; seed?: number; opts?: SoundOptions }): Float32Array;
 /** a sound with every setting there, in range */
 export function soundOf(sound: Partial<Sound>): Required<Omit<Sound, 'id' | 'name'>>;
-export const SFX_DEFAULTS: Required<Omit<Sound, 'id' | 'name'>>;
 export const SFX_WAVES: string[];
+export const SFX_FX: Record<Effect['kind'], Record<string, { min: number; max: number; def: number; log: boolean }>>;

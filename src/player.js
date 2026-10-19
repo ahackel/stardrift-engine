@@ -2,6 +2,7 @@ import { fetchSamples, loadSamples, soundSamples, songSamples } from './samples.
 import { isZip } from './zip.js';
 import { openSongZip } from './bundle.js';
 import { encodeWav } from './wav.js';
+import { soundOf, soundLength } from './engine/sfx.js';
 
 // An iPhone or iPad plays a page's Web Audio as sound effects, which its silent switch mutes. Music it plays anyway: where
 // the browser has an audio session (newer Safari) the page says it plays music; before that (Safari 15), a silent media
@@ -246,7 +247,7 @@ export class StardriftPlayer {
     const def = typeof ref === 'string' ? this.song?.sounds?.find((x) => x.id === ref) : ref;
     if (typeof ref === 'string') this.warnUnless(def, `no sound "${ref}"`, (this.song?.sounds || []).map((x) => x.id));
     if (!this.ctx || !def) return;
-    if (!this.playing) await this.audition((+def.length || 0.25) + 2);
+    if (!this.playing) await this.audition(soundLength(soundOf(def)) + 2);
     this.send(typeof ref === 'string' ? { type: 'sound', id: ref, options } : { type: 'sound', def: ref, options });
   }
   stopSounds() { this.send({ type: 'stopSounds' }); }

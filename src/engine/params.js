@@ -40,35 +40,7 @@ export const SOUND_PARAMS = [
   ['glide', 0, 0.5, 0, { off: 'glide', vary: [0, 0.12], when: (s) => melodic(s) && (s.poly || 1) <= 1 && !s.arp }],
   ['scoop', 0, 2, 0, { off: 'scoop', vary: [0, 0.8], when: melodic }],
   ['arp', 1, 60, 24, { step: 1, vary: [10, 40], when: (s) => !!s.arp }],
-  // filter
-  // a high pass that moves far up leaves little: its variations stay lower
-  ['cutoff', 60, 16000, 16000, { log: true, vary: (s) => (s.filter === 'high' ? [60, 3000] : [300, 16000]) }],
-  ['resonance', 0.3, 6, 0.707, { log: true, vary: [0.5, 3] }],
-  ['swell', 0, 3, 0, { off: 'swell', vary: [0, 1.5], when: melodic }],
-  ['filterEnv.amount', 0, 5, 0, { off: 'filterEnv', vary: [0, 3] }],
-  ['filterEnv.decay', 0.02, 2, 0.2, { log: true, vary: [0.04, 1], when: (s) => !!s.filterEnv }],
-  // the wah and the bitcrush (varied only on a sound that has one)
-  ['wah.depth', 0.05, 1, 0.7, { vary: [0.3, 1], when: (s) => !!s.wah }],
-  ['wah.beats', 0.25, 8, 1, { log: true, vary: [0.5, 4], when: (s) => !!s.wah && s.wah.mode !== 'note' }],
-  ['wah.resonance', 1, 10, 4, { log: true, vary: [2, 7], when: (s) => !!s.wah }],
-  ['crush.bits', 2, 12, 6, { step: 1, vary: [3, 10], when: (s) => !!s.crush }],
-  ['crush.rate', 1000, 48000, 11025, { log: true, vary: [3000, 24000], when: (s) => !!s.crush }],
-  // the phaser, chorus, tremolo and auto-pan (varied only on a sound that has one)
-  ['phaser.depth', 0.05, 1, 0.7, { vary: [0.3, 1], when: (s) => !!s.phaser }],
-  ['phaser.beats', 0.25, 16, 4, { log: true, vary: [1, 8], when: (s) => !!s.phaser }],
-  ['phaser.feedback', 0, 0.9, 0.5, { vary: [0.2, 0.8], when: (s) => !!s.phaser }],
-  ['chorus.depth', 0.05, 1, 0.5, { vary: [0.2, 0.9], when: (s) => !!s.chorus }],
-  ['chorus.beats', 0.25, 16, 4, { log: true, vary: [1, 8], when: (s) => !!s.chorus }],
-  ['tremolo.depth', 0.05, 1, 0.5, { vary: [0.2, 0.9], when: (s) => !!s.tremolo }],
-  ['tremolo.beats', 0.0625, 4, 0.25, { log: true, vary: [0.125, 1], when: (s) => !!s.tremolo }],
-  ['autopan.depth', 0.05, 1, 0.7, { vary: [0.3, 1], when: (s) => !!s.autopan }],
-  ['autopan.beats', 0.125, 16, 2, { log: true, vary: [0.5, 8], when: (s) => !!s.autopan }],
-  // drive, the EQ (varied only on a sound that has one), level
-  ['drive', 0, 2, 0, { off: 'drive', vary: [0, 1], when: (s) => melodic(s) || !!s.drive }], // a kit's only once it has some
-  ['eq.low', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
-  ['eq.mid', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
-  ['eq.midHz', 200, 5000, 1000, { log: true, vary: [300, 3000], when: (s) => !!s.eq }],
-  ['eq.high', -12, 12, 0, { step: 0.5, vary: [-6, 6], when: (s) => !!s.eq }],
+  // the effects (the filter, drive, EQ …) are a list of their own: fx.js EFFECT_KINDS
   ['gain', 0, 2, 1, { vary: [0.7, 1.3] }],
 ];
 // the oscillator types a variation may switch between (the others need their own settings to sound right)

@@ -11,6 +11,7 @@
 // works out what the old rules picked in each section and rounds it to a step.
 export const STEPS = [0, 0.25, 0.5, 0.75, 1];
 // a song's own copy (structuredClone where there is one, which Safari has only from 15.4; a song is JSON)
+import { migrateInstrument } from './fx.js';
 const clone = typeof structuredClone === 'function' ? structuredClone : (x) => JSON.parse(JSON.stringify(x));
 export const snap = (v) => Math.round(Math.min(1, Math.max(0, +v || 0)) * 4) / 4;
 
@@ -144,9 +145,22 @@ function rangeFit(v, r) {
 // when there is nothing to turn. Each section is weighed as the old conductor did around its intensity and tension
 // (it wobbled them by up to 0.04): clips that share a tag with it (or name no section) against each other, the one
 // picked most at 100.
+// Instruments from before effects were a list: their effect keys (drive, cutoff, eq …) become instrument.fx, in the
+// order they went in; effect rows' hold is a step at the start
+function migrateFx(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const insts = raw.instruments && typeof raw.instruments === 'object' ? raw.instruments : null;
+  const old = insts && Object.values(insts).some((d) => migrateInstrument(d) !== d);
+  const holds = (raw.blocks || []).some((b) => b?.fx?.shape === 'hold');
+  if (!old && !holds) return raw;
+  const s = { ...raw };
+  if (old) s.instruments = Object.fromEntries(Object.entries(insts).map(([k, d]) => [k, migrateInstrument(d)]));
+  if (holds) s.blocks = s.blocks.map((b) => (b?.fx?.shape === 'hold' ? { ...b, fx: { ...b.fx, shape: 'step', at: 0 } } : b));
+  return s;
+}
 export function migrateSong(raw) {
   raw = migrateTheme(migrateNext(migrateMoods(raw)));
-  return dropLevels(raw && LEGACY(raw) ? migrateLegacy(raw) : raw);
+  return migrateFx(dropLevels(raw && LEGACY(raw) ? migrateLegacy(raw) : raw)); // last: after the older filters are set
 }
 function migrateLegacy(raw) {
   const s = clone(raw), secs = s.sections || [];

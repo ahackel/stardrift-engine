@@ -105,7 +105,7 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   const m = migrateSong(old);
   ok(m.sections.every((x) => x.intensity === undefined && x.tension === undefined) && m.moods.action.influence === undefined, 'an older song\'s sections and moods lose intensity and tension');
   ok(m.moods.relaxed.sections?.calm === 1 && m.moods.action.sections?.peak === 1, 'an older mood leads to the nearest section the music can get to (not the intro)');
-  ok(m.instruments.pad.cutoff === 1300 && m.instruments.pad.cutoffIntensity === undefined, `a filter that followed the mood stays where it sat on average (${m.instruments.pad.cutoff} Hz)`);
+  ok(m.instruments.pad.fx?.[0]?.cutoff === 1300 && m.instruments.pad.cutoffIntensity === undefined, `a filter that followed the mood stays where it sat on average, in its effects now (${JSON.stringify(m.instruments.pad.fx)})`);
   ok(JSON.stringify(m.sections[1].next) === '{"calm":0.25,"peak":1}' && m.sections[2].next.calm === 1, 'older links are scaled by the strongest, to steps');
   ok(JSON.stringify(migrateSong(m)) === JSON.stringify(m) && old.sections[0].intensity === 0.1, 'converting twice changes nothing, the song itself is left alone');
 }
@@ -300,7 +300,7 @@ for (const [file, sg] of toCheck) {
 
 // 13. Amps and double tracking: every amp on a driven guitar, doubled, stays finite, sane and near the level without
 {
-  const { AMPS } = await import('../src/engine/synth.js');
+  const { AMPS } = await import('../src/engine/fx.js');
   const { renderPhrase } = await import('../src/phrase.js');
   const e = POWER_CHORDS;
   const phrase = { bpm: 130, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0 . 0 . 0+2+3! - 0 . 0 . 0 . 0+2+3 - - .', beats: 4 } };
@@ -315,7 +315,7 @@ for (const [file, sg] of toCheck) {
 
 // 14. Bodies, ensembles, swell and scoop: every body on a string section chord stays finite, sane and near its level
 {
-  const { BODIES } = await import('../src/engine/synth.js');
+  const { BODIES } = await import('../src/engine/fx.js');
   const { renderPhrase } = await import('../src/phrase.js');
   const e = STRINGS;
   const phrase = { bpm: 96, chords: 'i:4 VI:4', bars: 2, part: { pattern: '0+2+4+5 -*13 . .', beats: 4 } };
@@ -344,8 +344,8 @@ for (const [file, sg] of toCheck) {
     const [r, db] = level({ filter: 'high', cutoff, resonance });
     if (!finite(r) || db > 3 || db < -15) off.push(`high ${cutoff} Hz ${db.toFixed(1)} dB`);
   }
-  const { compileInst } = await import('../src/engine/synth.js');
-  if (compileInst({ ...snd, eq: { low: 0, mid: 0, midHz: 1000, high: 0 } }, SR).eq !== null) off.push('a flat EQ is not left out');
+  const { FxChain } = await import('../src/engine/fx.js');
+  if (new FxChain(SR).set([{ kind: 'eq', low: 0, mid: 0, midHz: 1000, high: 0 }], { music: true }).byKind.eq.eq !== null) off.push('a flat EQ is not left out');
   const [cut, cutDb] = level({ eq: { low: -12, mid: -12, midHz: 1000, high: -12 } });
   if (!finite(cut) || cutDb > -3) off.push(`EQ cuts ${cutDb.toFixed(1)} dB`);
   const [boost, boostDb] = level({ eq: { low: 6, mid: 6, midHz: 800, high: 6 } });
@@ -619,25 +619,40 @@ for (const [file, sg] of toCheck) {
   }
 }
 
-// 18. Game sounds: each wave renders clean and dies away within its length; vary 0 repeats, vary changes; key tunes to
-// the chord; at 'beat' waits for the beat; a sound plays while the song is held; a duck quietens the music
+// 18. Game sounds: each wave and each effect renders clean and dies away; moves get where they go; vary 0 repeats,
+// vary changes; key tunes to the chord (a step to the next chord tone); at 'beat' waits for the beat; a sound plays
+// while the song is held; a duck quietens the music
 {
-  const { renderSound, SFX_WAVES } = await import('../src/engine/sfx.js');
+  const { renderSound, SFX_WAVES, SFX_FX, LAYER_PARAMS, soundOf, soundLength } = await import('../src/engine/sfx.js');
+  const { valueAt, movesOf } = await import('../src/engine/fx.js');
   const { validateSong } = await import('../src/validate.js');
   const peak = (a, from = 0, to = a.length) => { let p = 0; for (let i = from; i < to; i++) p = Math.max(p, Math.abs(a[i])); return p; };
-  const clean = SFX_WAVES.every((wave) => { const b = renderSound({ wave, slide: -24, noise: 0.3, tone: 0.5, sweep: 0.5, crush: 0.4, vibrato: 0.5, repeat: 0.05 }); return b.every(Number.isFinite) && peak(b) > 0.05 && peak(b) < 1 && Math.abs(b[b.length - 1]) < 0.01; });
-  ok(clean, 'every wave renders clean, and dies away at its end');
-  const a = renderSound({ vary: 0 }, { seed: 1 }), b = renderSound({ vary: 0 }, { seed: 2 }), c = renderSound({ vary: 0.8 }, { seed: 2 });
+  const fine = (b) => b.every(Number.isFinite) && peak(b) > 0.02 && peak(b) < 1.2 && Math.abs(b[b.length - 1]) < 0.02;
+  const waves = SFX_WAVES.filter((wave) => !fine(renderSound({ layers: [{ wave, noise: 0.3, moves: [{ on: 'pitch', to: 110 }, { on: 'pitch', shape: 'wave', to: 470, rate: 8 }, { on: 'duty', to: 0.1, every: 0.05 }] }] })));
+  ok(!waves.length, `every wave renders clean, and dies away at its end${waves.length ? ` — ${waves}` : ''}`);
+  const fxBad = Object.keys(SFX_FX).filter((kind) => {
+    const spec = SFX_FX[kind], [k] = Object.keys(spec), moves = k ? [{ on: k, shape: 'hump', to: spec[k].max }] : undefined;
+    return !fine(renderSound({ layers: [{ wave: 'saw', pitch: 220 }, { wave: 'noise', level: 0.5, delay: 0.05 }], fx: [{ kind, ...(kind === 'filter' && { type: 'band' }), moves }] }));
+  });
+  ok(!fxBad.length, `every effect renders clean, its first setting moving${fxBad.length ? ` — ${fxBad}` : ''}`);
+  const mv = (m) => movesOf([{ on: 'pitch', to: 880, ...m }], LAYER_PARAMS, { len: 0.25 });
+  const ramp = mv({}), step = mv({ shape: 'step', at: 0.5 }), again = mv({ every: 0.1 });
+  ok(Math.abs(valueAt(440, 'pitch', ramp, LAYER_PARAMS.pitch, 0.125) - 440 * Math.SQRT2) < 1e-9 && valueAt(440, 'pitch', step, LAYER_PARAMS.pitch, 0.1) === 440
+    && valueAt(440, 'pitch', step, LAYER_PARAMS.pitch, 0.13) === 880 && valueAt(440, 'pitch', again, LAYER_PARAMS.pitch, 0.1) === 440,
+    'a pitch ramps in octaves (halfway: a tritone), steps at its point, and starts over every so often');
+  ok(Math.abs(soundLength(soundOf({ layers: [{ length: 0.2 }, { length: 0.3, delay: 0.1 }] })) - 0.4) < 1e-9, 'a sound lasts to the end of its last layer');
+  const a = renderSound({ layers: [{}], vary: 0 }, { seed: 1 }), b = renderSound({ layers: [{}], vary: 0 }, { seed: 2 }), c = renderSound({ layers: [{}], vary: 0.8 }, { seed: 2 });
   ok(a.length === b.length && a.every((x, i) => x === b[i]) && c.length !== a.length, 'vary 0: every play the same; vary: they differ');
   const song = {
     format: 2, name: 'sfx', bpm: 120, key: 'C', scale: 'major',
     instruments: { pad: { type: 'pulse' } }, tracks: [{ id: 'pad', instrument: 'pad', octave: 4, clips: ['hold'] }],
     blocks: [{ id: 'hold', beats: 4, pattern: '* - - - - - - - - - - - - - - -' }], progressions: [{ id: 'p', chords: 'I:4' }],
     sections: [{ id: 'a', bars: 4, blocks: { pad: [{ at: 0, block: 'hold' }] }, chords: [{ at: 0, prog: 'p' }] }], moods: { calm: { flow: ['a'] } },
-    sounds: [{ id: 'coin', pitch: 1000, jump: 4, key: true, at: 'beat', vary: 0 }, { id: 'boom', wave: 'noise', pitch: 60, length: 0.8, duck: 0.8 }],
+    sounds: [{ id: 'coin', layers: [{ pitch: 1000, moves: [{ on: 'pitch', shape: 'step', to: 1260, at: 0.3 }] }], key: true, at: 'beat', vary: 0 },
+      { id: 'boom', layers: [{ wave: 'noise', pitch: 60, length: 0.8 }], fx: [{ kind: 'filter', cutoff: 800, moves: [{ on: 'cutoff', to: 100 }] }], duck: 0.8 }],
   };
-  const v = validateSong(song), bad = validateSong({ ...song, sounds: [{ id: 'x', wave: 'kazoo', pitch: 'high', at: 'later' }] });
-  ok(!v.errors.length && !v.warnings.length && bad.errors.length === 3, `sounds validate, and a wrong wave, number or at is an error (${[...v.errors, ...v.warnings, ...bad.errors].join('; ')})`);
+  const v = validateSong(song), bad = validateSong({ ...song, sounds: [{ id: 'x', layers: [{ wave: 'kazoo', pitch: 'high', moves: [{ on: 'tone', to: 1 }] }], fx: [{ kind: 'fuzz' }], at: 'later' }] });
+  ok(!v.errors.length && !v.warnings.length && bad.errors.length === 5, `sounds validate, and a wrong wave, number, move, effect or at is an error (${[...v.errors, ...v.warnings, ...bad.errors].join('; ')})`);
   const e = newEngine(SR, song, 1);
   ok(e.snap(84.3) === 84 && e.snap(84, 1) === 88 && e.snap(84, -1) === 79 && e.snap(90) === 91, 'key: the nearest tone of the chord (C: C E G), above or below');
   const L = new Float32Array(SR), R = new Float32Array(SR);
@@ -645,14 +660,15 @@ for (const [file, sg] of toCheck) {
   ok(e.sound('coin') && e.sfxQ.length === 1 && !e.sound('nope'), 'a sound "at beat" waits; a sound the song lacks plays nothing');
   e.process(L, R, (SR >> 1) + 100);
   ok(!e.sfxQ.length && e.synth.sfx.some((x) => !x.done), 'on the beat it plays');
-  const p = e.synth.sfx.find((x) => !x.done).p, m = 69 + 12 * Math.log2(p.pitch / 440);
-  ok(Math.abs(m - Math.round(m)) < 1e-6 && [0, 4, 7].includes(Math.round(m) % 12) && [0, 4, 7].includes((Math.round(m) + p.jump) % 12), `it is tuned to the chord, its jump too (${Math.round(m)} + ${p.jump})`);
+  const l0 = e.synth.sfx.find((x) => !x.done).p.layers[0], midi = (f) => 69 + 12 * Math.log2(f / 440), m = midi(l0.pitch), mt = midi(l0.moves[0].to);
+  ok(Math.abs(m - Math.round(m)) < 1e-6 && [0, 4, 7].includes(Math.round(m) % 12) && [0, 4, 7].includes(Math.round(mt) % 12) && Math.round(mt) > Math.round(m),
+    `it is tuned to the chord, its step up to the next chord tone (${Math.round(m)} → ${Math.round(mt)})`);
   const h = newEngine(SR, song, 1);
   h.setHold(true);
   h.sound('coin');
   h.process(L, R, SR >> 2);
   ok(peak(L) > 0.05, 'held, a sound plays at once');
-  const d = newEngine(SR, { ...song, sounds: [{ id: 'boom', wave: 'sine', pitch: 30, volume: 0.01, length: 1, duck: 0.8 }] }, 1);
+  const d = newEngine(SR, { ...song, sounds: [{ id: 'boom', layers: [{ wave: 'sine', pitch: 30, level: 0.01, length: 1 }], duck: 0.8 }] }, 1);
   d.process(L, R, SR); const before = peak(L);
   d.sound('boom'); d.process(L, R, SR >> 1); const under = peak(L, SR >> 3, SR >> 1);
   ok(under < before * 0.5, `duck: the music gets quieter under the sound (${before.toFixed(2)} → ${under.toFixed(2)})`);
