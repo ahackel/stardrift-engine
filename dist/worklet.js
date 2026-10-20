@@ -201,6 +201,16 @@ const WAH_GAIN = 1.3; // the band's level back near the dry sound's
 const VOWELS = [[800, 1150, 2800], [400, 1700, 2600], [300, 2200, 3000], [450, 800, 2830], [325, 700, 2530]]; // a e i o u: F1 F2 F3
 const VOWEL_GAIN = [1, 0.5, 0.25];
 const DELAY_MAX = 1; // seconds
+const ENSEMBLE_FAST = 6; // Hz: the ensemble chorus's shimmer, under its slow sweep
+// The Leslie's two rotors: the treble horn above the crossover and the bass drum below it. Each turns at its slow and
+// fast speeds (Hz) and gets there with inertia (up: speeding up, down: slowing, as multiples of the ramp); the Doppler
+// sweep (s: how far its path to you changes) and how much louder it is facing you (am), at full depth.
+const LESLIE_X = 800;
+const ROTORS = [
+  { slow: 0.83, fast: 6.75, up: 1, down: 1.8, dop: 0.00045, am: 0.38 }, // the horn
+  { slow: 0.67, fast: 5.9, up: 4, down: 5, dop: 0.00022, am: 0.2 }, // the drum
+];
+const LESLIE_BASE = 0.0012; // seconds: the delay the Doppler sweeps around
 
 // ---------------------------------------------------------------- the kinds
 // a setting: its range, its default, log (it moves in octaves), step (it keeps to steps of that)
@@ -211,7 +221,7 @@ const EFFECT_KINDS = {
   body: { params: {}, opts: ['type', 'bands'] },
   wah: { params: { depth: P(0.05, 1, 0.7), resonance: P(1, 10, 4, { log: true }) }, beats: P(0.25, 8, 1, { log: true }), rate: P(0.1, 20, 2, { log: true }), opts: ['mode'] },
   drive: { params: { amount: P(0, 2, 0.6) }, opts: ['amp'] },
-  filter: { params: { cutoff: P(40, 16000, 2000, { log: true }), resonance: P(0.3, 6, 0.707, { log: true }), env: P(0, 5, 0), decay: P(0.02, 2, 0.2, { log: true }), swell: P(0, 3, 0) }, opts: ['type'] },
+  filter: { params: { cutoff: P(40, 16000, 2000, { log: true }), resonance: P(0.3, 6, 0.707, { log: true }), env: P(0, 5, 0), decay: P(0.02, 2, 0.2, { log: true }), swell: P(0, 3, 0), bite: P(0, 1, 0) }, opts: ['type'] },
   crush: { params: { bits: P(2, 12, 6, { step: 1 }), rate: P(1000, 48000, 11025, { log: true }) } },
   eq: { params: { low: P(-12, 12, 0, { step: 0.5 }), mid: P(-12, 12, 0, { step: 0.5 }), midHz: P(200, 5000, 1000, { log: true }), high: P(-12, 12, 0, { step: 0.5 }) } },
   ring: { params: { freq: P(20, 4000, 300, { log: true }), mix: P(0, 1, 1) } },
@@ -221,10 +231,18 @@ const EFFECT_KINDS = {
   chorus: { params: { depth: P(0.05, 1, 0.5) }, beats: P(0.25, 16, 4, { log: true }), rate: P(0.05, 10, 1, { log: true }), opts: ['mode'] },
   tremolo: { params: { depth: P(0.05, 1, 0.5) }, beats: P(0.0625, 4, 0.25, { log: true }), rate: P(0.5, 60, 8, { log: true }), opts: ['square'] },
   autopan: { params: { depth: P(0.05, 1, 0.7) }, beats: P(0.125, 16, 2, { log: true }), rate: P(0.1, 20, 1, { log: true }) },
+  // a rotating speaker: speed 0 stop, 1 slow (chorale), 2 fast (tremolo), between them in between; ramp: seconds the
+  // horn takes to get to a new speed (the heavier drum takes about four times as long)
+  leslie: { params: { speed: P(0, 2, 1, { step: 1 }), depth: P(0, 1, 0.7), ramp: P(0.2, 4, 1, { log: true }) } },
 };
 const FX_ORDER = Object.keys(EFFECT_KINDS); // the order an older instrument's effects went in
 const FILTER_TYPES = ['low', 'high', 'band'];
-const FX_OPTIONS = { filter: { type: FILTER_TYPES }, drive: { amp: Object.keys(AMPS) }, wah: { mode: ['note'] }, chorus: { mode: ['flanger'] }, body: { type: Object.keys(BODIES) } };
+const FX_OPTIONS = { filter: { type: FILTER_TYPES }, drive: { amp: Object.keys(AMPS) }, wah: { mode: ['note'] }, chorus: { mode: ['flanger', 'ensemble'] }, body: { type: Object.keys(BODIES) } };
+// The clock an effect or a move keeps: its own when it says (beats: in time with the music; rate: Hz, a sound's), else
+// where it plays (a track: beats; a game sound: Hz, and a ramp over the sound). So one instrument plays alike on a
+// track and as a game sound: what was set in beats stays in beats (at the song's tempo), what was set in Hz in Hz.
+const fxClock = (f, music) => (f?.beats !== undefined ? true : f?.rate !== undefined && EFFECT_KINDS[f?.kind]?.beats ? false : !!music);
+const moveClock = (m, music) => (m?.beats !== undefined ? true : m?.rate !== undefined ? false : !!music);
 // a kind's settings that can be set and moved, in music (beats) or a sound (rate in Hz)
 function fxParams(kind, music) {
   const k = EFFECT_KINDS[kind];
@@ -263,13 +281,14 @@ function valueAt(base, key, moves, p, t) {
 }
 const inP = (p, v) => clamp(num(v, p.def), p.min, p.max);
 // the moves in a list that move one of params, with every setting there; in seconds: { on, to, shape, rate, at, every, len }.
-// music: in beats at bps (len: the move's beats); a sound: len is what it moves over (the sound, a layer), in seconds
-function movesOf(list, params, { music = false, bps = 2, len = 1 } = {}) {
+// Each in its clock (moveClock): in beats at bps (len: the move's beats), or in Hz and seconds, a ramp over len (a
+// sound's length; on a track, a beat)
+function movesOf(list, params, { music: where = false, bps = 2, len = where ? 1 / bps : 1 } = {}) {
   const out = [];
   for (const m of Array.isArray(list) ? list : []) {
     const p = params[m?.on];
     if (!p) continue;
-    const mp = music ? MOVE_PARAMS.music : MOVE_PARAMS.sound, shape = MOVE_SHAPES.includes(m.shape) ? m.shape : 'ramp';
+    const music = moveClock(m, where), mp = music ? MOVE_PARAMS.music : MOVE_PARAMS.sound, shape = MOVE_SHAPES.includes(m.shape) ? m.shape : 'ramp';
     const at = inP(mp.at, m.at), every = inP(mp.every, m.every);
     if (music) { const beats = inP(mp.beats, m.beats); out.push({ on: m.on, to: inP(p, m.to), shape, at, rate: bps / beats, len: beats / bps, every: every / bps }); }
     else out.push({ on: m.on, to: inP(p, m.to), shape, at, rate: inP(mp.rate, m.rate), len, every });
@@ -279,7 +298,7 @@ function movesOf(list, params, { music = false, bps = 2, len = 1 } = {}) {
 
 // ---------------------------------------------------------------- an effect with every setting there
 function fxOf(def, music) {
-  const params = fxParams(def?.kind, music);
+  const params = fxParams(def?.kind, fxClock(def, music));
   if (!params) return null;
   const f = { kind: def.kind, off: !!def.off };
   for (const [k, p] of Object.entries(params)) f[k] = inP(p, def[k]);
@@ -303,7 +322,7 @@ function fxList(list, music) {
 // An older instrument's effects (its keys: body, wah, drive and amp, the filter, crush, eq, phaser, chorus, tremolo,
 // autopan) as a list in the order they went in; the instrument without them. One with a list already is as it was.
 const OLD_FX = ['body', 'wah', 'drive', 'amp', 'cutoff', 'resonance', 'filter', 'swell', 'filterEnv', 'crush', 'eq', 'phaser', 'chorus', 'tremolo', 'autopan'];
-function migrateInstrument(def) {
+function migrateFx(def) {
   if (!def || typeof def !== 'object' || !OLD_FX.some((k) => def[k] !== undefined)) return def;
   const d = { ...def }, fx = [];
   const take = (k) => { const v = d[k]; delete d[k]; return v; };
@@ -336,15 +355,16 @@ const CTL = 16; // samples between new settings (moves, sweeps)
 class Stage {
   constructor(f, sr, ctx) {
     this.kind = f.kind; this.sr = sr;
-    this.params = fxParams(f.kind, ctx.music);
+    this.params = fxParams(f.kind, fxClock(f, ctx.music));
     this.ph = 0; this.u1 = 0; this.F1 = 0; this.cPh = 1; this.hold = 0; this.pa = 0; this.pz = new Float64Array(4); this.pLast = 0;
     this.st = [{ ic1: 0, ic2: 0 }, { ic1: 0, ic2: 0 }, { ic1: 0, ic2: 0 }];
     this.svf = [{ mode: LP, k: 1, a1: 0, a2: 0, a3: 0 }, { mode: BP, k: 1, a1: 0, a2: 0, a3: 0 }, { mode: BP, k: 1, a1: 0, a2: 0, a3: 0 }];
-    this.cut = 0; this.fenv = 0;
+    this.cut = 0; this.fenv = 0; this.ph2 = 0;
     this.set(f, ctx);
   }
   set(f, { music, bps, drums, len }) {
     this.f = f; this.bps = bps;
+    this.params = fxParams(f.kind, fxClock(f, music));
     const v = (this.v = {});
     for (const k of Object.keys(this.params)) v[k] = f[k];
     this.moves = movesOf(f.moves, this.params, { music, bps, len });
@@ -370,7 +390,18 @@ class Stage {
         break;
       }
       case 'delay': if (!this.buf) { this.buf = new Float32Array(Math.ceil(DELAY_MAX * sr) + 2); this.w = 0; } this.dl = v.time * sr; this.dlD = 0; break;
-      case 'chorus': if (!this.buf) { this.buf = new Float32Array(Math.ceil(sr * 0.03) + 2); this.w = 0; } break;
+      case 'chorus':
+        if (!this.buf) { this.buf = new Float32Array(Math.ceil(sr * 0.03) + 2); this.w = 0; }
+        this.ens = f.mode === 'ensemble' ? this.ens || new Float64Array(3) : null; this.ensD = new Float64Array(3);
+        break;
+      case 'leslie':
+        if (!this.rot) { // the rotors keep turning through a change: a new speed is a ramp, never a jump
+          const n = Math.ceil(sr * (LESLIE_BASE + 0.001)) + 2;
+          this.rot = ROTORS.map((r) => ({ ...r, hz: r.slow, c: 1, s: 0, dc: 1, ds: 0, buf: new Float32Array(n) }));
+          this.w = 0;
+          svfSet(this.svf[0], LESLIE_X, Math.SQRT2, sr).mode = LP;
+        }
+        break;
     }
     this.apply();
   }
@@ -397,7 +428,9 @@ class Stage {
       case 'phaser': this.span = 4 * clamp01(v.depth); this.fb = clamp(v.feedback, 0, 0.9); break;
       case 'chorus': {
         const depth = clamp01(v.depth);
-        Object.assign(this, f.mode === 'flanger' ? { base: 0.001, width: 0.005 * depth, cfb: 0.5, cnorm: 0.5 } : { base: 0.012, width: 0.012 * depth, cfb: 0, cnorm: Math.SQRT1_2 });
+        Object.assign(this, f.mode === 'flanger' ? { base: 0.001, width: 0.005 * depth, cfb: 0.5, cnorm: 0.5 }
+          : f.mode === 'ensemble' ? { base: 0.005, width: 0.006 * depth, fast: 0.0006 * depth, cfb: 0, cnorm: 0.62 }
+          : { base: 0.012, width: 0.012 * depth, cfb: 0, cnorm: Math.SQRT1_2 });
         break;
       }
     }
@@ -430,10 +463,38 @@ class Stage {
         const v = this.v, env = this.fenv > 0.002;
         if (Math.abs(this.cut - this.cutTarget) > 0.5) this.cut += (this.cutTarget - this.cut) * 0.0015; // ~0.25 s glide
         const c = this.cut * Math.pow(2, v.env * (env ? this.fenv : 0) + v.swell * (loud - 1));
-        if (c !== this.lastCut || this.q !== this.lastQ) { svfSet(this.svf[0], c, 1 / Math.max(0.3, this.q), sr); this.lastCut = c; this.lastQ = this.q; }
+        // bite: the resonance rises with the note's loudness, up to its own at full (brass bites when blown hard)
+        const q = v.bite > 0 ? this.q * Math.pow(4, v.bite * (loud - 1)) : this.q;
+        if (c !== this.lastCut || q !== this.lastQ) { svfSet(this.svf[0], c, 1 / Math.max(0.3, q), sr); this.lastCut = c; this.lastQ = q; }
+        break;
+      }
+      case 'chorus': {
+        if (!this.ens) break;
+        // the three copies 120° apart on both waves (the fast at ENSEMBLE_FAST Hz); each glides to where it is going
+        // over the next CTL samples, so the waves are worked out here and not every sample
+        if ((this.ph += this.hz * n) >= 1) this.ph -= Math.floor(this.ph);
+        if ((this.ph2 += ENSEMBLE_FAST * n) >= 1) this.ph2 -= 1;
+        for (let k = 0; k < 3; k++) {
+          const to = sr * (this.base + this.width * hump(this.ph + k / 3) + this.fast * hump(this.ph2 + k / 3));
+          if (!this.ens[k]) this.ens[k] = to;
+          this.ensD[k] = (to - this.ens[k]) / CTL;
+        }
         break;
       }
       case 'autopan': if ((this.ph += this.hz * n) >= 1) this.ph -= Math.floor(this.ph); this.pan = clamp01(this.v.depth) * Math.sin(TWO_PI * this.ph); break;
+      case 'leslie': {
+        // each rotor eases towards its speed (stop, slow, fast or between), then turns by a rotation per sample
+        const sp = clamp(this.v.speed, 0, 2), ramp = Math.max(0.05, this.v.ramp) / 3; // ~3 time constants to get there
+        for (const r of this.rot) {
+          const to = sp <= 1 ? r.slow * sp : r.slow + (r.fast - r.slow) * (sp - 1);
+          r.hz += (to - r.hz) * (1 - Math.exp(-n / (ramp * (to > r.hz ? r.up : r.down))));
+          const a = (TWO_PI * r.hz) / sr;
+          r.dc = Math.cos(a); r.ds = Math.sin(a);
+          const m = 1 / Math.hypot(r.c, r.s); r.c *= m; r.s *= m; // keep it on the circle
+        }
+        this.pan = 0.55 * clamp01(this.v.depth) * this.rot[0].s; // the horn throws the treble round the room
+        break;
+      }
     }
   }
   run(x) {
@@ -490,6 +551,21 @@ class Stage {
       case 'chorus': {
         // a copy from a delay line that wanders, mixed with the dry sound (a flanger: shorter, fed back)
         const buf = this.buf, n = buf.length;
+        if (this.ens) {
+          // a string machine's ensemble (the Solina's): three copies, each moved by the slow wave and a fast shimmer
+          // (control: where each is going), all wet with the dry
+          buf[this.w] = x;
+          const dl = this.ens, dd = this.ensD;
+          let y = 0;
+          for (let k = 0; k < 3; k++) {
+            let r = this.w - (dl[k] += dd[k]);
+            if (r < 0) r += n;
+            const i = Math.floor(r), fr = r - i;
+            y += buf[i] + (buf[i + 1 === n ? 0 : i + 1] - buf[i]) * fr;
+          }
+          if (++this.w >= n) this.w = 0;
+          return (x + 0.58 * y) * this.cnorm;
+        }
         if ((this.ph += this.hz / this.sr) >= 1) this.ph -= 1;
         let r = this.w - this.sr * (this.base + this.width * hump(this.ph));
         if (r < 0) r += n;
@@ -502,6 +578,23 @@ class Stage {
         if ((this.ph += this.hz / this.sr) >= 1) this.ph -= 1;
         const d = clamp01(this.v.depth);
         return x * (1 - d * (this.f.square ? (this.ph < 0.5 ? 0 : 1) : hump(this.ph)));
+      }
+      case 'leslie': {
+        // the crossover, then each band from its rotor: a delay that sweeps (Doppler: the pitch wobble) and a level
+        // that swells as it faces you (90° on from the sweep, as on a real one)
+        const lo = svf(this.svf[0], this.st[0], x), d = clamp01(this.v.depth), sr = this.sr, w = this.w;
+        let y = 0;
+        for (let k = 0; k < 2; k++) {
+          const r = this.rot[k], buf = r.buf, n = buf.length;
+          buf[w] = k ? lo : x - lo;
+          const c = r.c * r.dc - r.s * r.ds; r.s = r.s * r.dc + r.c * r.ds; r.c = c;
+          let q = w - sr * (LESLIE_BASE + r.dop * d * r.s);
+          if (q < 0) q += n;
+          const i = q | 0, fr = q - i, v = buf[i] + (buf[i + 1 === n ? 0 : i + 1] - buf[i]) * fr;
+          y += v * (1 - r.am * d * (1 - r.c) * 0.5);
+        }
+        if (++this.w >= this.rot[0].buf.length) this.w = 0;
+        return y;
       }
     }
     return x; // autopan: the host pans by .pan
@@ -523,7 +616,7 @@ class FxChain {
     this.stages = fx.map((f) => { let s = this.byKind[f.kind]; if (s) s.set(f, ctx); else s = new Stage(f, this.sr, ctx); by[f.kind] = s; return s; });
     this.byKind = by;
     this.n = this.stages.length;
-    this.panning = !!by.autopan;
+    this.panning = !!(by.autopan || by.leslie);
     if (!this.panning) this.pan = 0;
     this.moving = this.stages.some((s) => s.moves.length);
     this.timer = 0;
@@ -536,7 +629,7 @@ class FxChain {
     if (--this.timer <= 0) {
       this.timer = CTL;
       for (let i = 0; i < n; i++) st[i].control(this.t, loud);
-      if (this.panning) this.pan = this.byKind.autopan.pan;
+      if (this.panning) this.pan = clamp((this.byKind.autopan?.pan || 0) + (this.byKind.leslie?.pan || 0), -1, 1);
     }
     this.t += 1 / this.sr;
     for (let i = 0; i < n; i++) x = st[i].run(x);
@@ -544,11 +637,127 @@ class FxChain {
   }
 }
 
-return { AMPS, BODIES, EFFECT_KINDS, EQ_HIGH, EQ_LOW, EQ_MID_Q, FILTER_TYPES, FX_OPTIONS, FX_ORDER, FxChain, MOVE_PARAMS, MOVE_SHAPES, PHASER_LO, WAH_LO, WAH_OCT, biquads, chain, chainMag, clampCutoff, eqBands, eqResponse, filterResponse, fxList, fxOf, fxParams, migrateInstrument, moveT, movesOf, valueAt };
+return { AMPS, BODIES, EFFECT_KINDS, EQ_HIGH, EQ_LOW, EQ_MID_Q, FILTER_TYPES, FX_OPTIONS, FX_ORDER, FxChain, MOVE_PARAMS, MOVE_SHAPES, PHASER_LO, WAH_LO, WAH_OCT, biquads, chain, chainMag, clampCutoff, eqBands, eqResponse, filterResponse, fxClock, fxList, fxOf, fxParams, migrateFx, moveClock, moveT, movesOf, valueAt };
+})();
+
+const $engine_inst = (() => {
+const { migrateFx } = $engine_fx;
+// An instrument: up to three layers played as one note, each a source (a pulse, a wave, a string, FM, noise …) with
+// its own envelope, pitch, level and moves; the note's own effects (unison, vibrato, glide, scoop, breath, arp); and
+// a chain of effects in any order (fx.js). A drum kit is an instrument of type 'drums' instead (drums.js).
+// A game sound (sfx.js) plays an instrument (one of the song's, or its own `inst`) as one note.
+
+const MAX_LAYERS = 3;
+const LAYER_TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'noise'];
+// what an instrument from before layers had as its one source
+const LAYER_KEYS = ['type', 'wave', 'drawbars', 'smooth', 'duty', 'pwm', 'fm', 'string', 'bow', 'sample', 'env'];
+// the settings of a layer that can move (each note starts them again): pitch in semitones from the note
+const P = (min, max, def) => ({ min, max, def, log: false });
+const LAYER_MOVE_PARAMS = { pitch: P(-48, 48, 0), level: P(0, 1, 1), duty: P(0.05, 0.5, 0.5), noise: P(0, 1, 0) };
+const LAYER_MOVES = Object.keys(LAYER_MOVE_PARAMS);
+const isKit = (d) => d?.type === 'drums';
+
+// An instrument as it is now: its effects a list (fx.js migrateFx), its source in layers. Older ones had one source
+// in their own keys (type, wave, env …): that becomes the first layer.
+function migrateInstrument(def) {
+  if (!def || typeof def !== 'object') return def;
+  let d = migrateFx(def);
+  if (isKit(d) || Array.isArray(d.layers)) return d;
+  d = { ...d };
+  const l = {};
+  for (const k of LAYER_KEYS) if (d[k] !== undefined) { l[k] = d[k]; delete d[k]; }
+  d.layers = [l];
+  return d;
+}
+
+// the layers' envelopes and how long the note is held: when the last of it is quiet, in seconds after it starts
+function noteTail(def, gate) {
+  let end = 0;
+  for (const l of def.layers || []) {
+    if (!l || l.off) continue;
+    const e = l.env || {}, a = e.a ?? 0.01, d = e.d ?? 0.2, s = e.s ?? 0.7, r = e.r ?? 0.2;
+    let t = s > 0 ? Math.max(gate, a) + r : Math.min(Math.max(gate, a) + r, a + d);
+    if (l.type === 'string') t = Math.max(t, Math.min(gate + r, l.string?.decay ?? 2));
+    end = Math.max(end, (l.delay || 0) + t);
+  }
+  return end;
+}
+
+// ---------------------------------------------------------------- game sounds from before they were instruments
+// A layer then: wave (square, triangle, saw, sine, noise), pitch in Hz, length (s), attack (of the length), punch
+// (0 holds, 1 dies at once), noise, duty, level, delay, moves (pitch in Hz). Now the sound has the note (its first
+// layer's pitch) and the length; each layer its type, its pitch in semitones from the note and an envelope.
+const OLD_WAVES = { square: { type: 'pulse' }, triangle: { type: 'triangle', smooth: true }, saw: { type: 'wave', wave: 'saw', smooth: true }, sine: { type: 'wave', wave: 'sine', smooth: true }, noise: { type: 'noise' } };
+const st = (f, f0) => Math.round(12 * Math.log2(f / f0) * 100) / 100;
+const old = (s) => s.note === undefined && Array.isArray(s.layers) && s.layers.some((l) => l && l.type === undefined && ('length' in l || 'punch' in l || 'attack' in l || l.wave in OLD_WAVES || l.pitch > 48));
+function fromHz(def) {
+  const layers = def.layers.filter(Boolean), f0 = layers[0].pitch || 440;
+  const out = { ...def, note: Math.round((69 + 12 * Math.log2(f0 / 440)) * 100) / 100, length: 0 };
+  out.layers = layers.map((l) => {
+    const len = l.length ?? 0.25, a = Math.max(0.001, (l.attack || 0) * len), punch = l.punch ?? 0.5, f = l.pitch || 440;
+    out.length = Math.max(out.length, (l.delay || 0) + len);
+    const n = { ...(OLD_WAVES[l.wave] || OLD_WAVES.square), env: { a: +a.toFixed(3), d: +Math.max(0.01, (len - a) * (1.3 - punch)).toFixed(3), s: 0, r: 0.02 } };
+    if (f !== f0) n.pitch = st(f, f0);
+    for (const k of ['level', 'delay', 'noise', 'off']) if (l[k] !== undefined) n[k] = l[k];
+    if (l.wave === 'square' && l.duty !== undefined) n.duty = l.duty;
+    if (Array.isArray(l.moves) && l.moves.length) n.moves = l.moves.map((m) => (m?.on === 'pitch' ? { ...m, to: (n.pitch || 0) + st(m.to || f, f) } : m));
+    return n;
+  });
+  out.length = +out.length.toFixed(3);
+  return out;
+}
+
+// A sound's own settings: what the game calls it, the instrument it plays (a key of song.instruments), the note, how
+// it plays in the game. A sound's own instrument is its inst (music.sound({ … }), renderSound); the rest of a sound
+// from before it had one (its layers, effects, the note's effects at the top) is that instrument.
+const SOUND_OWN = ['id', 'name', 'color', 'instrument', 'note', 'length', 'volume', 'echo', 'reverb', 'duck', 'vary', 'key', 'at'];
+function migrateSound(def) {
+  if (!def || typeof def !== 'object' || typeof def.instrument === 'string') return def;
+  if (def.inst && typeof def.inst === 'object' && !Array.isArray(def.inst)) {
+    const inst = migrateInstrument(def.inst);
+    return inst === def.inst ? def : { ...def, inst };
+  }
+  const flat = old(def) ? fromHz(def) : def, out = {}, inst = {};
+  for (const [k, v] of Object.entries(flat)) (SOUND_OWN.includes(k) ? out : inst)[k] = v;
+  out.inst = migrateInstrument(inst);
+  return out;
+}
+
+// ---------------------------------------------------------------- what an instrument costs to play
+// Measured (tools/cost.mjs): the time a sample takes, as parts of a plain pulse note's. A note's own work (its pitch,
+// its layers' envelopes), each layer's source (and each further player of a unison), what the note's effects add,
+// and the chain's effects, which play once for the track however many notes sound.
+const NOTE_COST = 0.75;
+const SOURCE_COST = { pulse: [0.25, 0.04], triangle: [0.45, 0.05], wave: [0.5, 0.05], fm: [1.4, 0.8], string: [0.45, 0], bowed: [0.7, 0.5], sample: [0.4, 0], noise: [0.15, 0] };
+const FX_COST = { body: 0.9, wah: 0.65, drive: 1.1, filter: 0.4, crush: 0.4, eq: 0.25, ring: 0.7, vowel: 1, delay: 0.5, phaser: 0.65, chorus: 1.6, tremolo: 1, autopan: 0.45, leslie: 1.4 };
+const KIT_COST = 2.5; // a drum hit or two at a time
+// { note: one note, notes: how many sound at once (a chord: its poly, but four at most, as most chords are),
+// fx: the effects, total } (1: a plain pulse note)
+function costOf(def, poly = def?.poly) {
+  const d = migrateInstrument(def) || {};
+  const fx = (Array.isArray(d.fx) ? d.fx : []).reduce((a, f) => a + (f && !f.off ? FX_COST[f.kind] || 0 : 0), 0);
+  if (isKit(d)) return { note: KIT_COST, notes: 1, fx, total: KIT_COST + fx };
+  let note = NOTE_COST;
+  const U = Math.max(1, Math.min(4, d.unison | 0 || 1));
+  for (const l of (d.layers || [{}]).slice(0, MAX_LAYERS)) {
+    if (!l || l.off) continue;
+    const [base, more] = SOURCE_COST[l.type] || SOURCE_COST.pulse;
+    note += base + (['string', 'sample', 'noise'].includes(l.type) ? 0 : more * (U - 1));
+    if (l.noise > 0 && l.type !== 'noise') note += 0.2;
+    if (Array.isArray(l.moves) && l.moves.length) note += 0.15;
+  }
+  if (d.vibrato?.depth > 0) note += 0.8;
+  if (d.breath > 0 || d.noise > 0) note += 0.5;
+  if (d.ensemble > 0 && U > 1) note += 0.15;
+  const notes = Math.max(1, Math.min(4, poly | 0 || 1));
+  return { note: +note.toFixed(2), notes, fx: +fx.toFixed(2), total: +(note * notes + fx).toFixed(2) };
+}
+
+return { LAYER_MOVES, LAYER_MOVE_PARAMS, LAYER_TYPES, MAX_LAYERS, SOUND_OWN, costOf, isKit, migrateInstrument, migrateSound, noteTail };
 })();
 
 const $engine_plays = (() => {
-const { migrateInstrument } = $engine_fx;
+const { migrateInstrument, migrateSound } = $engine_inst;
 // What plays in a section, in steps of 0 · 25 · 50 · 75 · 100 %:
 //   section.tracks { trackId: chance }   how likely a track plays in the section
 //   block.sections { sectionId: weight } how often a clip is picked on its track there, against the track's other
@@ -695,16 +904,30 @@ function rangeFit(v, r) {
 // when there is nothing to turn. Each section is weighed as the old conductor did around its intensity and tension
 // (it wobbled them by up to 0.04): clips that share a tag with it (or name no section) against each other, the one
 // picked most at 100.
-// Instruments from before effects were a list: their effect keys (drive, cutoff, eq …) become instrument.fx, in the
-// order they went in; effect rows' hold is a step at the start
+// Instruments from before effects were a list or before layers (inst.js migrateInstrument: their effect keys become
+// instrument.fx, their source the first layer); game sounds from before they were instruments (migrateSound), and
+// ones with an instrument of their own: it joins the song's instruments, under the sound's id (a track can play it
+// too), and the sound plays it from there; effect rows' hold is a step at the start
 function migrateFx(raw) {
   if (!raw || typeof raw !== 'object') return raw;
   const insts = raw.instruments && typeof raw.instruments === 'object' ? raw.instruments : null;
   const old = insts && Object.values(insts).some((d) => migrateInstrument(d) !== d);
+  const oldSounds = Array.isArray(raw.sounds) && raw.sounds.some((x) => x && typeof x === 'object' && typeof x.instrument !== 'string');
   const holds = (raw.blocks || []).some((b) => b?.fx?.shape === 'hold');
-  if (!old && !holds) return raw;
+  if (!old && !holds && !oldSounds) return raw;
   const s = { ...raw };
   if (old) s.instruments = Object.fromEntries(Object.entries(insts).map(([k, d]) => [k, migrateInstrument(d)]));
+  if (oldSounds) {
+    const into = (s.instruments = { ...(s.instruments || {}) });
+    s.sounds = s.sounds.map((x) => {
+      if (!x || typeof x !== 'object' || typeof x.instrument === 'string') return x;
+      const { inst, ...own } = migrateSound(x);
+      let key = String(own.id || 'sound'), n = 2;
+      while (key in into) key = `${own.id || 'sound'}_${n++}`;
+      into[key] = { name: own.name || own.id || key, ...inst };
+      return { ...own, instrument: key };
+    });
+  }
   if (holds) s.blocks = s.blocks.map((b) => (b?.fx?.shape === 'hold' ? { ...b, fx: { ...b.fx, shape: 'step', at: 0 } } : b));
   return s;
 }
@@ -1420,6 +1643,116 @@ class DrumVoice {
 return { DrumVoice, KITS, compileKit, kitParts, setKitParts };
 })();
 
+const $engine_moves = (() => {
+const { svfSet, svf, LP, HP } = $engine_dsp;
+const { MOVE_SHAPES } = $engine_fx;
+// Effect rows (the grid). An effect track places effect blocks on a section's bars like any track, and each one moves
+// one setting of the tracks the row targets (or of the whole mix) across the bars it plays: a filter sweep, a fade,
+// an echo throw. Here: the kinds, their curves (fxAt, which the editor draws with too) and Moves, which plays them
+// on a bus. The engine works out each row's value once a step; Moves ramps there over the step.
+
+// each kind: its range, the value that changes nothing (off), its default from and to; log: moves in octaves (Hz)
+const FX_KINDS = {
+  filter: { min: 60, max: 16000, off: 16000, log: true, def: [16000, 400] }, // a low pass
+  highpass: { min: 20, max: 8000, off: 20, log: true, def: [20, 2000] },
+  volume: { min: 0, max: 1, off: 1, def: [1, 0] }, // as a fader: 0.5 is about −12 dB
+  echo: { min: 0, max: 1, off: 0, def: [0, 0.6] }, // more send to the song's echo
+  reverb: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // more send to the reverb
+  pan: { min: -1, max: 1, off: 0, def: [-0.8, 0.8] },
+  gate: { min: 0, max: 1, off: 0, def: [0, 1] }, // chops the sound in time: depth (rate: beats, 0.25)
+  crush: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // fewer bits, a lower rate
+};
+const FX_SHAPES = MOVE_SHAPES; // the same shapes as the moves of an instrument's or a sound's knobs
+// the kinds the whole mix takes on the master; the rest are each track's (its pan, its sends)
+const MIX_KINDS = new Set(['filter', 'highpass', 'volume', 'gate', 'crush']);
+const onMix = (kind) => MIX_KINDS.has(kind);
+
+const clampTo = (k, v) => Math.min(k.max, Math.max(k.min, +v));
+// fx's value u (0–1) of the way through the bars it plays on, b beats in: ramp from → to, hump from → to → from,
+// wave between them every `beats` (4), step from → to at `at` of the way (0: at to all along; older songs: hold)
+function fxAt(fx, u, b) {
+  const k = FX_KINDS[fx?.kind];
+  if (!k) return null;
+  const from = clampTo(k, fx.from ?? k.def[0]), to = clampTo(k, fx.to ?? k.def[1]);
+  let t;
+  if (fx.shape === 'hump') t = 0.5 - 0.5 * Math.cos(2 * Math.PI * u);
+  else if (fx.shape === 'wave') t = 0.5 - 0.5 * Math.cos((2 * Math.PI * b) / Math.max(0.25, fx.beats || 4));
+  else if (fx.shape === 'step' || fx.shape === 'hold') t = u >= (fx.shape === 'hold' ? 0 : +fx.at || 0) ? 1 : 0;
+  else t = Math.min(1, Math.max(0, u));
+  return k.log ? from * Math.pow(to / from, t) : from + (to - from) * t;
+}
+// two rows moving the same setting of one bus: the lower low pass, the higher high pass, the faders multiply, the rest add
+function fxJoin(kind, a, b) {
+  if (a === undefined) return b;
+  if (kind === 'filter') return Math.min(a, b);
+  if (kind === 'highpass' || kind === 'gate' || kind === 'crush') return Math.max(a, b);
+  if (kind === 'volume') return a * b;
+  return Math.max(-1, Math.min(1, a + b));
+}
+
+const OFF_LP = Math.log2(16000), OFF_HP = Math.log2(20);
+// One bus's moves (a track's, mono; the master's, two channels). to() sets where each value goes over n samples;
+// tick() moves them once a sample; run() puts a sample through (filters, crush, gate, volume). pan, echo and rev
+// are for the bus to read.
+class Moves {
+  constructor(sr, ch = 1) {
+    this.sr = sr;
+    this.lp = OFF_LP; this.hp = OFF_HP; this.vol = 1; this.gate = 0; this.crush = 0; this.pan = 0; this.echo = 0; this.rev = 0;
+    this.d = { lp: 0, hp: 0, vol: 0, gate: 0, crush: 0, pan: 0, echo: 0, rev: 0 };
+    this.left = 0; // samples the ramps still run
+    this.on = false; // anything moved: run() is needed
+    this.lpC = { mode: LP, k: 1.2, a1: 0, a2: 0, a3: 0 }; this.hpC = { mode: HP, k: 1.2, a1: 0, a2: 0, a3: 0 };
+    this.st = Array.from({ length: ch }, () => ({ l: { ic1: 0, ic2: 0 }, h: { ic1: 0, ic2: 0 }, ph: 1, hold: 0 }));
+    this.cT = 0; // countdown to new filter coefficients
+    this.gPh = 0; this.gInc = 0; this.gLvl = 1; this.gK = 1 - Math.exp(-1 / (0.003 * sr)); // the gate: its wave, its level (3 ms edges)
+    this.setCoefs();
+  }
+  // v: { filter, highpass, volume, gate, crush, pan, echo, reverb, rate, phase } (missing: off), or null: all off
+  to(v, n, bps) {
+    n = Math.max(1, n | 0);
+    v ||= {};
+    const go = (key, target) => { this.d[key] = (target - this[key]) / n; };
+    go('lp', Math.log2(v.filter ?? 16000)); go('hp', Math.log2(v.highpass ?? 20)); go('vol', v.volume ?? 1);
+    go('gate', v.gate ?? 0); go('crush', v.crush ?? 0); go('pan', v.pan ?? 0); go('echo', v.echo ?? 0); go('rev', v.reverb ?? 0);
+    if (v.gate) { this.gPh = v.phase || 0; this.gInc = bps / (Math.max(0.0625, v.rate || 0.25) * this.sr); }
+    this.left = n;
+    this.on = true;
+  }
+  tick() {
+    if (this.left > 0) {
+      const d = this.d;
+      this.lp += d.lp; this.hp += d.hp; this.vol += d.vol; this.gate += d.gate; this.crush += d.crush;
+      this.pan += d.pan; this.echo += d.echo; this.rev += d.rev;
+      if (--this.left === 0) this.on = this.lp < OFF_LP - 0.01 || this.hp > OFF_HP + 0.01 || Math.abs(this.vol - 1) > 1e-4 || this.gate > 1e-3
+        || this.crush > 1e-3 || Math.abs(this.pan) > 1e-3 || this.echo > 1e-4 || this.rev > 1e-4;
+    }
+    if (!this.on) return;
+    if (--this.cT <= 0) { this.cT = 16; this.setCoefs(); }
+    if (this.gate > 1e-3) {
+      if ((this.gPh += this.gInc) >= 1) this.gPh -= 1;
+      this.gLvl += ((this.gPh < 0.5 ? 1 : 1 - this.gate) - this.gLvl) * this.gK;
+    } else this.gLvl = 1;
+  }
+  setCoefs() {
+    svfSet(this.lpC, Math.pow(2, this.lp), 1.2, this.sr).mode = LP;
+    svfSet(this.hpC, Math.pow(2, this.hp), 1.2, this.sr).mode = HP;
+    if (this.crush > 1e-3) { this.levels = Math.pow(2, 11 - 9 * this.crush); this.cStep = Math.pow(2, -4 * this.crush); }
+  }
+  run(x, c = 0) {
+    const st = this.st[c];
+    if (this.lp < OFF_LP - 0.01) x = svf(this.lpC, st.l, x);
+    if (this.hp > OFF_HP + 0.01) x = svf(this.hpC, st.h, x);
+    if (this.crush > 1e-3) {
+      if ((st.ph += this.cStep) >= 1) { st.ph -= 1; st.hold = Math.round(x * this.levels) / this.levels; }
+      x = st.hold;
+    }
+    return x * this.vol * this.vol * this.gLvl;
+  }
+}
+
+return { FX_KINDS, FX_SHAPES, Moves, fxAt, fxJoin, onMix };
+})();
+
 const $engine_wavetable = (() => {
 
 // Band-limited wavetables: alias-free oscillators for the triangle and wave voices.
@@ -1536,347 +1869,22 @@ function cachedTables(key, make) {
 return { TABLE_SIZE, buildTables, cachedTables, formulaHarmonics, levelLimits, sampledHarmonics, stairHarmonics };
 })();
 
-const $engine_moves = (() => {
-const { svfSet, svf, LP, HP } = $engine_dsp;
-const { MOVE_SHAPES } = $engine_fx;
-// Effect rows (the grid). An effect track places effect blocks on a section's bars like any track, and each one moves
-// one setting of the tracks the row targets (or of the whole mix) across the bars it plays: a filter sweep, a fade,
-// an echo throw. Here: the kinds, their curves (fxAt, which the editor draws with too) and Moves, which plays them
-// on a bus. The engine works out each row's value once a step; Moves ramps there over the step.
-
-// each kind: its range, the value that changes nothing (off), its default from and to; log: moves in octaves (Hz)
-const FX_KINDS = {
-  filter: { min: 60, max: 16000, off: 16000, log: true, def: [16000, 400] }, // a low pass
-  highpass: { min: 20, max: 8000, off: 20, log: true, def: [20, 2000] },
-  volume: { min: 0, max: 1, off: 1, def: [1, 0] }, // as a fader: 0.5 is about −12 dB
-  echo: { min: 0, max: 1, off: 0, def: [0, 0.6] }, // more send to the song's echo
-  reverb: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // more send to the reverb
-  pan: { min: -1, max: 1, off: 0, def: [-0.8, 0.8] },
-  gate: { min: 0, max: 1, off: 0, def: [0, 1] }, // chops the sound in time: depth (rate: beats, 0.25)
-  crush: { min: 0, max: 1, off: 0, def: [0, 0.8] }, // fewer bits, a lower rate
-};
-const FX_SHAPES = MOVE_SHAPES; // the same shapes as the moves of an instrument's or a sound's knobs
-// the kinds the whole mix takes on the master; the rest are each track's (its pan, its sends)
-const MIX_KINDS = new Set(['filter', 'highpass', 'volume', 'gate', 'crush']);
-const onMix = (kind) => MIX_KINDS.has(kind);
-
-const clampTo = (k, v) => Math.min(k.max, Math.max(k.min, +v));
-// fx's value u (0–1) of the way through the bars it plays on, b beats in: ramp from → to, hump from → to → from,
-// wave between them every `beats` (4), step from → to at `at` of the way (0: at to all along; older songs: hold)
-function fxAt(fx, u, b) {
-  const k = FX_KINDS[fx?.kind];
-  if (!k) return null;
-  const from = clampTo(k, fx.from ?? k.def[0]), to = clampTo(k, fx.to ?? k.def[1]);
-  let t;
-  if (fx.shape === 'hump') t = 0.5 - 0.5 * Math.cos(2 * Math.PI * u);
-  else if (fx.shape === 'wave') t = 0.5 - 0.5 * Math.cos((2 * Math.PI * b) / Math.max(0.25, fx.beats || 4));
-  else if (fx.shape === 'step' || fx.shape === 'hold') t = u >= (fx.shape === 'hold' ? 0 : +fx.at || 0) ? 1 : 0;
-  else t = Math.min(1, Math.max(0, u));
-  return k.log ? from * Math.pow(to / from, t) : from + (to - from) * t;
-}
-// two rows moving the same setting of one bus: the lower low pass, the higher high pass, the faders multiply, the rest add
-function fxJoin(kind, a, b) {
-  if (a === undefined) return b;
-  if (kind === 'filter') return Math.min(a, b);
-  if (kind === 'highpass' || kind === 'gate' || kind === 'crush') return Math.max(a, b);
-  if (kind === 'volume') return a * b;
-  return Math.max(-1, Math.min(1, a + b));
-}
-
-const OFF_LP = Math.log2(16000), OFF_HP = Math.log2(20);
-// One bus's moves (a track's, mono; the master's, two channels). to() sets where each value goes over n samples;
-// tick() moves them once a sample; run() puts a sample through (filters, crush, gate, volume). pan, echo and rev
-// are for the bus to read.
-class Moves {
-  constructor(sr, ch = 1) {
-    this.sr = sr;
-    this.lp = OFF_LP; this.hp = OFF_HP; this.vol = 1; this.gate = 0; this.crush = 0; this.pan = 0; this.echo = 0; this.rev = 0;
-    this.d = { lp: 0, hp: 0, vol: 0, gate: 0, crush: 0, pan: 0, echo: 0, rev: 0 };
-    this.left = 0; // samples the ramps still run
-    this.on = false; // anything moved: run() is needed
-    this.lpC = { mode: LP, k: 1.2, a1: 0, a2: 0, a3: 0 }; this.hpC = { mode: HP, k: 1.2, a1: 0, a2: 0, a3: 0 };
-    this.st = Array.from({ length: ch }, () => ({ l: { ic1: 0, ic2: 0 }, h: { ic1: 0, ic2: 0 }, ph: 1, hold: 0 }));
-    this.cT = 0; // countdown to new filter coefficients
-    this.gPh = 0; this.gInc = 0; this.gLvl = 1; this.gK = 1 - Math.exp(-1 / (0.003 * sr)); // the gate: its wave, its level (3 ms edges)
-    this.setCoefs();
-  }
-  // v: { filter, highpass, volume, gate, crush, pan, echo, reverb, rate, phase } (missing: off), or null: all off
-  to(v, n, bps) {
-    n = Math.max(1, n | 0);
-    v ||= {};
-    const go = (key, target) => { this.d[key] = (target - this[key]) / n; };
-    go('lp', Math.log2(v.filter ?? 16000)); go('hp', Math.log2(v.highpass ?? 20)); go('vol', v.volume ?? 1);
-    go('gate', v.gate ?? 0); go('crush', v.crush ?? 0); go('pan', v.pan ?? 0); go('echo', v.echo ?? 0); go('rev', v.reverb ?? 0);
-    if (v.gate) { this.gPh = v.phase || 0; this.gInc = bps / (Math.max(0.0625, v.rate || 0.25) * this.sr); }
-    this.left = n;
-    this.on = true;
-  }
-  tick() {
-    if (this.left > 0) {
-      const d = this.d;
-      this.lp += d.lp; this.hp += d.hp; this.vol += d.vol; this.gate += d.gate; this.crush += d.crush;
-      this.pan += d.pan; this.echo += d.echo; this.rev += d.rev;
-      if (--this.left === 0) this.on = this.lp < OFF_LP - 0.01 || this.hp > OFF_HP + 0.01 || Math.abs(this.vol - 1) > 1e-4 || this.gate > 1e-3
-        || this.crush > 1e-3 || Math.abs(this.pan) > 1e-3 || this.echo > 1e-4 || this.rev > 1e-4;
-    }
-    if (!this.on) return;
-    if (--this.cT <= 0) { this.cT = 16; this.setCoefs(); }
-    if (this.gate > 1e-3) {
-      if ((this.gPh += this.gInc) >= 1) this.gPh -= 1;
-      this.gLvl += ((this.gPh < 0.5 ? 1 : 1 - this.gate) - this.gLvl) * this.gK;
-    } else this.gLvl = 1;
-  }
-  setCoefs() {
-    svfSet(this.lpC, Math.pow(2, this.lp), 1.2, this.sr).mode = LP;
-    svfSet(this.hpC, Math.pow(2, this.hp), 1.2, this.sr).mode = HP;
-    if (this.crush > 1e-3) { this.levels = Math.pow(2, 11 - 9 * this.crush); this.cStep = Math.pow(2, -4 * this.crush); }
-  }
-  run(x, c = 0) {
-    const st = this.st[c];
-    if (this.lp < OFF_LP - 0.01) x = svf(this.lpC, st.l, x);
-    if (this.hp > OFF_HP + 0.01) x = svf(this.hpC, st.h, x);
-    if (this.crush > 1e-3) {
-      if ((st.ph += this.cStep) >= 1) { st.ph -= 1; st.hold = Math.round(x * this.levels) / this.levels; }
-      x = st.hold;
-    }
-    return x * this.vol * this.vol * this.gLvl;
-  }
-}
-
-return { FX_KINDS, FX_SHAPES, Moves, fxAt, fxJoin, onMix };
-})();
-
-const $engine_sfx = (() => {
-const { blep, TWO_PI } = $engine_dsp;
-const { Rng } = $engine_rng;
-const { EFFECT_KINDS, FILTER_TYPES, MOVE_SHAPES, MOVE_PARAMS, fxParams, fxList, movesOf, valueAt, FxChain } = $engine_fx;
-// Game sounds (song.sounds): short sound effects made by synthesis, so a game ships no audio files: a jump, a coin, a
-// hit, an explosion. A sound is up to three layers (a wave or noise with its own envelope, each starting when it
-// likes), summed into a chain of effects in any order. Any setting of a layer or an effect can move over the sound
-// (a move: a ramp, a hump, a wave, a step), so a slide is a pitch that ramps, a sweep a filter that ramps, a vibrato
-// a pitch on a wave. Each play varies a little (vary), can be tuned to the chord playing (key) and can wait for the
-// beat (at). SfxVoice plays one; renderSound puts one into a buffer (the editor's picture of it, a WAV).
-
-const SFX_WAVES = ['square', 'triangle', 'saw', 'sine', 'noise'];
-const SFX_AT = ['now', 'step', 'beat'];
-const SFX_SHAPES = MOVE_SHAPES;
-const SFX_MAX_LAYERS = 3;
-
-// a setting: its range, its default, and whether it moves in octaves (log)
-const P = (min, max, def, log = false) => ({ min, max, def, log });
-// a layer's settings
-const LAYER_PARAMS = {
-  pitch: P(20, 8000, 440, true), // Hz
-  length: P(0.01, 4, 0.25, true), // seconds
-  attack: P(0, 1, 0), // of the length: how slowly it comes in
-  punch: P(0, 1, 0.5), // 0 holds on and fades at the end, 1 hits and dies away at once
-  noise: P(0, 1, 0), // noise mixed in, pitched by the pitch
-  duty: P(0.05, 0.5, 0.5), // the square's width
-  level: P(0, 1, 1),
-  delay: P(0, 2, 0), // seconds after the sound starts
-};
-// the settings of a layer that can move over it
-const LAYER_MOVES = ['pitch', 'level', 'noise', 'duty'];
-// the effects (fx.js), each with its settings as a sound has them (all of them can move)
-const SFX_FX = Object.fromEntries(Object.keys(EFFECT_KINDS).map((k) => [k, fxParams(k, false)]));
-// the sound's own settings
-const SFX_PARAMS = {
-  volume: P(0, 1, 0.7),
-  echo: P(0, 1, 0), // send to the song's echo
-  reverb: P(0, 1, 0.1), // send to the song's reverb
-  duck: P(0, 1, 0), // the music gets this much quieter while it sounds
-  vary: P(0, 1, 0.15), // how much each play differs (pitch, length, the filter)
-};
-// a move's own settings in a sound: rate (a wave's, Hz), at (a step's, of the way through), every (seconds: it starts over; 0 once)
-const SFX_MOVE_PARAMS = MOVE_PARAMS.sound;
-
-const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
-const inP = (p, v) => clamp(num(v, p.def), p.min, p.max);
-
-// a layer with every setting there; off: muted for now
-function layerOf(def = {}) {
-  const l = { wave: SFX_WAVES.includes(def.wave) ? def.wave : 'square', off: !!def.off };
-  for (const [k, p] of Object.entries(LAYER_PARAMS)) l[k] = inP(p, def[k]);
-  l.moves = (Array.isArray(def.moves) ? def.moves : []).filter((m) => LAYER_MOVES.includes(m?.on));
-  return l;
-}
-// a sound with every setting there, in range: its layers (at least one), its effects, its own settings
-function soundOf(def = {}) {
-  const s = {};
-  for (const [k, p] of Object.entries(SFX_PARAMS)) s[k] = inP(p, def[k]);
-  s.key = !!def.key;
-  s.at = SFX_AT.includes(def.at) ? def.at : 'now';
-  const layers = Array.isArray(def.layers) && def.layers.length ? def.layers.slice(0, SFX_MAX_LAYERS) : [{}];
-  s.layers = layers.map(layerOf);
-  s.fx = fxList(def.fx, false);
-  return s;
-}
-// how long it lasts, in seconds: to the end of its last layer, and the tail of its delays
-function soundLength(s) {
-  let end = 0;
-  for (const l of s.layers) if (!l.off) end = Math.max(end, l.delay + l.length);
-  for (const f of s.fx) if (f.kind === 'delay' && !f.off) end += Math.min(1.5, f.time * (1 + 8 * f.feedback * f.feedback) + 0.05 * f.mix); // the echoes ring on
-  return Math.max(0.01, end);
-}
-
-// One play's settings, worked out once: the sound, varied by rng, opts ({ pitch: ×, volume, pan }), and tuned by
-// snap (midi, dir → the chord tone to play, or null). Every layer's pitch moves with the first, so the intervals stay.
-function playOf(def, rng, opts = {}, snap = null) {
-  const s = soundOf(def), v = s.vary;
-  const r = () => rng.next() * 2 - 1;
-  let k = num(opts.pitch, 1) * Math.pow(2, (r() * v * 3) / 12);
-  const stretch = 1 + r() * v * 0.3, cut = Math.pow(2, r() * v * 0.5);
-  const first = s.layers.find((l) => !l.off) || s.layers[0], lp = LAYER_PARAMS.pitch;
-  if (snap && s.key) {
-    const m0 = snap(69 + 12 * Math.log2((first.pitch * k) / 440), 0);
-    if (m0 != null) k = (440 * Math.pow(2, (m0 - 69) / 12)) / first.pitch;
-  }
-  const midi = (f) => 69 + 12 * Math.log2(f / 440);
-  const layers = s.layers.filter((l) => !l.off).map((l) => {
-    const pitch = clamp(l.pitch * k, lp.min, lp.max), length = l.length * stretch;
-    const moves = movesOf(l.moves, LAYER_PARAMS, { len: length }).map((m) => {
-      if (m.on !== 'pitch') return m;
-      let to = clamp(m.to * k, lp.min, lp.max);
-      if (snap && s.key && m.shape === 'step') { // a step goes to the next chord tone that way
-        const m0 = Math.round(midi(pitch)), mt = midi(to), ms = snap(mt, Math.sign(mt - m0));
-        if (ms != null && ms !== m0) to = 440 * Math.pow(2, (ms - 69) / 12);
-      }
-      return { ...m, to };
-    });
-    return { ...l, pitch, moves, length, delay: l.delay * stretch };
-  });
-  const fx = s.fx.filter((f) => !f.off).map((f) => (f.kind === 'filter' ? { ...f, cutoff: clamp(f.cutoff * cut, 40, 16000) } : f));
-  const p = { ...s, layers, fx, gain: s.volume * s.volume * clamp(num(opts.volume, 1), 0, 2), pan: clamp(num(opts.pan, 0), -1, 1), seed: (rng.next() * 4294967296) >>> 0 };
-  p.length = soundLength(p);
-  return p;
-}
-
-const CTL = 32; // samples between control values (the pitches, the envelopes)
-
-// one layer playing: its wave, its noise, its envelope
-class Layer {
-  start(l, sr, rng) {
-    this.l = l;
-    this.d = Math.round(l.delay * sr);
-    this.n = Math.max(CTL, Math.round(l.length * sr));
-    this.ph = 0; this.inc = 0; this.nz = 0; this.nzPh = 0; this.duty = l.duty; this.noise = l.noise; this.lvl = l.level;
-    this.env = 0; this.envD = 0;
-    this.att = Math.max(Math.round(0.001 * sr), Math.round(l.attack * this.n));
-    this.pow = 0.5 + 3 * l.punch;
-    this.rng = rng;
-  }
-  // the control values CTL samples on, t samples into the sound
-  control(t, sr) {
-    const l = this.l, lt = t - this.d, n = this.n;
-    if (lt < 0 || lt >= n) { this.envD = -this.env / CTL; return; }
-    const ts = lt / sr, mv = l.moves;
-    this.inc = Math.min(sr * 0.45, mv.length ? valueAt(l.pitch, 'pitch', mv, LAYER_PARAMS.pitch, ts) : l.pitch) / sr;
-    if (mv.length) {
-      this.lvl = valueAt(l.level, 'level', mv, LAYER_PARAMS.level, ts);
-      this.noise = valueAt(l.noise, 'noise', mv, LAYER_PARAMS.noise, ts);
-      this.duty = valueAt(l.duty, 'duty', mv, LAYER_PARAMS.duty, ts);
-    }
-    const te = Math.min(n, lt + CTL);
-    const e = te < this.att ? te / this.att : Math.pow(Math.max(0, 1 - (te - this.att) / Math.max(1, n - this.att)), this.pow);
-    this.envD = (e * this.lvl - this.env) / CTL;
-  }
-  render(t) {
-    if (t < this.d) return 0;
-    const l = this.l, dt = this.inc;
-    let ph = this.ph + dt;
-    if (ph >= 1) ph -= 1;
-    this.ph = ph;
-    let x = 0;
-    const nAmt = l.wave === 'noise' ? 1 : this.noise;
-    if (nAmt < 1) {
-      if (l.wave === 'square') { const w = this.duty; x = ph < w ? 1 : -1; x += blep(ph, dt); let q = ph - w; if (q < 0) q += 1; x -= blep(q, dt); }
-      else if (l.wave === 'saw') x = 2 * ph - 1 - blep(ph, dt);
-      else if (l.wave === 'triangle') x = ph < 0.5 ? 4 * ph - 1 : 3 - 4 * ph;
-      else x = Math.sin(TWO_PI * ph);
-    }
-    if (nAmt > 0) {
-      if ((this.nzPh += dt * 32) >= 1) { this.nzPh -= Math.floor(this.nzPh); this.nz = this.rng.next() * 2 - 1; } // a new value 32 times a period
-      x = x * (1 - nAmt) + this.nz * nAmt;
-    }
-    this.env += this.envD;
-    return x * (this.env > 0 ? this.env : 0);
-  }
-}
-
-// One sound playing. start(p) with a play's settings (playOf); render() returns its next (mono) sample, and pl, pr
-// are where it sits (an auto-pan moves them); done once over.
-class SfxVoice {
-  constructor(sr) {
-    this.sr = sr;
-    this.done = true;
-    this.layers = [];
-    for (let i = 0; i < SFX_MAX_LAYERS; i++) this.layers.push(new Layer());
-    this.fx = new FxChain(sr); // the effects (fx.js), as the tracks have them
-  }
-  start(p) {
-    const sr = this.sr;
-    this.p = p;
-    this.n = Math.max(CTL, Math.round(p.length * sr));
-    this.t = 0;
-    this.rng = new Rng(p.seed || 1);
-    this.nl = p.layers.length;
-    for (let i = 0; i < this.nl; i++) this.layers[i].start(p.layers[i], sr, this.rng);
-    this.fx.set(p.fx, { music: false, len: p.length });
-    this.fx.noteOn(1);
-    this.place(0);
-    this.done = false;
-    this.control();
-  }
-  place(off) { const pan = clamp(this.p.pan + off, -1, 1); this.pl = Math.sqrt(0.5 * (1 - pan)); this.pr = Math.sqrt(0.5 * (1 + pan)); }
-  control() {
-    let loud = 0;
-    for (let i = 0; i < this.nl; i++) { const l = this.layers[i]; l.control(this.t, this.sr); if (l.env > loud) loud = l.env; }
-    this.loud = loud;
-    if (this.fx.panning) this.place(this.fx.pan);
-  }
-  render() {
-    if (this.done) return 0;
-    if (this.t % CTL === 0 && this.t) this.control();
-    const t = this.t;
-    let x = 0;
-    for (let i = 0; i < this.nl; i++) x += this.layers[i].render(t);
-    if (this.nl > 1) x *= 0.75;
-    x = this.fx.run(x, this.loud);
-    if (++this.t >= this.n) this.done = true;
-    return x * this.p.gain * 0.8;
-  }
-}
-
-// A sound into a buffer, dry and mono: Float32Array at sr. seed varies it (vary 0: always the same).
-function renderSound(def, { sr = 48000, seed = 1, opts } = {}) {
-  const p = playOf(def, new Rng(seed), opts), v = new SfxVoice(sr);
-  v.start(p);
-  const out = new Float32Array(v.n);
-  for (let i = 0; i < out.length; i++) out[i] = v.render();
-  return out;
-}
-
-return { LAYER_MOVES, LAYER_PARAMS, SFX_AT, SFX_FX, SFX_MAX_LAYERS, SFX_MOVE_PARAMS, SFX_PARAMS, SFX_SHAPES, SFX_WAVES, SfxVoice, layerOf, playOf, renderSound, soundLength, soundOf };
-})();
-
-const $engine_synth = (() => {
-const { DrumVoice, compileKit } = $engine_drums;
+const $engine_voice = (() => {
+const { compileKit } = $engine_drums;
 const { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTables, levelLimits, cachedTables } = $engine_wavetable;
-const { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } = $engine_dsp;
+const { TWO_PI, TRI4, blep } = $engine_dsp;
 const { clamp, clamp01 } = $engine_theory;
-const { Moves } = $engine_moves;
-const { SfxVoice } = $engine_sfx;
-const { FxChain, migrateInstrument } = $engine_fx;
-// Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
-// (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, auto-pan, ping-pong echo and a small Freeverb.
+const { movesOf, valueAt } = $engine_fx;
+const { migrateInstrument, MAX_LAYERS, LAYER_TYPES, LAYER_MOVE_PARAMS } = $engine_inst;
+// One instrument playing a note (inst.js): up to three layers, each a source with its own envelope: a pulse (with
+// PWM), an NES-style 4-bit triangle, a 32-step wavetable, a plucked string (Karplus-Strong: guitars, harp,
+// pizzicato), FM, a bowed string, a recording, or chip noise. The note's own effects (glide, scoop, vibrato, an arp,
+// unison and ensemble, breath) move all of them. The tracks (synth.js) and the game sounds (sfx.js) play these voices.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
 
 const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
 
-// 32 steps of 4-bit values (0..15): a preset name or a custom array (editor-drawable).
 const WAVE_PRESETS = ['soft', 'sine', 'saw', 'warm', 'organ', 'hollow'];
 function waveSteps(spec) {
   if (Array.isArray(spec) && spec.length) {
@@ -1906,6 +1914,22 @@ function stepValues(spec) {
   return t.map((v) => v - mean);
 }
 
+// A tonewheel organ's drawbars: 16′ 5⅓′ 8′ 4′ 2⅔′ 2′ 1⅗′ 1⅓′ 1′, each a sine at this many times the 8′ note, 0–8 loud
+// (a step is 3 dB). Written as Hammond players write a registration: '888000000' (a jazz organ), '008080800' …
+const DRAWBAR_FEET = ['16′', '5⅓′', '8′', '4′', '2⅔′', '2′', '1⅗′', '1⅓′', '1′'];
+const DRAWBAR_RATIOS = [0.5, 1.5, 1, 2, 3, 4, 5, 6, 8];
+function drawbarLevels(spec) {
+  const a = Array.isArray(spec) ? spec : String(spec ?? '').replace(/[^0-8]/g, '').split('');
+  return DRAWBAR_RATIOS.map((_, i) => clamp(Math.round(+a[i] || 0), 0, 8));
+}
+const hasDrawbars = (l) => l?.type === 'wave' && l.drawbars !== undefined && l.drawbars !== null;
+// the drawbars as harmonics of the 16′ (so the 16′ and 5⅓′ fit): the table plays an octave below the note
+function drawbarHarmonics(spec) {
+  const amp = new Map();
+  drawbarLevels(spec).forEach((n, i) => { if (n) amp.set(DRAWBAR_RATIOS[i] * 2, Math.pow(10, (-3 * (8 - n)) / 20)); });
+  return formulaHarmonics(null, (k) => amp.get(k) || 0);
+}
+
 // Smooth (analog-style) versions of the presets: the functions the 4-bit steps are sampled from.
 const SMOOTH = {
   sine: [1], organ: [1, 0.5, 0.3], hollow: [1, 0, 0.4], soft: [1, 0.35, 0.12],
@@ -1914,6 +1938,7 @@ const SMOOTH = {
 // Band-limited tables for the triangle and wave voices. smooth: no 4-bit staircase (a clean saw, sine…).
 function waveTables(def) {
   const smooth = !!def.smooth, tri = def.type === 'triangle';
+  if (hasDrawbars(def)) { const bars = drawbarLevels(def.drawbars); return cachedTables(`bars:${bars.join('')}`, () => buildTables(drawbarHarmonics(bars), 1)); }
   const key = `${tri ? 'tri' : JSON.stringify(def.wave ?? 'soft')}:${smooth}`;
   return cachedTables(key, () => {
     if (tri) {
@@ -1935,57 +1960,81 @@ function waveTables(def) {
 // the effects (a body, a drive, the filter, an EQ …) are fx.js's, a chain in any order, shared with the game sounds
 
 // the coefficient that takes a level down 40 dB (×0.01) in t seconds, sample by sample
+
+// the coefficient that takes a level down 40 dB (×0.01) in t seconds, sample by sample
 const t60 = (t, sr) => Math.exp(-4.6 / (t * sr));
 
-const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
 const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
 const WG_BUF = 4096, WG_MASK = WG_BUF - 1; // waveguides of the bowed string
+const CTL = 32; // samples between a layer's moved settings
 
-// samples: the loaded sample library (see src/samples.js), { name: [zones] }; a sound of type sample plays def.sample
-function compileInst(def = {}, sr, samples = {}) {
-  def = migrateInstrument(def);
-  const env = def.env || {};
+// a layer: its source, its envelope, where it sits (pitch in semitones from the note, level, delay in seconds)
+function compileLayer(l, def, sr, samples) {
+  const type = LAYER_TYPES.includes(l.type) ? l.type : 'pulse';
+  const env = l.env || {};
   const a = Math.max(0.001, env.a ?? 0.01), d = Math.max(0.001, env.d ?? 0.2), r = Math.max(0.001, env.r ?? 0.2);
-  const U = ['string', 'sample'].includes(def.type) ? 1 : clamp(def.unison | 0 || 1, 1, 4);
+  const U = ['string', 'sample', 'noise'].includes(type) ? 1 : clamp(def.unison | 0 || 1, 1, 4);
   const detuneMul = new Float64Array(U);
   for (let u = 0; u < U; u++) detuneMul[u] = Math.pow(2, (U === 1 ? 0 : (def.detune || 0) * (u / (U - 1) - 0.5)) / 1200);
   return {
-    type: TYPES.includes(def.type) ? def.type : 'pulse',
-    sr, invSr: 1 / sr,
+    type, sr, invSr: 1 / sr,
     attInc: 1 / (a * sr), decCoef: t60(d, sr), relCoef: t60(r, sr),
     sus: clamp01(env.s ?? 0.7),
     U, uniNorm: 1 / Math.sqrt(U), detuneMul,
-    duty: def.duty ?? 0.5, pwmDepth: def.pwm?.depth || 0, pwmRate: def.pwm?.rate || 0,
+    duty: l.duty ?? 0.5, pwmDepth: l.pwm?.depth || 0, pwmRate: l.pwm?.rate || 0,
+    mips: type === 'wave' || type === 'triangle' ? waveTables({ ...l, type }) : null,
+    level: clamp01(l.level ?? 1), pitch: clamp(+l.pitch || 0, -48, 48), noise: clamp01(l.noise || 0),
+    sub: hasDrawbars({ ...l, type }) ? -12 : 0, // drawbars: the table's fundamental is the 16′, an octave below the note
+    delay: Math.round(clamp(+l.delay || 0, 0, 2) * sr),
+    // its moves as written (in beats or seconds); timeMoves works them out for where it plays (mv)
+    moves: Array.isArray(l.moves) ? l.moves : [], mv: [],
+    // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
+    // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
+    // feedback roughens the modulator; a high ratio (11–16) is an electric piano's tine
+    fmRatio: clamp(l.fm?.ratio ?? 1, 0.5, 16), fmIndex: l.fm?.index ?? 2, fmEnv: clamp01(l.fm?.env ?? 1), fmFb: l.fm?.feedback || 0,
+    // string: T60 decay in seconds and brightness 0..1 (how much of the high end the loop keeps and the pluck has)
+    sDecay: Math.max(0.05, l.string?.decay ?? 2), sBright: clamp01(l.string?.bright ?? 0.5),
+    sMute: clamp01(l.string?.mute || 0), // palm mute: how damped and dull short notes are
+    // where it is plucked, 0..0.5 of the string from the bridge (0: not set): near it thin and twangy (a banjo), at
+    // the middle round and hollow (no even harmonics)
+    sPos: clamp(+l.string?.position || 0, 0, 0.5),
+    // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
+    bowSlope: 5 - 4 * clamp01(l.bow?.pressure ?? 0.8), bowBeta: 0.04 + 0.2 * clamp01(l.bow?.position ?? 0.4),
+    // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
+    zones: type === 'sample' ? samples[l.sample] || [] : null,
+  };
+}
+
+// samples: the loaded sample library (see src/samples.js), { name: [zones] }; a layer of type sample plays its sample
+function compileInst(def = {}, sr, samples = {}) {
+  def = migrateInstrument(def);
+  const base = { sr, invSr: 1 / sr, gain: def.gain ?? 1, fx: Array.isArray(def.fx) ? def.fx : [] }; // fx: the effects, in their order (fx.js)
+  if (def.type === 'drums') return { ...base, type: 'drums', layers: [], kit: compileKit(def, sr, samples) };
+  const layers = (def.layers?.length ? def.layers : [{}]).slice(0, MAX_LAYERS).filter((l) => l && !l.off).map((l) => compileLayer(l, def, sr, samples));
+  return {
+    ...base, type: 'synth', layers,
+    U: layers.reduce((a, l) => Math.max(a, l.U), 1),
     vibDepth: def.vibrato?.depth || 0, vibRate: def.vibrato?.rate || 5, vibDelay: def.vibrato?.delay || 0,
     glideCoef: def.glide ? t60(def.glide, sr) : 0,
     arpPeriod: def.arp ? 1 / def.arp : 0,
-    mips: def.type === 'wave' || def.type === 'triangle' ? waveTables(def) : null,
     mipLimits: levelLimits(sr),
-    gain: def.gain ?? 1,
     // breath 0..1: air around the note, as loud relative to the tone as the curve says (0.25 −24 dB, 0.5 −15 dB, 1 −6 dB);
     // songs from before breath have `noise`, white noise at that level, which sounds about like 0.8 × noise
     breath: def.breath > 0 ? 0.5 * Math.min(1, def.breath) ** 1.5 : Math.min(0.5, 0.8 * (def.noise || 0)),
     breathCoef: 1 - Math.exp(-1 / (0.02 * sr)), // how fast breath follows the tone's loudness
-    // the effects, in their order (fx.js): the track's chain plays them
-    fx: Array.isArray(def.fx) ? def.fx : [],
-    // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
-    // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
-    // feedback roughens the modulator
-    fmRatio: def.fm?.ratio ?? 1, fmIndex: def.fm?.index ?? 2, fmEnv: clamp01(def.fm?.env ?? 1), fmFb: def.fm?.feedback || 0,
     // ensemble 0..1: each unison voice (a player of the section) drifts and vibrates on its own
-    ensemble: U > 1 || def.ensemble ? clamp01(def.ensemble || 0) : 0,
+    ensemble: def.unison > 1 || def.ensemble ? clamp01(def.ensemble || 0) : 0,
     // scoop: a note starts this many semitones flat and slides up within about 70 ms (brass, voices)
     scoop: clamp(def.scoop || 0, 0, 2), scoopCoef: def.scoop ? t60(0.07, sr) : 0,
-    // string: T60 decay in seconds and brightness 0..1 (how much of the high end the loop keeps and the pluck has)
-    sDecay: Math.max(0.05, def.string?.decay ?? 2), sBright: clamp01(def.string?.bright ?? 0.5),
-    sMute: clamp01(def.string?.mute || 0), // palm mute: how damped and dull short notes are
-    // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
-    bowSlope: 5 - 4 * clamp01(def.bow?.pressure ?? 0.8), bowBeta: 0.04 + 0.2 * clamp01(def.bow?.position ?? 0.4),
-    // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
-    zones: def.type === 'sample' ? samples[def.sample] || [] : null,
-    kit: def.type === 'drums' ? compileKit(def, sr, samples) : null,
   };
 }
+
+// the layers' moves for where they play: in a song (music: each note starts them again, in beats at bps), or over a
+// game sound (len: its length, in seconds)
+function timeMoves(p, opts) {
+  for (const l of p.layers || []) l.mv = movesOf(l.moves, LAYER_MOVE_PARAMS, opts);
+}
+
 
 // One bowed string (after STK's Bowed): the bow splits the string into a neck part and a bridge part (two delay
 // lines). Where the bow touches, it sticks while the string moves with it and slips when the difference grows:
@@ -2025,52 +2074,77 @@ class BowedString {
   }
 }
 
-class Voice {
+// One layer of a note: its envelope and its source. The note (Voice) gives it the pitch (in midi notes, with glide,
+// scoop, vibrato), the players' drift (ensemble) and the velocity; the layer adds its own pitch and its moves.
+class Osc {
   constructor() {
-    this.stage = IDLE; this.level = 0; this.gate = false;
-    this.ph = new Float64Array(4); this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
-    this.arp = null; this.arpIdx = 0; this.arpT = 0;
-    this.lvl = 0; // wavetable level for the current pitch
-    this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string voices: loop buffer, write index
+    this.stage = IDLE; this.level = 0;
+    this.ph = new Float64Array(4);
     for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
-    // ensemble: per player a slow drift rate, a vibrato rate and a phase; ens holds their pitch factors
-    this.rnd = Array.from({ length: 4 }, () => [0.13 + Math.random() * 0.25, 4.8 + Math.random() * 1.4, Math.random() * TWO_PI]);
-    this.ens = new Float64Array(4).fill(1); this.ensT = 0;
+    this.lvl = 0; // wavetable level for the current pitch
+    this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string: loop buffer, write index
     this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
     this.bows = []; // bowed: a string per player
     this.m = NaN; this.f = 440; // the pitch the frequency (and what follows from it) was last worked out for
-    this.bms = 0; this.blo = 0; this.bband = 0; // breath: the tone's power, the band's state
+    this.nz = 0; this.nzPh = 0; // chip noise: the value it holds, and how far to the next
   }
-  start(p, midi, vel, arp, short = false) {
-    const legato = this.stage !== IDLE && p.glideCoef > 0;
-    this.target = midi;
-    if (!legato) this.cur = midi - p.scoop;
-    this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
-    this.arp = arp; this.arpIdx = 0; this.arpT = 0; this.m = NaN;
-    if (p.type === 'string') this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12), short ? p.sMute : 0); // every note is picked; glide still slides into it
-    if (p.type === 'bowed') while (this.bows.length < p.U) this.bows.push(new BowedString());
-    if (p.type === 'sample' && !legato) {
+  start(L, midi, vel, short, legato, seed) {
+    this.L = L; this.vel = vel; this.seed = seed;
+    this.age = 0; this.ctl = 0; this.m = NaN;
+    this.wait = legato ? 0 : L.delay; this.late = false;
+    this.stage = ATT;
+    this.control();
+    const m = midi + this.dp;
+    if (L.type === 'string') this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short ? L.sMute : 0); // every note is picked; glide still slides into it
+    if (L.type === 'bowed') while (this.bows.length < L.U) this.bows.push(new BowedString());
+    if (L.type === 'sample' && !legato) {
       this.zone = null; this.spos = 0;
-      for (const z of p.zones) if (!this.zone || Math.abs(z.root - midi) < Math.abs(this.zone.root - midi)) this.zone = z;
+      for (const z of L.zones) if (!this.zone || Math.abs(z.root - m) < Math.abs(this.zone.root - m)) this.zone = z;
     }
   }
+  // its moved settings, every CTL samples: the pitch it adds to the note's, its level, the pulse's width, the noise
+  control() {
+    const L = this.L, mv = L.mv, t = this.age;
+    if (!mv.length) { this.dp = L.pitch + L.sub; this.lv = L.level; this.duty = L.duty; this.noise = L.noise; return; }
+    const P = LAYER_MOVE_PARAMS;
+    this.dp = valueAt(L.pitch, 'pitch', mv, P.pitch, t) + L.sub;
+    this.lv = valueAt(L.level, 'level', mv, P.level, t);
+    this.duty = valueAt(L.duty, 'duty', mv, P.duty, t);
+    this.noise = valueAt(L.noise, 'noise', mv, P.noise, t);
+  }
+  // a released layer still waiting for its delay plays its attack, then lets go
+  release() { if (this.stage === IDLE) return; if (this.wait > 0) this.late = true; else this.stage = REL; }
+  // a random value -1..1 (xorshift: a sound's noise is the same every time it is drawn)
+  rand() { let s = this.seed; s ^= s << 13; s ^= s >>> 17; s ^= s << 5; this.seed = s >>> 0; return this.seed / 2147483648 - 1; }
   // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass.
   // mute 0..1: a palm-muted note, much duller and dying within a few hundredths of a second (through a driven amp,
   // anything above about -35 dB still clips, so the string has to fall fast to sound damped)
-  pluck(p, f, mute = 0) {
+  pluck(L, f, mute = 0) {
     const kb = (this.kb ||= new Float32Array(STRING_BUF)), mask = STRING_BUF - 1;
-    const n = Math.min(STRING_BUF - 4, Math.ceil(p.sr / f) + 2), c = (0.15 + 0.85 * p.sBright * (0.5 + 0.5 * this.vel)) * (1 - 0.85 * mute);
+    const n = Math.min(STRING_BUF - 4, Math.ceil(L.sr / f) + 2), c = (0.15 + 0.85 * L.sBright * (0.5 + 0.5 * this.vel)) * (1 - 0.85 * mute);
     let lp = 0, mean = 0;
     for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
     mean /= n;
     for (let i = 1; i <= n; i++) kb[(this.kw - i) & mask] -= mean; // no DC in the loop
+    if (L.sPos > 0) {
+      // the pick position: a comb (the burst less itself a fraction of the period later) takes out the harmonics
+      // that have a node where the string is plucked; then back to the burst's loudness
+      // over one period of the loop as it will play (its filter adds half a sample)
+      const P = Math.max(2, Math.min(n, Math.round(L.sr / f - 0.5 * (1 - L.sBright)))), d = Math.max(1, Math.round(L.sPos * P));
+      const tmp = (this.kTmp ||= new Float32Array(STRING_BUF));
+      let e0 = 0, e1 = 0;
+      for (let i = 0; i < P; i++) { tmp[i] = kb[(this.kw - 1 - i) & mask]; e0 += tmp[i] * tmp[i]; }
+      for (let i = 0; i < P; i++) { const y = tmp[i] - tmp[(i + d) % P]; kb[(this.kw - 1 - i) & mask] = y; e1 += y * y; }
+      const g = e1 > 0 ? Math.sqrt(e0 / e1) : 1;
+      for (let i = 0; i < n; i++) kb[(this.kw - 1 - i) & mask] = i < P ? kb[(this.kw - 1 - i) & mask] * g : kb[(this.kw - 1 - (i % P)) & mask];
+    }
     this.kPrev = 0;
-    this.kLoss = Math.exp(-6.9 / (Math.pow(p.sDecay, 1 - mute) * Math.pow(0.035, mute) * f)); // -60 dB after sDecay s (35 ms fully muted)
+    this.kLoss = Math.exp(-6.9 / (Math.pow(L.sDecay, 1 - mute) * Math.pow(0.035, mute) * f)); // -60 dB after sDecay s (35 ms fully muted)
   }
   // one sample of the string at frequency f (glide and vibrato change the loop length)
-  string(p, f) {
-    const kb = this.kb, mask = STRING_BUF - 1, b = p.sBright;
-    const d = Math.min(STRING_BUF - 4, p.sr / f - 0.5 * (1 - b)); // the loop filter adds half a sample of delay
+  string(L, f) {
+    const kb = this.kb, mask = STRING_BUF - 1, b = L.sBright;
+    const d = Math.min(STRING_BUF - 4, L.sr / f - 0.5 * (1 - b)); // the loop filter adds half a sample of delay
     const r = this.kw - d, i = Math.floor(r), fr = r - i;
     const y = kb[i & mask] + (kb[(i + 1) & mask] - kb[i & mask]) * fr;
     kb[this.kw & mask] = this.kLoss * (b * y + (1 - b) * 0.5 * (y + this.kPrev));
@@ -2078,7 +2152,142 @@ class Voice {
     this.kw = (this.kw + 1) | 0;
     return y;
   }
-  release() { if (this.stage !== IDLE) this.stage = REL; this.gate = false; }
+  // one sample at the note's pitch m (midi), with the players' drift ens and the note's limits for the wavetables
+  tone(p, m, ens) {
+    if (this.wait > 0) { this.wait--; return 0; }
+    const L = this.L;
+    let lv = this.level;
+    switch (this.stage) {
+      case IDLE: return 0;
+      case ATT: lv += L.attInc; if (lv >= 1) { lv = 1; this.stage = this.late ? REL : DEC; } break;
+      case DEC: lv = L.sus + (lv - L.sus) * L.decCoef; if (L.sus <= 0 && lv < 1e-4) this.stage = IDLE; break;
+      case REL: lv *= L.relCoef; if (lv < 1e-4) this.stage = IDLE; break;
+    }
+    this.level = lv;
+    if (this.stage === IDLE) { this.level = 0; return 0; }
+    this.age += L.invSr;
+    if (++this.ctl >= CTL) { this.ctl = 0; this.control(); }
+    m += this.dp;
+    if (m !== this.m) {
+      this.m = m;
+      this.f = 440 * Math.pow(2, (m - 69) / 12);
+      if (this.zone) this.sInc = Math.pow(2, (m - this.zone.root) / 12) * this.zone.rate * L.invSr;
+    }
+    const f = this.f, sr = L.sr, g = lv * this.vel * this.lv;
+    let out = 0;
+    // bowed: the envelope is the bow's speed, so a note swells like a bow stroke; with unison a section of players,
+    // and with ensemble each player's pitch wanders and their vibrato is never quite even
+    if (L.type === 'bowed') {
+      if (this.bows.length < L.U) return 0; // the layer became bowed while this voice was sounding
+      const v = (0.03 + 0.2 * this.vel) * lv;
+      for (let u = 0; u < L.U; u++) out += this.bows[u].tick(L, f * L.detuneMul[u] * ens[u], v);
+      return out * L.uniNorm * this.vel * this.lv;
+    }
+    if (L.type === 'sample') {
+      // the recording, resampled to the note (glide and vibrato too); sustained notes loop, others end
+      const z = this.zone;
+      if (!z) return 0;
+      const d = z.data, i = this.spos | 0, fr = this.spos - i, j = z.loopEnd && i + 1 >= z.loopEnd ? z.loopStart : i + 1;
+      const y = d[i] + ((d[j] || 0) - d[i]) * fr;
+      this.spos += this.sInc;
+      if (z.loopEnd) { if (this.spos >= z.loopEnd) this.spos -= z.loopEnd - z.loopStart; }
+      else if (this.spos >= d.length - 1) { this.stage = IDLE; this.level = 0; }
+      return y * g * 5; // recordings sit at -16 dB: about as loud as a saw
+    }
+    if (L.type === 'string') {
+      if (!this.kb) this.pluck(L, f); // the layer became a string while this voice was sounding
+      return this.string(L, f) * lv * this.vel * 3.5 * this.lv;
+    }
+    if (L.type === 'noise') return this.chip(f) * g;
+    if (L.type === 'fm') {
+      // a modulator near Nyquist would fold its sidebands back down: high ratios fade out on high notes
+      const fm = f * L.fmRatio, aa = fm < 0.3 * L.sr ? 1 : clamp01((0.45 * L.sr - fm) / (0.15 * L.sr));
+      const I = L.fmIndex * aa * (1 - L.fmEnv + L.fmEnv * lv) * (0.5 + 0.5 * this.vel);
+      for (let u = 0; u < L.U; u++) {
+        const dt = (f * L.detuneMul[u] * ens[u]) / sr;
+        let ph = this.ph[u] + dt;
+        if (ph >= 1) ph -= 1;
+        this.ph[u] = ph;
+        let mp = this.mph[u] + dt * L.fmRatio;
+        mp -= Math.floor(mp);
+        this.mph[u] = mp;
+        const mod = Math.sin(TWO_PI * mp + L.fmFb * this.mfb[u]);
+        this.mfb[u] = mod;
+        out += Math.sin(TWO_PI * ph + I * mod);
+      }
+      return this.mix(out * L.uniNorm, f) * g;
+    }
+    let duty = this.duty, tb = null;
+    if (L.mips) {
+      // the fullest table whose harmonics stay below Nyquist at this pitch
+      const lim = p.mipLimits, fmax = f * 1.03; // headroom for unison detune
+      let l = this.lvl;
+      while (l > 0 && fmax < lim[l - 1]) l--;
+      while (l < lim.length - 1 && fmax > lim[l]) l++;
+      this.lvl = l;
+      tb = L.mips[l];
+    } else if (L.pwmDepth) duty += L.pwmDepth * Math.sin(TWO_PI * L.pwmRate * this.age);
+    duty = duty < 0.05 ? 0.05 : duty > 0.95 ? 0.95 : duty;
+    for (let u = 0; u < L.U; u++) {
+      const dt = (f * L.detuneMul[u] * ens[u]) / sr;
+      let ph = this.ph[u] + dt;
+      if (ph >= 1) ph -= 1;
+      this.ph[u] = ph;
+      if (L.type === 'pulse') {
+        let v = ph < duty ? 1 : -1;
+        v += blep(ph, dt);
+        let t2 = ph - duty;
+        if (t2 < 0) t2 += 1;
+        v -= blep(t2, dt);
+        out += v - (2 * duty - 1); // remove DC of narrow pulses
+      } else {
+        const x = ph * TABLE_SIZE, i = x | 0;
+        out += tb[i] + (tb[i + 1] - tb[i]) * (x - i);
+      }
+    }
+    return this.mix(out * L.uniNorm, f) * g;
+  }
+  // chip noise: a new random value 32 times a period of the pitch, so it is pitched like the NES's
+  chip(f) {
+    if ((this.nzPh += (f * 32) * this.L.invSr) >= 1) { this.nzPh -= Math.floor(this.nzPh); this.nz = this.rand(); }
+    return this.nz;
+  }
+  // the tone with noise mixed in (a layer's noise)
+  mix(x, f) { const n = this.noise; return n > 0 ? x * (1 - n) + this.chip(f) * n : x; }
+}
+
+// One note of an instrument: its pitch (glide, scoop, an arp, vibrato), the players of a section (unison, ensemble),
+// its layers, and the breath around them. stage is IDLE once every layer is quiet; level the loudest layer's envelope.
+class Voice {
+  constructor() {
+    this.stage = IDLE; this.level = 0; this.gate = false;
+    this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
+    this.arp = null; this.arpIdx = 0; this.arpT = 0;
+    this.osc = Array.from({ length: MAX_LAYERS }, () => new Osc());
+    this.n = 0; // layers playing
+    // ensemble: per player a slow drift rate, a vibrato rate and a phase; ens holds their pitch factors
+    this.rnd = Array.from({ length: 4 }, () => [0.13 + Math.random() * 0.25, 4.8 + Math.random() * 1.4, Math.random() * TWO_PI]);
+    this.ens = new Float64Array(4).fill(1); this.ensT = 0;
+    this.m = NaN; this.f = 440;
+    this.bms = 0; this.blo = 0; this.bband = 0; // breath: the tone's power, the band's state
+    this.seed = (Math.random() * 4294967296) >>> 0 || 1; // its noise (a game sound sets it, so each play is the same)
+  }
+  start(p, midi, vel, arp, short = false) {
+    const legato = this.stage !== IDLE && p.glideCoef > 0;
+    this.target = midi;
+    if (!legato) this.cur = midi - p.scoop;
+    this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
+    this.arp = arp; this.arpIdx = 0; this.arpT = 0; this.m = NaN;
+    const ls = p.layers;
+    this.n = ls.length;
+    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, legato && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1);
+    for (let i = ls.length; i < MAX_LAYERS; i++) this.osc[i].stage = IDLE;
+  }
+  release() {
+    if (this.stage !== IDLE) for (let i = 0; i < this.n; i++) this.osc[i].release();
+    this.gate = false;
+  }
+  stop() { this.stage = IDLE; this.level = 0; this.gate = false; for (const o of this.osc) { o.stage = IDLE; o.level = 0; } }
   // a section's players: each wanders slowly off pitch (up to 5 cents) and has its own vibrato (7 cents), fading in
   drift(p) {
     const a = this.age, k = p.ensemble, fade = Math.min(1, a / 0.4);
@@ -2087,10 +2296,38 @@ class Voice {
       this.ens[u] = Math.pow(2, (k * (5 * Math.sin(TWO_PI * r[0] * a + r[2]) + 7 * fade * Math.sin(TWO_PI * r[1] * a + 3 * r[2]))) / 1200);
     }
   }
-  // one sample: the tone, and the breath around it
+  // one sample: the layers, and the breath around them
   render(p) {
-    const y = this.tone(p);
-    return p.breath && this.stage !== IDLE ? y + this.breathe(p, y) : y;
+    if (this.stage === IDLE) return 0;
+    this.age += p.invSr;
+    let m;
+    if (this.arp) {
+      this.arpT += p.invSr;
+      if (this.arpT >= p.arpPeriod) { this.arpT -= p.arpPeriod; this.arpIdx = (this.arpIdx + 1) % this.arp.length; }
+      m = this.arp[this.arpIdx];
+    } else {
+      const k = p.glideCoef || p.scoopCoef;
+      this.cur = k ? this.target + (this.cur - this.target) * k : this.target;
+      m = this.cur;
+    }
+    if (p.vibDepth && this.age > p.vibDelay) {
+      const ramp = Math.min(1, (this.age - p.vibDelay) / 0.4);
+      m += p.vibDepth * ramp * Math.sin(TWO_PI * p.vibRate * this.age);
+    }
+    if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
+    let y = 0, lv = 0, on = false;
+    for (let i = 0; i < this.n; i++) {
+      const o = this.osc[i];
+      if (o.stage === IDLE) continue;
+      y += o.tone(p, m, this.ens);
+      if (o.stage !== IDLE) on = true;
+      if (o.level > lv) lv = o.level;
+    }
+    this.level = lv;
+    if (!on) { this.stage = IDLE; this.level = 0; return y; }
+    if (!p.breath) return y;
+    if (m !== this.m) { this.m = m; this.f = 440 * Math.pow(2, (m - 69) / 12); this.breathBand(p); }
+    return y + this.breathe(p, y);
   }
   // Breath: noise in a band around the note (centred an octave up, about two octaves wide), so it sounds like air in
   // the note rather than hiss beside it. Its level follows the tone's own (over 20 ms), so every type breathes alike,
@@ -2109,111 +2346,160 @@ class Voice {
     this.bF = 2 * Math.sin(Math.PI * fc * p.invSr);
     this.bP = (Math.PI * fc * p.invSr) / 3;
   }
-  tone(p) {
-    let lv = this.level;
-    switch (this.stage) {
-      case IDLE: return 0;
-      case ATT: lv += p.attInc; if (lv >= 1) { lv = 1; this.stage = DEC; } break;
-      case DEC: lv = p.sus + (lv - p.sus) * p.decCoef; if (p.sus <= 0 && lv < 1e-4) this.stage = IDLE; break;
-      case REL: lv *= p.relCoef; if (lv < 1e-4) this.stage = IDLE; break;
-    }
-    this.level = lv;
-    if (this.stage === IDLE) { this.level = 0; return 0; }
-    this.age += p.invSr;
+}
 
-    let m;
-    if (this.arp) {
-      this.arpT += p.invSr;
-      if (this.arpT >= p.arpPeriod) { this.arpT -= p.arpPeriod; this.arpIdx = (this.arpIdx + 1) % this.arp.length; }
-      m = this.arp[this.arpIdx];
-    } else {
-      const k = p.glideCoef || p.scoopCoef;
-      this.cur = k ? this.target + (this.cur - this.target) * k : this.target;
-      m = this.cur;
-    }
-    if (p.vibDepth && this.age > p.vibDelay) {
-      const ramp = Math.min(1, (this.age - p.vibDelay) / 0.4);
-      m += p.vibDepth * ramp * Math.sin(TWO_PI * p.vibRate * this.age);
-    }
-    if (m !== this.m) {
-      this.m = m;
-      this.f = 440 * Math.pow(2, (m - 69) / 12);
-      this.breathBand(p);
-      if (this.zone) this.sInc = Math.pow(2, (m - this.zone.root) / 12) * this.zone.rate * p.invSr;
-    }
-    const f = this.f, sr = p.sr;
-    let out = 0;
-    if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
-    // bowed: the envelope is the bow's speed, so a note swells like a bow stroke; with unison a section of players,
-    // and with ensemble each player's pitch wanders and their vibrato is never quite even
-    if (p.type === 'bowed') {
-      if (this.bows.length < p.U) return 0; // the sound became bowed while this voice was sounding
-      const v = (0.03 + 0.2 * this.vel) * lv;
-      for (let u = 0; u < p.U; u++) out += this.bows[u].tick(p, f * p.detuneMul[u] * this.ens[u], v);
-      return out * p.uniNorm * this.vel;
-    }
-    if (p.type === 'sample') {
-      // the recording, resampled to the note (glide and vibrato too); sustained notes loop, others end
-      const z = this.zone;
-      if (!z) return 0;
-      const d = z.data, i = this.spos | 0, fr = this.spos - i, j = z.loopEnd && i + 1 >= z.loopEnd ? z.loopStart : i + 1;
-      const y = d[i] + ((d[j] || 0) - d[i]) * fr;
-      this.spos += this.sInc;
-      if (z.loopEnd) { if (this.spos >= z.loopEnd) this.spos -= z.loopEnd - z.loopStart; }
-      else if (this.spos >= d.length - 1) { this.stage = IDLE; this.level = 0; }
-      return y * lv * this.vel * 5; // recordings sit at -16 dB: about as loud as a saw
-    }
-    if (p.type === 'string') {
-      if (!this.kb) this.pluck(p, f); // the sound became a string while this voice was sounding
-      return this.string(p, f) * lv * this.vel * 3.5;
-    }
-    if (p.type === 'fm') {
-      const I = p.fmIndex * (1 - p.fmEnv + p.fmEnv * lv) * (0.5 + 0.5 * this.vel);
-      for (let u = 0; u < p.U; u++) {
-        const dt = (f * p.detuneMul[u] * this.ens[u]) / sr;
-        let ph = this.ph[u] + dt;
-        if (ph >= 1) ph -= 1;
-        this.ph[u] = ph;
-        let mp = this.mph[u] + dt * p.fmRatio;
-        mp -= Math.floor(mp);
-        this.mph[u] = mp;
-        const mod = Math.sin(TWO_PI * mp + p.fmFb * this.mfb[u]);
-        this.mfb[u] = mod;
-        out += Math.sin(TWO_PI * ph + I * mod);
-      }
-      return out * p.uniNorm * lv * this.vel;
-    }
-    let duty = p.duty, tb = null;
-    if (p.mips) {
-      // the fullest table whose harmonics stay below Nyquist at this pitch
-      const lim = p.mipLimits, fmax = f * 1.03; // headroom for unison detune
-      let l = this.lvl;
-      while (l > 0 && fmax < lim[l - 1]) l--;
-      while (l < lim.length - 1 && fmax > lim[l]) l++;
-      this.lvl = l;
-      tb = p.mips[l];
-    } else if (p.pwmDepth) duty += p.pwmDepth * Math.sin(TWO_PI * p.pwmRate * this.age);
-    duty = duty < 0.05 ? 0.05 : duty > 0.95 ? 0.95 : duty;
-    for (let u = 0; u < p.U; u++) {
-      const dt = (f * p.detuneMul[u] * this.ens[u]) / sr;
-      let ph = this.ph[u] + dt;
-      if (ph >= 1) ph -= 1;
-      this.ph[u] = ph;
-      if (p.type === 'pulse') {
-        let v = ph < duty ? 1 : -1;
-        v += blep(ph, dt);
-        let t2 = ph - duty;
-        if (t2 < 0) t2 += 1;
-        v -= blep(t2, dt);
-        out += v - (2 * duty - 1); // remove DC of narrow pulses
-      } else {
-        const x = ph * TABLE_SIZE, i = x | 0;
-        out += tb[i] + (tb[i + 1] - tb[i]) * (x - i);
-      }
-    }
-    return out * p.uniNorm * lv * this.vel;
+return { ATT, DEC, DRAWBAR_FEET, DRAWBAR_RATIOS, IDLE, REL, Voice, WAVE_PRESETS, compileInst, drawbarLevels, hasDrawbars, timeMoves, waveSteps };
+})();
+
+const $engine_sfx = (() => {
+const { Rng } = $engine_rng;
+const { FxChain } = $engine_fx;
+const { compileInst, timeMoves, Voice, IDLE } = $engine_voice;
+const { migrateSound, noteTail, MAX_LAYERS } = $engine_inst;
+// Game sounds (song.sounds): short sound effects made by synthesis, so a game ships no audio files: a jump, a coin, a
+// hit, an explosion. A sound plays an instrument (inst.js: up to three layers, the note's effects, a chain of effects
+// in any order): one of the song's (instrument: its key), the same one a track can play, or its own (inst). It plays
+// one note: its pitch (note, in midi notes) and how long it is held (length, seconds), and how it plays in the game:
+// { id, instrument, note, length, volume, echo, reverb, duck, vary, key, at }. Any
+// setting of a layer or an effect can move over the sound (a move: a ramp, a hump, a wave, a step), so a slide is a
+// pitch that ramps, a sweep a filter that ramps. Each play varies a little (vary), can be tuned to the chord playing
+// (key) and can wait for the beat (at). SfxVoice plays one; renderSound puts one into a buffer (a picture, a WAV).
+
+const SFX_AT = ['now', 'step', 'beat'];
+
+// a setting: its range, its default, and whether it moves in octaves (log)
+const P = (min, max, def, log = false) => ({ min, max, def, log });
+// the sound's own settings: the note it plays, and how it plays in the game
+const SFX_PARAMS = {
+  note: P(24, 108, 69), // midi notes (69: A4, 440 Hz)
+  length: P(0.01, 4, 0.25, true), // seconds the note is held (each layer's envelope shapes it)
+  volume: P(0, 1, 0.7),
+  echo: P(0, 1, 0), // send to the song's echo
+  reverb: P(0, 1, 0.1), // send to the song's reverb
+  duck: P(0, 1, 0), // the music gets this much quieter while it sounds
+  vary: P(0, 1, 0.15), // how much each play differs (pitch, length, the filter)
+};
+
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+const inP = (p, v) => clamp(num(v, p.def), p.min, p.max);
+
+// a sound with its instrument in inst: the song's it names (or its own)
+function resolveSound(song, def) {
+  if (!def || typeof def !== 'object' || def.inst || typeof def.instrument !== 'string') return def;
+  const inst = song?.instruments?.[def.instrument];
+  return inst && inst.type !== 'drums' ? { ...def, inst } : def;
+}
+// a sound as it is now (inst.js migrateSound), with its own settings there and in range; its instrument (inst, as
+// resolveSound puts it there) with at least one layer and a list of effects
+function soundOf(def = {}) {
+  const s = migrateSound(def) || {}, i = s.inst && typeof s.inst === 'object' ? s.inst : {};
+  const out = { ...s };
+  for (const [k, p] of Object.entries(SFX_PARAMS)) out[k] = inP(p, s[k]);
+  out.key = !!s.key;
+  out.at = SFX_AT.includes(s.at) ? s.at : 'now';
+  out.inst = { ...i, layers: Array.isArray(i.layers) && i.layers.length ? i.layers.slice(0, MAX_LAYERS) : [{}], fx: Array.isArray(i.fx) ? i.fx : [] };
+  return out;
+}
+// how long it lasts, in seconds: until its layers are quiet, and the tail of its delays (s: as soundOf has it)
+function soundLength(s) {
+  const inst = s.inst || {};
+  let end = noteTail(inst, s.length);
+  for (const f of inst.fx || []) if (f.kind === 'delay' && !f.off) end += Math.min(1.5, (f.time ?? 0.25) * (1 + 8 * (f.feedback ?? 0.3) ** 2) + 0.05 * (f.mix ?? 0.3)); // the echoes ring on
+  return clamp(end, 0.01, 10);
+}
+
+// One play: the sound (its instrument in inst: resolveSound) varied by rng, opts ({ pitch: ×, volume, pan, bps: the
+// song's beats per second, for moves in beats }), and tuned by snap (midi, dir → the chord tone to play, or null).
+// def: the instrument as it plays this time, note, length, the whole length, gain, pan, bps, seed.
+function playOf(def, rng, opts = {}, snap = null) {
+  const s = soundOf(def), v = s.vary, i = s.inst;
+  const r = () => rng.next() * 2 - 1;
+  let note = s.note + 12 * Math.log2(clamp(num(opts.pitch, 1), 0.05, 20)) + r() * v * 3;
+  const stretch = 1 + r() * v * 0.3, cut = Math.pow(2, r() * v * 0.5);
+  if (snap && s.key) { const m = snap(note, 0); if (m != null) note = m; }
+  const layers = i.layers.filter((l) => l && !l.off).map((l) => {
+    if (!(snap && s.key) || !Array.isArray(l.moves)) return l;
+    // a step of the pitch goes to the chord tone that way
+    const at = note + (+l.pitch || 0);
+    const moves = l.moves.map((m) => {
+      if (m?.on !== 'pitch' || m.shape !== 'step') return m;
+      const to = note + (+m.to || 0), ms = snap(to, Math.sign(to - at));
+      return ms != null && Math.round(ms) !== Math.round(at) ? { ...m, to: ms - note } : m;
+    });
+    return { ...l, moves };
+  });
+  const fx = i.fx.filter((f) => f && !f.off).map((f) => (f.kind === 'filter' ? { ...f, cutoff: clamp((f.cutoff ?? 1000) * cut, 40, 16000) } : f));
+  const inst = { ...i, layers: layers.length ? layers : [{ level: 0 }], fx };
+  const p = { def: inst, note: clamp(note, 0, 127), gate: s.length * stretch, echo: s.echo, reverb: s.reverb, duck: s.duck, gain: s.volume * s.volume * clamp(num(opts.volume, 1), 0, 2), pan: clamp(num(opts.pan, 0), -1, 1), bps: clamp(num(opts.bps, 2), 0.25, 8), seed: (rng.next() * 4294967296) >>> 0 || 1 };
+  p.length = soundLength({ inst, length: p.gate });
+  return p;
+}
+
+// One sound playing: a voice of its instrument, held for its length, through its effects. start(p) with a play's
+// settings (playOf); render() returns its next (mono) sample, and pl, pr are where it sits (an auto-pan moves them).
+class SfxVoice {
+  constructor(sr) {
+    this.sr = sr;
+    this.done = true;
+    this.v = new Voice();
+    this.fx = new FxChain(sr); // the effects (fx.js), as the tracks have them
+  }
+  start(p, samples = {}) {
+    const sr = this.sr;
+    this.p = p;
+    this.inst = compileInst(p.def, sr, samples);
+    timeMoves(this.inst, { music: false, len: p.gate, bps: p.bps });
+    this.n = Math.max(1, Math.round(p.length * sr));
+    this.off = Math.max(1, Math.round(p.gate * sr));
+    this.t = 0; this.apT = 0;
+    this.v.stop();
+    this.v.seed = p.seed;
+    for (const o of this.v.osc) o.ph.fill(0); // every play starts its waves alike
+    this.v.start(this.inst, p.note, 1, null, false);
+    this.fx.set(this.inst.fx, { music: false, len: p.gate, bps: p.bps });
+    this.fx.noteOn(1);
+    this.place(0);
+    this.done = false;
+  }
+  place(off) { const pan = clamp(this.p.pan + off, -1, 1); this.pl = Math.sqrt(0.5 * (1 - pan)); this.pr = Math.sqrt(0.5 * (1 + pan)); }
+  render() {
+    if (this.done) return 0;
+    const v = this.v;
+    if (this.t === this.off) v.release();
+    const x = v.stage !== IDLE ? v.render(this.inst) : 0;
+    if (this.fx.panning && --this.apT <= 0) { this.apT = 16; this.place(this.fx.pan); }
+    const y = this.fx.run(x, v.level);
+    if (++this.t >= this.n) this.done = true;
+    return y * this.inst.gain * this.p.gain * 0.8;
   }
 }
+
+// A sound into a buffer, dry and mono: Float32Array at sr. seed varies it (vary 0: always the same).
+function renderSound(def, { sr = 48000, seed = 1, opts, samples } = {}) {
+  const p = playOf(def, new Rng(seed), opts), v = new SfxVoice(sr);
+  v.start(p, samples);
+  const out = new Float32Array(v.n);
+  for (let i = 0; i < out.length; i++) out[i] = v.render();
+  return out;
+}
+
+return { SFX_AT, SFX_PARAMS, SfxVoice, playOf, renderSound, resolveSound, soundLength, soundOf };
+})();
+
+const $engine_synth = (() => {
+const { DrumVoice } = $engine_drums;
+const { TWO_PI } = $engine_dsp;
+const { clamp, clamp01 } = $engine_theory;
+const { Moves } = $engine_moves;
+const { SfxVoice } = $engine_sfx;
+const { FxChain } = $engine_fx;
+const { compileInst, timeMoves, Voice, IDLE } = $engine_voice;
+// The mix, sample by sample: a bus per track (its voices, voice.js, or a drum kit, drums.js; its effects, fx.js; its
+// pan, double tracking and the effect rows' moves), the game sounds (sfx.js), a ping-pong echo, a small Freeverb and the
+// master bus.
+// Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
+
 
 class TrackBus {
   constructor(poly, isDrum) {
@@ -2237,6 +2523,7 @@ class TrackBus {
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
     this.pump = clamp01(tr.pump || 0); // sidechain: dips on every kick
     (this.fx ||= new FxChain(sr)).set(p.fx, { music: true, bps, drums: this.isDrum });
+    timeMoves(p, { music: true, bps }); // its layers' moves, in beats: each note starts them again
     // double tracking: a second take, a few ms late with a slowly wandering delay, on the other side;
     // the two sit at pan ± double
     this.dbl = clamp01(tr.double || 0);
@@ -2299,7 +2586,7 @@ class TrackBus {
     }
   }
   allOff() {
-    for (const v of this.voices) { if (this.isDrum) v.active = false; else { v.stage = IDLE; v.level = 0; v.gate = false; } }
+    for (const v of this.voices) { if (this.isDrum) v.active = false; else v.stop(); }
   }
   idle() {
     for (const v of this.voices) if (this.isDrum ? v.active : v.stage !== IDLE) return false;
@@ -2531,7 +2818,7 @@ class Synth {
       if (this.sfx.length < 8) this.sfx.push((v = new SfxVoice(this.sr)));
       else v = this.sfx.reduce((a, b) => (b.t > a.t ? b : a));
     }
-    v.start(p);
+    v.start(p, this.samples);
   }
   stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
@@ -2569,8 +2856,10 @@ class Synth {
   // Audition an instrument outside the song (editor). events: [{ t: seconds, notes: [midi] | hit: 'k', dur, vel }]
   // Plays on its own bus that ignores mute/solo, so it works with the song held or playing.
   preview(def, events, { poly = 1, volume = 0.3 } = {}) {
+    const was = this.pv;
     this.pv = this.audition(this.pv, def, poly, volume);
-    this.pv.allOff();
+    // the last preview's notes let go rather than stop: a hard stop mid-wave clicks (a chord after a chord)
+    if (this.pv === was) this.pv.release(); else was?.allOff();
     const q = [];
     for (const ev of events || []) {
       const at = Math.round((ev.t || 0) * this.sr), vel = ev.vel ?? 0.8;
@@ -2659,7 +2948,7 @@ class Synth {
   }
 }
 
-return { Synth, WAVE_PRESETS, compileInst, waveSteps };
+return { Synth };
 })();
 
 const $engine_params = (() => {
@@ -2674,31 +2963,41 @@ const $engine_params = (() => {
 //   when(sound, track): it applies (the oscillator's own settings, the vibrato's rate only with a vibrato …)
 
 const melodic = (s) => s.type !== 'drums';
-const is = (...types) => (s) => types.includes(s.type || 'pulse');
+const is = (...types) => (l) => types.includes(l.type || 'pulse');
 
-const SOUND_PARAMS = [
-  // oscillator
+// a layer's settings (inst.js), as paths inside the layer: its source, its envelope, where it sits
+const LAYER_PARAMS = [
+  // source
   ['string.decay', 0.1, 10, 3, { log: true, when: is('string') }],
   ['string.bright', 0, 1, 0.5, { when: is('string') }],
   ['string.mute', 0, 1, 0, { vary: [0, 0.6], when: is('string') }],
+  ['string.position', 0, 0.5, 0, { off: 'string.position', vary: [0, 0.3], when: is('string') }], // 0: not set
   ['bow.pressure', 0, 1, 0.8, { vary: [0.6, 0.95], when: is('bowed') }], // far from 80 % / 40 % the string jumps an octave
   ['bow.position', 0, 1, 0.4, { vary: [0.25, 0.55], when: is('bowed') }],
-  ['fm.ratio', 0.5, 8, 1, { step: 0.5, vary: [0.5, 4], when: is('fm') }],
+  ['fm.ratio', 0.5, 16, 1, { step: 0.5, vary: [0.5, 4], when: is('fm') }],
   ['fm.index', 0, 10, 2, { vary: [0.5, 6], when: is('fm') }],
   ['fm.env', 0, 1, 1, { when: is('fm') }],
   ['fm.feedback', 0, 1.5, 0, { vary: [0, 0.8], when: is('fm') }],
   ['duty', 0.05, 0.5, 0.5, { vary: [0.1, 0.5], when: is('pulse') }],
   ['pwm.depth', 0, 0.4, 0, { off: 'pwm', vary: [0, 0.25], when: is('pulse') }],
-  ['pwm.rate', 0.05, 8, 0.3, { log: true, vary: [0.1, 3], when: (s) => is('pulse')(s) && !!s.pwm }],
+  ['pwm.rate', 0.05, 8, 0.3, { log: true, vary: [0.1, 3], when: (l) => is('pulse')(l) && !!l.pwm }],
+  ['noise', 0, 1, 0, { off: 'noise', vary: [0, 0.3], when: is('pulse', 'triangle', 'wave', 'fm') }], // chip noise mixed in
+  // envelope
+  ['env.a', 0.001, 4, 0.01, { log: true, vary: [0.001, 1] }],
+  ['env.d', 0.01, 6, 0.2, { log: true, vary: [0.03, 3] }],
+  ['env.s', 0, 1, 0.7, {}],
+  ['env.r', 0.01, 8, 0.2, { log: true, vary: [0.02, 3] }],
+  // where it sits: semitones from the note, its level, seconds after the note
+  ['pitch', -36, 36, 0, { step: 1 }],
+  ['level', 0, 1, 1, { vary: [0.5, 1] }],
+  ['delay', 0, 1, 0, { off: 'delay' }],
+];
+// the instrument's own settings: the note's effects (they move every layer), its level
+const SOUND_PARAMS = [
   ['unison', 1, 4, 1, { step: 1, off: 'unison', when: melodic }],
   ['detune', 0, 50, 0, { step: 1, vary: [0, 25], when: (s) => melodic(s) && (s.unison || 1) > 1 }],
   ['ensemble', 0, 1, 0, { off: 'ensemble', vary: [0, 0.6], when: melodic }],
   ['breath', 0, 1, 0, { off: 'breath', vary: [0, 0.5], when: melodic }],
-  // envelope
-  ['env.a', 0.001, 4, 0.01, { log: true, vary: [0.001, 1], when: melodic }],
-  ['env.d', 0.01, 6, 0.2, { log: true, vary: [0.03, 3], when: melodic }],
-  ['env.s', 0, 1, 0.7, { when: melodic }],
-  ['env.r', 0.01, 8, 0.2, { log: true, vary: [0.02, 3], when: melodic }],
   // pitch
   ['vibrato.depth', 0, 1, 0, { off: 'vibrato', vary: [0, 0.35], when: melodic }],
   ['vibrato.rate', 0.1, 12, 5, { log: true, vary: [3, 7.5], when: (s) => melodic(s) && !!s.vibrato }],
@@ -2717,7 +3016,8 @@ const PAD_NAMES = ['k', 's', 'h', 'o', 'c', 't', 'm'];
 const PAD_LABELS = { k: 'kick', s: 'snare', h: 'hat', o: 'open hat', c: 'crash', t: 'tom', m: 'tick' };
 
 // the fade a track gets unless it sets one (Engine.fadeSec): sustained sounds (chords, a slow attack) fade over a bar
-const autoFade = (sound, poly = sound?.poly) => (sound?.type !== 'drums' && ((poly || 1) > 1 || (sound?.env?.a ?? 0) >= 0.15) ? 1 : 0);
+const attack = (s) => Math.max(s?.env?.a ?? 0, ...(Array.isArray(s?.layers) ? s.layers.map((l) => l?.env?.a ?? 0) : []));
+const autoFade = (sound, poly = sound?.poly) => (sound?.type !== 'drums' && ((poly || 1) > 1 || attack(sound) >= 0.15) ? 1 : 0);
 
 const trackMelodic = (s) => s?.type !== 'drums';
 const TRACK_PARAMS = [
@@ -2746,8 +3046,9 @@ const getAt = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefin
 // where v sits in min..max as 0..1 (log: on an exponential range), and back
 const toUnit = (v, min, max, log) => (log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min));
 const fromUnit = (t, min, max, log) => (log ? min * (max / min) ** t : min + t * (max - min));
-// a sound's setting, or its default when it has none
+// a sound's setting (a layer's: in the layer), or its default when it has none
 const soundAt = (s, path) => getAt(s, path) ?? SOUND[path][3];
+const layerAt = (l, path) => getAt(l, path) ?? LAYER[path][3];
 function setAt(o, path, v) {
   const ks = path.split('.');
   let x = o;
@@ -2768,9 +3069,9 @@ function putParam(obj, [path, min, , , o], v) {
 }
 // the lists by path: SOUND['env.a'] → its entry
 const byPath = (list) => Object.fromEntries(list.map((p) => [p[0], p]));
-const SOUND = byPath(SOUND_PARAMS), TRACK = byPath(TRACK_PARAMS), SONG = byPath(SONG_PARAMS);
+const SOUND = byPath(SOUND_PARAMS), LAYER = byPath(LAYER_PARAMS), TRACK = byPath(TRACK_PARAMS), SONG = byPath(SONG_PARAMS);
 
-return { LEAD_INS, MODE_ALIAS, MODE_FAMILIES, PAD_LABELS, PAD_NAMES, PAD_PARAMS, SONG, SONG_PARAMS, SOUND, SOUND_PARAMS, SWAP_TYPES, TRACK, TRACK_PARAMS, autoFade, fromUnit, getAt, putParam, setAt, soundAt, toUnit, unsetAt };
+return { LAYER, LAYER_PARAMS, LEAD_INS, MODE_ALIAS, MODE_FAMILIES, PAD_LABELS, PAD_NAMES, PAD_PARAMS, SONG, SONG_PARAMS, SOUND, SOUND_PARAMS, SWAP_TYPES, TRACK, TRACK_PARAMS, autoFade, fromUnit, getAt, layerAt, putParam, setAt, soundAt, toUnit, unsetAt };
 })();
 
 const $engine_engine = (() => {
@@ -2779,7 +3080,7 @@ const { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod
 const { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } = $engine_pattern;
 const { Synth } = $engine_synth;
 const { FX_KINDS, fxAt, fxJoin, onMix } = $engine_moves;
-const { playOf } = $engine_sfx;
+const { playOf, resolveSound } = $engine_sfx;
 const { autoFade } = $engine_params;
 const { weightIn, chanceIn } = $engine_plays;
 // The engine = conductor (decides WHAT plays) + sequencer (WHEN) + synth (HOW it sounds).
@@ -3124,14 +3425,14 @@ class Engine {
   // A game sound (song.sounds, by id; or a sound's own settings): at once, or from the next step or beat (opts.at, else
   // the sound's `at`). opts: { pitch: × (1.2: higher), volume, pan, at }. While held (editor) it plays at once.
   sound(ref, opts = {}) {
-    const def = typeof ref === 'string' ? this.song.soundMap[ref] : ref;
+    const def = resolveSound(this.song, typeof ref === 'string' ? this.song.soundMap[ref] : ref);
     if (!def || typeof def !== 'object') return false;
     const q = { step: 1, beat: this.song.spb }[opts.at || def.at];
     if (q && !this.hold) this.sfxQ.push({ def, opts, q });
     else this.playSound(def, opts);
     return true;
   }
-  playSound(def, opts) { this.synth.sound(playOf(def, this.srng, opts, (m, dir) => this.snap(m, dir))); }
+  playSound(def, opts) { this.synth.sound(playOf(def, this.srng, { bps: this.song.bpm / 60, ...opts }, (m, dir) => this.snap(m, dir))); }
   stopSounds() { this.sfxQ = []; this.synth.stopSounds(); }
   setSoundVolume(v) { this.synth.sfxGain = Math.max(0, +v || 0); }
   // midi m (a fraction too) → the nearest tone of the chord playing (with no chord: of the scale); dir 1: the nearest

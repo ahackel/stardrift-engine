@@ -619,40 +619,62 @@ for (const [file, sg] of toCheck) {
   }
 }
 
-// 18. Game sounds: each wave and each effect renders clean and dies away; moves get where they go; vary 0 repeats,
-// vary changes; key tunes to the chord (a step to the next chord tone); at 'beat' waits for the beat; a sound plays
-// while the song is held; a duck quietens the music
+// 18. Game sounds: an instrument and a note. Each layer type and each effect renders clean and dies away; moves get
+// where they go; vary 0 repeats, vary changes; key tunes to the chord (a step to the next chord tone); at 'beat' waits
+// for the beat; a sound plays while the song is held; a duck quietens the music; an older sound converts
 {
-  const { renderSound, SFX_WAVES, SFX_FX, LAYER_PARAMS, soundOf, soundLength } = await import('../src/engine/sfx.js');
-  const { valueAt, movesOf } = await import('../src/engine/fx.js');
+  const { renderSound, soundOf, soundLength } = await import('../src/engine/sfx.js');
+  const { LAYER_TYPES, LAYER_MOVE_PARAMS, migrateSound } = await import('../src/engine/inst.js');
+  const { migrateSong } = await import('../src/engine/plays.js');
+  const { valueAt, movesOf, fxList, EFFECT_KINDS, fxParams } = await import('../src/engine/fx.js');
   const { validateSong } = await import('../src/validate.js');
   const peak = (a, from = 0, to = a.length) => { let p = 0; for (let i = from; i < to; i++) p = Math.max(p, Math.abs(a[i])); return p; };
   const fine = (b) => b.every(Number.isFinite) && peak(b) > 0.02 && peak(b) < 1.2 && Math.abs(b[b.length - 1]) < 0.02;
-  const waves = SFX_WAVES.filter((wave) => !fine(renderSound({ layers: [{ wave, noise: 0.3, moves: [{ on: 'pitch', to: 110 }, { on: 'pitch', shape: 'wave', to: 470, rate: 8 }, { on: 'duty', to: 0.1, every: 0.05 }] }] })));
-  ok(!waves.length, `every wave renders clean, and dies away at its end${waves.length ? ` — ${waves}` : ''}`);
-  const fxBad = Object.keys(SFX_FX).filter((kind) => {
-    const spec = SFX_FX[kind], [k] = Object.keys(spec), moves = k ? [{ on: k, shape: 'hump', to: spec[k].max }] : undefined;
-    return !fine(renderSound({ layers: [{ wave: 'saw', pitch: 220 }, { wave: 'noise', level: 0.5, delay: 0.05 }], fx: [{ kind, ...(kind === 'filter' && { type: 'band' }), moves }] }));
+  const env = { a: 0.005, d: 0.2, s: 0, r: 0.05 };
+  const types = LAYER_TYPES.filter((t) => t !== 'sample').filter((type) => !fine(renderSound({ length: 0.3, layers: [{ type, env, noise: 0.3, moves: [{ on: 'pitch', to: -24 }, { on: 'pitch', shape: 'wave', to: 2, rate: 8 }, { on: 'duty', to: 0.1, every: 0.05 }] }] })));
+  ok(!types.length, `every layer type renders clean, and dies away at its end${types.length ? ` — ${types}` : ''}`);
+  const fxBad = Object.keys(EFFECT_KINDS).filter((kind) => {
+    const spec = fxParams(kind, false), [k] = Object.keys(spec), moves = k ? [{ on: k, shape: 'hump', to: spec[k].max }] : undefined;
+    return !fine(renderSound({ note: 57, length: 0.3, layers: [{ type: 'wave', wave: 'saw', smooth: true, env }, { type: 'noise', level: 0.5, delay: 0.05, env }], fx: [{ kind, ...(kind === 'filter' && { type: 'band' }), moves }] }));
   });
   ok(!fxBad.length, `every effect renders clean, its first setting moving${fxBad.length ? ` — ${fxBad}` : ''}`);
-  const mv = (m) => movesOf([{ on: 'pitch', to: 880, ...m }], LAYER_PARAMS, { len: 0.25 });
-  const ramp = mv({}), step = mv({ shape: 'step', at: 0.5 }), again = mv({ every: 0.1 });
-  ok(Math.abs(valueAt(440, 'pitch', ramp, LAYER_PARAMS.pitch, 0.125) - 440 * Math.SQRT2) < 1e-9 && valueAt(440, 'pitch', step, LAYER_PARAMS.pitch, 0.1) === 440
-    && valueAt(440, 'pitch', step, LAYER_PARAMS.pitch, 0.13) === 880 && valueAt(440, 'pitch', again, LAYER_PARAMS.pitch, 0.1) === 440,
-    'a pitch ramps in octaves (halfway: a tritone), steps at its point, and starts over every so often');
-  ok(Math.abs(soundLength(soundOf({ layers: [{ length: 0.2 }, { length: 0.3, delay: 0.1 }] })) - 0.4) < 1e-9, 'a sound lasts to the end of its last layer');
+  const mv = (m) => movesOf([{ on: 'pitch', to: 12, ...m }], LAYER_MOVE_PARAMS, { len: 0.25 });
+  const ramp = mv({}), step = mv({ shape: 'step', at: 0.5 }), again = mv({ every: 0.1 }), P = LAYER_MOVE_PARAMS.pitch;
+  ok(Math.abs(valueAt(0, 'pitch', ramp, P, 0.125) - 6) < 1e-9 && valueAt(0, 'pitch', step, P, 0.1) === 0
+    && valueAt(0, 'pitch', step, P, 0.13) === 12 && valueAt(0, 'pitch', again, P, 0.1) === 0,
+    'a pitch ramps in semitones (halfway: a tritone), steps at its point, and starts over every so often');
+  ok(Math.abs(soundLength(soundOf({ length: 0.2, layers: [{ env: { a: 0.01, d: 0.1, s: 0, r: 0.1 } }, { delay: 0.1, env: { a: 0.01, s: 1, r: 0.2 } }] })) - 0.5) < 1e-9, 'a sound lasts until its last layer is quiet');
   const a = renderSound({ layers: [{}], vary: 0 }, { seed: 1 }), b = renderSound({ layers: [{}], vary: 0 }, { seed: 2 }), c = renderSound({ layers: [{}], vary: 0.8 }, { seed: 2 });
   ok(a.length === b.length && a.every((x, i) => x === b[i]) && c.length !== a.length, 'vary 0: every play the same; vary: they differ');
+  const was = migrateSound({ id: 'x', layers: [{ wave: 'square', pitch: 880, length: 0.2, moves: [{ on: 'pitch', to: 1760 }] }, { wave: 'noise', pitch: 440, delay: 0.1 }] });
+  const wl = was.inst?.layers || [];
+  ok(was.note === 81 && was.length === 0.35 && wl[0]?.type === 'pulse' && wl[0].moves[0].to === 12 && wl[1]?.type === 'noise' && wl[1].pitch === -12 && !was.layers,
+    'an older sound becomes a note and an instrument\'s layers: pitches in semitones from the first, its slide too');
+  const flat = migrateSound({ id: 'f', note: 60, volume: 0.5, key: true, unison: 2, layers: [{ type: 'fm' }], fx: [{ kind: 'drive' }] }), now = migrateSound(flat);
+  ok(flat.id === 'f' && flat.note === 60 && flat.volume === 0.5 && flat.key === true && flat.inst.unison === 2 && flat.inst.layers[0].type === 'fm' && flat.inst.fx[0].kind === 'drive' && !flat.fx && now === flat,
+    'a sound with its instrument beside its note gets an inst; one with an inst stays as it is');
+  // a move or an effect keeps its own clock: beats at the song's tempo, or Hz; with neither, where it plays
+  const clk = movesOf([{ on: 'pitch', to: 1, beats: 0.5 }, { on: 'pitch', to: 1, shape: 'wave', rate: 4 }, { on: 'pitch', to: 1 }], LAYER_MOVE_PARAMS, { music: false, bps: 2, len: 0.3 });
+  const trk = movesOf([{ on: 'pitch', to: 1, shape: 'wave', rate: 4 }, { on: 'pitch', to: 1 }], LAYER_MOVE_PARAMS, { music: true, bps: 2 });
+  const fxs = fxList([{ kind: 'tremolo', beats: 0.5 }, { kind: 'phaser', rate: 3 }, { kind: 'chorus' }], false);
+  ok(clk[0].len === 0.25 && clk[1].rate === 4 && clk[2].len === 0.3 && trk[0].rate === 4 && trk[1].len === 0.5 && fxs[0].beats === 0.5 && fxs[0].rate === undefined && fxs[1].rate === 3 && fxs[2].rate !== undefined,
+    'moves and effects keep their own clock (beats or Hz), else where they play');
+  const hoist = migrateSong({ instruments: { jump: { layers: [{}] } }, tracks: [], blocks: [], sounds: [{ id: 'jump', note: 60, layers: [{ type: 'noise' }] }, { id: 'zap', inst: { layers: [{ type: 'fm' }] } }, { id: 'lead', instrument: 'jump' }] });
+  ok(hoist.sounds[0].instrument === 'jump_2' && hoist.instruments.jump_2.layers[0].type === 'noise' && hoist.instruments.zap.layers[0].type === 'fm' && hoist.sounds[1].instrument === 'zap' && !hoist.sounds[1].inst && hoist.sounds[2].instrument === 'jump' && migrateSong(hoist).sounds === hoist.sounds,
+    'a sound\'s own instrument joins the song\'s, under its id; one that names an instrument stays');
   const song = {
     format: 2, name: 'sfx', bpm: 120, key: 'C', scale: 'major',
-    instruments: { pad: { type: 'pulse' } }, tracks: [{ id: 'pad', instrument: 'pad', octave: 4, clips: ['hold'] }],
+    instruments: { pad: { layers: [{ type: 'pulse' }] }, coin: { layers: [{ moves: [{ on: 'pitch', shape: 'step', to: 4, at: 0.3 }] }] },
+      boom: { layers: [{ type: 'noise' }], fx: [{ kind: 'filter', cutoff: 800, moves: [{ on: 'cutoff', to: 100 }] }] } },
+    tracks: [{ id: 'pad', instrument: 'pad', octave: 4, clips: ['hold'] }],
     blocks: [{ id: 'hold', beats: 4, pattern: '* - - - - - - - - - - - - - - -' }], progressions: [{ id: 'p', chords: 'I:4' }],
     sections: [{ id: 'a', bars: 4, blocks: { pad: [{ at: 0, block: 'hold' }] }, chords: [{ at: 0, prog: 'p' }] }], moods: { calm: { flow: ['a'] } },
-    sounds: [{ id: 'coin', layers: [{ pitch: 1000, moves: [{ on: 'pitch', shape: 'step', to: 1260, at: 0.3 }] }], key: true, at: 'beat', vary: 0 },
-      { id: 'boom', layers: [{ wave: 'noise', pitch: 60, length: 0.8 }], fx: [{ kind: 'filter', cutoff: 800, moves: [{ on: 'cutoff', to: 100 }] }], duck: 0.8 }],
+    sounds: [{ id: 'coin', instrument: 'coin', note: 83, key: true, at: 'beat', vary: 0 }, { id: 'boom', instrument: 'boom', note: 30, length: 0.8, duck: 0.8 }, { id: 'pad', instrument: 'pad', note: 60 }],
   };
-  const v = validateSong(song), bad = validateSong({ ...song, sounds: [{ id: 'x', layers: [{ wave: 'kazoo', pitch: 'high', moves: [{ on: 'tone', to: 1 }] }], fx: [{ kind: 'fuzz' }], at: 'later' }] });
-  ok(!v.errors.length && !v.warnings.length && bad.errors.length === 5, `sounds validate, and a wrong wave, number, move, effect or at is an error (${[...v.errors, ...v.warnings, ...bad.errors].join('; ')})`);
+  const v = validateSong(song), bad = validateSong({ ...song, sounds: [{ id: 'x', layers: [{ type: 'kazoo', pitch: 'high', moves: [{ on: 'tone', to: 1 }] }], fx: [{ kind: 'fuzz' }], at: 'later' }] });
+  const kit = validateSong({ ...song, instruments: { ...song.instruments, kit: { type: 'drums' } }, sounds: [{ id: 'k', instrument: 'kit' }, { id: 'n', instrument: 'nope' }] });
+  ok(!v.errors.length && !v.warnings.length && bad.errors.length === 5 && kit.errors.length === 2,
+    `sounds validate (older ones too), and a wrong type, number, move, effect or at is an error, as are a kit or an instrument the song lacks (${[...v.errors, ...v.warnings, ...bad.errors, ...kit.errors].join('; ')})`);
   const e = newEngine(SR, song, 1);
   ok(e.snap(84.3) === 84 && e.snap(84, 1) === 88 && e.snap(84, -1) === 79 && e.snap(90) === 91, 'key: the nearest tone of the chord (C: C E G), above or below');
   const L = new Float32Array(SR), R = new Float32Array(SR);
@@ -660,7 +682,7 @@ for (const [file, sg] of toCheck) {
   ok(e.sound('coin') && e.sfxQ.length === 1 && !e.sound('nope'), 'a sound "at beat" waits; a sound the song lacks plays nothing');
   e.process(L, R, (SR >> 1) + 100);
   ok(!e.sfxQ.length && e.synth.sfx.some((x) => !x.done), 'on the beat it plays');
-  const l0 = e.synth.sfx.find((x) => !x.done).p.layers[0], midi = (f) => 69 + 12 * Math.log2(f / 440), m = midi(l0.pitch), mt = midi(l0.moves[0].to);
+  const pl = e.synth.sfx.find((x) => !x.done).p, m = pl.note, mt = m + pl.def.layers[0].moves[0].to;
   ok(Math.abs(m - Math.round(m)) < 1e-6 && [0, 4, 7].includes(Math.round(m) % 12) && [0, 4, 7].includes(Math.round(mt) % 12) && Math.round(mt) > Math.round(m),
     `it is tuned to the chord, its step up to the next chord tone (${Math.round(m)} → ${Math.round(mt)})`);
   const h = newEngine(SR, song, 1);
@@ -668,10 +690,85 @@ for (const [file, sg] of toCheck) {
   h.sound('coin');
   h.process(L, R, SR >> 2);
   ok(peak(L) > 0.05, 'held, a sound plays at once');
-  const d = newEngine(SR, { ...song, sounds: [{ id: 'boom', layers: [{ wave: 'sine', pitch: 30, level: 0.01, length: 1 }], duck: 0.8 }] }, 1);
+  const d = newEngine(SR, { ...song, sounds: [{ id: 'boom', note: 30, length: 1, inst: { layers: [{ type: 'wave', wave: 'sine', smooth: true, level: 0.01 }] }, duck: 0.8 }] }, 1); // its own instrument (taken into the song)
   d.process(L, R, SR); const before = peak(L);
   d.sound('boom'); d.process(L, R, SR >> 1); const under = peak(L, SR >> 3, SR >> 1);
   ok(under < before * 0.5, `duck: the music gets quieter under the sound (${before.toFixed(2)} → ${under.toFixed(2)})`);
+}
+
+// 19. Layers: an older instrument's source becomes its first layer; two layers sound together, the second at its own
+// pitch and after its delay; a muted layer is silent; a layer's pitch move starts again on every note, in beats
+{
+  const { compileInst, Voice, timeMoves } = await import('../src/engine/voice.js');
+  const { migrateInstrument } = await import('../src/engine/inst.js');
+  const m = migrateInstrument({ type: 'wave', wave: 'saw', env: { a: 0.1 }, unison: 2, cutoff: 900 });
+  ok(m.layers?.[0]?.type === 'wave' && m.layers[0].env.a === 0.1 && m.unison === 2 && m.fx[0].kind === 'filter' && m.type === undefined, 'an older instrument: its source is the first layer, its filter an effect');
+  ok(migrateInstrument({ type: 'drums', kit: 'clean' }).layers === undefined, 'a drum kit has no layers');
+  // the strongest frequency of a buffer (by a scan of the DFT around the guesses)
+  const power = (buf, f) => { let re = 0, im = 0; for (let i = 0; i < buf.length; i++) { re += buf[i] * Math.cos((2 * Math.PI * f * i) / SR); im += buf[i] * Math.sin((2 * Math.PI * f * i) / SR); } return Math.hypot(re, im) / buf.length; };
+  const play = (def, n = SR >> 2, bps = 2) => {
+    const p = compileInst(def, SR); timeMoves(p, { music: true, bps });
+    const v = new Voice(); v.start(p, 57, 1, null);
+    return Float32Array.from({ length: n }, () => v.render(p));
+  };
+  const sine = { type: 'wave', wave: 'sine', smooth: true, env: { a: 0.001, s: 1 } };
+  const two = play({ layers: [sine, { ...sine, pitch: 12, delay: 0.1 }] });
+  const early = two.subarray(0, SR / 20), late = two.subarray(SR * 0.15, SR * 0.2);
+  ok(power(early, 220) > 0.2 && power(early, 440) < 0.02 && power(late, 440) > 0.2, 'a second layer an octave up comes in after its delay');
+  const muted = play({ layers: [sine, { ...sine, pitch: 12, off: true }] }).subarray(0, SR / 20);
+  ok(power(muted, 440) < 0.02, 'a muted layer is silent');
+  const slide = play({ layers: [{ ...sine, moves: [{ on: 'pitch', to: 12, beats: 0.25 }] }] }, SR >> 1); // a quarter beat at 2 beats a second: 125 ms
+  ok(power(slide.subarray(SR * 0.2, SR * 0.25), 440) > 0.2, 'a pitch move gets there in its beats');
+  // drawbars: A3 at '808000000' sounds the 16′ (110 Hz) and the 8′ (220 Hz), nothing at 5⅓′ (330 Hz); a drawbar at 5 is 9 dB down
+  // measured over 0.4 s through a Hann window: a short plain window lets the 220 Hz bar leak into 330 Hz by as much
+  // as the threshold, more or less with the random phase each note starts at
+  const hann = (buf, f) => { let re = 0, im = 0, sw = 0; for (let i = 0; i < buf.length; i++) { const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (buf.length - 1)), a = (2 * Math.PI * f * i) / SR; re += w * buf[i] * Math.cos(a); im += w * buf[i] * Math.sin(a); sw += w; } return Math.hypot(re, im) / sw; };
+  const bars = play({ layers: [{ type: 'wave', drawbars: '808000000', env: { a: 0.001, s: 1 } }] }, SR >> 1).subarray(SR / 10);
+  const half = play({ layers: [{ type: 'wave', drawbars: '805000000', env: { a: 0.001, s: 1 } }] }, SR >> 1).subarray(SR / 10);
+  ok(hann(bars, 110) > 0.1 && hann(bars, 220) > 0.1 && hann(bars, 330) < 0.005 && Math.abs(20 * Math.log10(hann(half, 220) / hann(half, 110)) + 9) < 1, 'drawbars: each a sine at its footage, a step 3 dB');
+}
+
+{
+  // the leslie: the horn gets to fast in about a second, the drum in about four, slowing takes longer; the treble moves
+  const { FxChain } = await import('../src/engine/fx.js');
+  const fx = new FxChain(SR), L = { kind: 'leslie', speed: 1, depth: 0.7, ramp: 1 };
+  fx.set([L], { music: true, bps: 2 });
+  let bad = false, pans = [];
+  const run = (sec) => { for (let i = 0; i < sec * SR; i++) { const y = fx.run(Math.sin(i * 0.06) * 0.5, 1); if (!(Math.abs(y) < 2)) bad = true; if (!(i & 511)) pans.push(fx.pan); } };
+  run(1);
+  const [horn, drum] = fx.stages[0].rot;
+  fx.set([{ ...L, speed: 2 }], { music: true, bps: 2 });
+  run(1);
+  const h1 = horn.hz, d1 = drum.hz;
+  run(4);
+  ok(h1 > 6 && d1 < 4 && drum.hz > 5.5 && !bad, `a leslie speeds up, the horn first (after 1 s: horn ${h1.toFixed(1)} Hz, drum ${d1.toFixed(1)} Hz)`);
+  fx.set([{ ...L, speed: 1 }], { music: true, bps: 2 });
+  run(1);
+  ok(horn.hz > 1.2 && horn.hz < 3 && Math.min(...pans) < -0.3 && Math.max(...pans) > 0.3, 'and slows down more slowly, the horn moving it from side to side');
+}
+
+// 20. Tines, picks, bite and the ensemble: an FM ratio up to 16 stays clean on high notes; a string plucked at its
+// middle has no even harmonics, at a quarter no 4th; a filter's bite: quiet notes ring less at its peak; the
+// ensemble chorus keeps the level
+{
+  const { compileInst, Voice, timeMoves } = await import('../src/engine/voice.js');
+  const { FxChain } = await import('../src/engine/fx.js');
+  const note = (def, m, n = SR / 2) => { const p = compileInst(def, SR); timeMoves(p, { music: true, bps: 2 }); const v = new Voice(); v.start(p, m, 0.8, null); const o = new Float64Array(n); for (let i = 0; i < n; i++) o[i] = v.render(p); return o; };
+  const harm = (x, f, from = SR / 20) => { let re = 0, im = 0; for (let i = from; i < x.length; i++) { const w = (2 * Math.PI * f * i) / SR; re += x[i] * Math.cos(w); im += x[i] * Math.sin(w); } return Math.hypot(re, im) / (x.length - from); };
+  const db = (a, b) => 20 * Math.log10(a / b);
+  let bad = 0;
+  for (const m of [36, 72, 96, 108]) for (const v of note({ layers: [{ type: 'fm', fm: { ratio: 16, index: 3 }, env: { a: 0.001, s: 1 } }] }, m, SR / 5)) if (!(Math.abs(v) < 2)) bad++;
+  ok(!bad, 'an FM ratio of 16 plays clean from C2 to C8');
+  const pluck = (position) => note({ layers: [{ type: 'string', string: { decay: 3, bright: 0.8, position }, env: { a: 0.001, s: 1 } }] }, 57);
+  // each pluck is a new burst of noise: the harmonics over eight of them
+  const plucks = (position) => Array.from({ length: 8 }, () => pluck(position)), h = (xs, k) => Math.sqrt(xs.reduce((a, x) => a + harm(x, 220 * k) ** 2, 0));
+  const mid = plucks(0.5), qtr = plucks(0.25);
+  ok(db(h(mid, 2), h(mid, 1)) < -25 && db(h(mid, 4), h(mid, 1)) < -20 && db(h(qtr, 4), h(qtr, 1)) < -20 && db(h(qtr, 2), h(qtr, 1)) > -12,
+    'a string plucked at its middle loses its even harmonics, at a quarter its 4th');
+  const peak = (bite, loud) => { const fx = new FxChain(SR); fx.set([{ kind: 'filter', cutoff: 1000, resonance: 4, bite }], { music: true, bps: 2 }); let e = 0, r = 1; for (let i = 0; i < SR / 2; i++) { r = (r * 16807) % 2147483647; const y = fx.run((r / 2147483647 - 0.5) * loud, loud); e += y * y; } return Math.sqrt(e) / loud; };
+  ok(Math.abs(peak(0, 0.3) / peak(0, 1) - 1) < 0.02 && peak(1, 0.3) < 0.75 * peak(1, 1) && Math.abs(peak(1, 1) / peak(0, 1) - 1) < 0.02, 'a filter\'s bite: the peak rings less on quiet notes, as set on loud ones');
+  const level = (mode) => { const fx = new FxChain(SR); fx.set([{ kind: 'chorus', depth: 0.8, rate: 0.6, mode }], { music: false }); let e = 0, ex = 0, ok = true; for (let i = 0; i < SR; i++) { const x = Math.sin((i * 2 * Math.PI * 220) / SR) * 0.5; const y = fx.run(x, 1); if (!Number.isFinite(y)) ok = false; e += y * y; ex += x * x; } return ok ? 10 * Math.log10(e / ex) : NaN; };
+  ok(Math.abs(level('ensemble') - level()) < 1.5, `the ensemble chorus plays at the chorus's level (${level('ensemble').toFixed(1)} dB / ${level().toFixed(1)} dB)`);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

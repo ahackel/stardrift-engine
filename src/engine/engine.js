@@ -6,7 +6,7 @@ import { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mo
 import { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } from './pattern.js';
 import { Synth } from './synth.js';
 import { FX_KINDS, fxAt, fxJoin, onMix } from './moves.js';
-import { playOf } from './sfx.js';
+import { playOf, resolveSound } from './sfx.js';
 import { autoFade } from './params.js';
 import { weightIn, chanceIn } from './plays.js';
 
@@ -348,14 +348,14 @@ export class Engine {
   // A game sound (song.sounds, by id; or a sound's own settings): at once, or from the next step or beat (opts.at, else
   // the sound's `at`). opts: { pitch: × (1.2: higher), volume, pan, at }. While held (editor) it plays at once.
   sound(ref, opts = {}) {
-    const def = typeof ref === 'string' ? this.song.soundMap[ref] : ref;
+    const def = resolveSound(this.song, typeof ref === 'string' ? this.song.soundMap[ref] : ref);
     if (!def || typeof def !== 'object') return false;
     const q = { step: 1, beat: this.song.spb }[opts.at || def.at];
     if (q && !this.hold) this.sfxQ.push({ def, opts, q });
     else this.playSound(def, opts);
     return true;
   }
-  playSound(def, opts) { this.synth.sound(playOf(def, this.srng, opts, (m, dir) => this.snap(m, dir))); }
+  playSound(def, opts) { this.synth.sound(playOf(def, this.srng, { bps: this.song.bpm / 60, ...opts }, (m, dir) => this.snap(m, dir))); }
   stopSounds() { this.sfxQ = []; this.synth.stopSounds(); }
   setSoundVolume(v) { this.synth.sfxGain = Math.max(0, +v || 0); }
   // midi m (a fraction too) → the nearest tone of the chord playing (with no chord: of the scale); dir 1: the nearest

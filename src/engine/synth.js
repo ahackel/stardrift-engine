@@ -1,356 +1,15 @@
-// Sample-by-sample chip synth: pulse (with PWM), NES-style 4-bit triangle, 32-step wavetable, plucked string
-// (Karplus-Strong: guitars, harp, pizzicato), synthesized drum kits (drums.js), instrument bodies (fixed resonances),
-// section ensembles, per-track drive with an amp (EQ, clipper, speaker cabinet), double tracking, a wah, state-variable filter (low or high pass), a bitcrush, a 3-band EQ, phaser, chorus or flanger, tremolo, auto-pan, ping-pong echo and a small Freeverb.
+// The mix, sample by sample: a bus per track (its voices, voice.js, or a drum kit, drums.js; its effects, fx.js; its
+// pan, double tracking and the effect rows' moves), the game sounds (sfx.js), a ping-pong echo, a small Freeverb and the
+// master bus.
 // Deliberately plain code (no Web Audio nodes) so it ports 1:1 to C# OnAudioFilterRead.
 
-import { DrumVoice, compileKit } from './drums.js';
-import { TABLE_SIZE, stairHarmonics, sampledHarmonics, formulaHarmonics, buildTables, levelLimits, cachedTables } from './wavetable.js';
-import { TWO_PI, TRI4, blep, svfSet, svf, LP, BP, HP } from './dsp.js';
+import { DrumVoice } from './drums.js';
+import { TWO_PI } from './dsp.js';
 import { clamp, clamp01 } from './theory.js';
 import { Moves } from './moves.js';
 import { SfxVoice } from './sfx.js';
-import { FxChain, migrateInstrument } from './fx.js';
-
-const IDLE = 0, ATT = 1, DEC = 2, REL = 3;
-
-// 32 steps of 4-bit values (0..15): a preset name or a custom array (editor-drawable).
-export const WAVE_PRESETS = ['soft', 'sine', 'saw', 'warm', 'organ', 'hollow'];
-export function waveSteps(spec) {
-  if (Array.isArray(spec) && spec.length) {
-    return Array.from({ length: 32 }, (_, i) => clamp(Math.round(+spec[i % spec.length] || 0), 0, 15));
-  }
-  const t = new Float64Array(32);
-  for (let i = 0; i < 32; i++) {
-    const x = (i / 32) * TWO_PI;
-    switch (spec) {
-      case 'sine': t[i] = Math.sin(x); break;
-      case 'saw': t[i] = 1 - (2 * i) / 32; break;
-      case 'warm': for (let k = 1; k <= 12; k++) t[i] += Math.sin(k * x) / Math.pow(k, 1.6); break;
-      case 'organ': t[i] = Math.sin(x) + 0.5 * Math.sin(2 * x) + 0.3 * Math.sin(3 * x); break;
-      case 'hollow': t[i] = Math.sin(x) + 0.4 * Math.sin(3 * x); break;
-      default: t[i] = Math.sin(x) + 0.35 * Math.sin(2 * x) + 0.12 * Math.sin(3 * x); // 'soft'
-    }
-  }
-  let mx = 0;
-  for (const v of t) mx = Math.max(mx, Math.abs(v));
-  return Array.from(t, (v) => Math.round((v / mx + 1) * 7.5));
-}
-
-// the 32 steps of a wave as -1..1 without DC
-function stepValues(spec) {
-  const t = waveSteps(spec).map((v) => v / 7.5 - 1);
-  const mean = t.reduce((a, v) => a + v, 0) / 32;
-  return t.map((v) => v - mean);
-}
-
-// Smooth (analog-style) versions of the presets: the functions the 4-bit steps are sampled from.
-const SMOOTH = {
-  sine: [1], organ: [1, 0.5, 0.3], hollow: [1, 0, 0.4], soft: [1, 0.35, 0.12],
-};
-
-// Band-limited tables for the triangle and wave voices. smooth: no 4-bit staircase (a clean saw, sine…).
-function waveTables(def) {
-  const smooth = !!def.smooth, tri = def.type === 'triangle';
-  const key = `${tri ? 'tri' : JSON.stringify(def.wave ?? 'soft')}:${smooth}`;
-  return cachedTables(key, () => {
-    if (tri) {
-      return smooth
-        ? buildTables(formulaHarmonics((k) => (k % 2 ? 8 / (Math.PI * Math.PI * k * k) : 0), null))
-        : buildTables(stairHarmonics(TRI4));
-    }
-    const spec = def.wave ?? 'soft';
-    if (!smooth) return buildTables(stairHarmonics(stepValues(spec)));
-    if (Array.isArray(spec)) return buildTables(sampledHarmonics(stepValues(spec)));
-    if (spec === 'saw') return buildTables(formulaHarmonics(null, (k) => 2 / (Math.PI * k)), 1);
-    // warm: a saw whose harmonics fall off faster (1/k^1.6), relative to the note: bowed and blown sounds without the buzz
-    if (spec === 'warm') return buildTables(formulaHarmonics(null, (k) => 2 / (Math.PI * Math.pow(k, 1.6))), 1);
-    const amps = SMOOTH[spec] || SMOOTH.soft;
-    return buildTables(formulaHarmonics(null, (k) => amps[k - 1] || 0), 1);
-  });
-}
-
-// the effects (a body, a drive, the filter, an EQ …) are fx.js's, a chain in any order, shared with the game sounds
-
-// the coefficient that takes a level down 40 dB (×0.01) in t seconds, sample by sample
-const t60 = (t, sr) => Math.exp(-4.6 / (t * sr));
-
-const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
-const STRING_BUF = 4096; // ring buffer per string voice: a period of up to 4096 samples (~12 Hz at 48 kHz)
-const WG_BUF = 4096, WG_MASK = WG_BUF - 1; // waveguides of the bowed string
-
-// samples: the loaded sample library (see src/samples.js), { name: [zones] }; a sound of type sample plays def.sample
-export function compileInst(def = {}, sr, samples = {}) {
-  def = migrateInstrument(def);
-  const env = def.env || {};
-  const a = Math.max(0.001, env.a ?? 0.01), d = Math.max(0.001, env.d ?? 0.2), r = Math.max(0.001, env.r ?? 0.2);
-  const U = ['string', 'sample'].includes(def.type) ? 1 : clamp(def.unison | 0 || 1, 1, 4);
-  const detuneMul = new Float64Array(U);
-  for (let u = 0; u < U; u++) detuneMul[u] = Math.pow(2, (U === 1 ? 0 : (def.detune || 0) * (u / (U - 1) - 0.5)) / 1200);
-  return {
-    type: TYPES.includes(def.type) ? def.type : 'pulse',
-    sr, invSr: 1 / sr,
-    attInc: 1 / (a * sr), decCoef: t60(d, sr), relCoef: t60(r, sr),
-    sus: clamp01(env.s ?? 0.7),
-    U, uniNorm: 1 / Math.sqrt(U), detuneMul,
-    duty: def.duty ?? 0.5, pwmDepth: def.pwm?.depth || 0, pwmRate: def.pwm?.rate || 0,
-    vibDepth: def.vibrato?.depth || 0, vibRate: def.vibrato?.rate || 5, vibDelay: def.vibrato?.delay || 0,
-    glideCoef: def.glide ? t60(def.glide, sr) : 0,
-    arpPeriod: def.arp ? 1 / def.arp : 0,
-    mips: def.type === 'wave' || def.type === 'triangle' ? waveTables(def) : null,
-    mipLimits: levelLimits(sr),
-    gain: def.gain ?? 1,
-    // breath 0..1: air around the note, as loud relative to the tone as the curve says (0.25 −24 dB, 0.5 −15 dB, 1 −6 dB);
-    // songs from before breath have `noise`, white noise at that level, which sounds about like 0.8 × noise
-    breath: def.breath > 0 ? 0.5 * Math.min(1, def.breath) ** 1.5 : Math.min(0.5, 0.8 * (def.noise || 0)),
-    breathCoef: 1 - Math.exp(-1 / (0.02 * sr)), // how fast breath follows the tone's loudness
-    // the effects, in their order (fx.js): the track's chain plays them
-    fx: Array.isArray(def.fx) ? def.fx : [],
-    // fm: a sine carrier whose phase a sine modulator bends; ratio = modulator / carrier frequency, index = how far
-    // (brightness), env 0..1 = how much the index follows the note's loudness (brass brightens as it swells),
-    // feedback roughens the modulator
-    fmRatio: def.fm?.ratio ?? 1, fmIndex: def.fm?.index ?? 2, fmEnv: clamp01(def.fm?.env ?? 1), fmFb: def.fm?.feedback || 0,
-    // ensemble 0..1: each unison voice (a player of the section) drifts and vibrates on its own
-    ensemble: U > 1 || def.ensemble ? clamp01(def.ensemble || 0) : 0,
-    // scoop: a note starts this many semitones flat and slides up within about 70 ms (brass, voices)
-    scoop: clamp(def.scoop || 0, 0, 2), scoopCoef: def.scoop ? t60(0.07, sr) : 0,
-    // string: T60 decay in seconds and brightness 0..1 (how much of the high end the loop keeps and the pluck has)
-    sDecay: Math.max(0.05, def.string?.decay ?? 2), sBright: clamp01(def.string?.bright ?? 0.5),
-    sMute: clamp01(def.string?.mute || 0), // palm mute: how damped and dull short notes are
-    // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
-    bowSlope: 5 - 4 * clamp01(def.bow?.pressure ?? 0.8), bowBeta: 0.04 + 0.2 * clamp01(def.bow?.position ?? 0.4),
-    // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
-    zones: def.type === 'sample' ? samples[def.sample] || [] : null,
-    kit: def.type === 'drums' ? compileKit(def, sr, samples) : null,
-  };
-}
-
-// One bowed string (after STK's Bowed): the bow splits the string into a neck part and a bridge part (two delay
-// lines). Where the bow touches, it sticks while the string moves with it and slips when the difference grows:
-// the bow table. The loop is two samples shorter than the period for the delay of the bridge filter. Pressure 0.8 at position
-// 0.4 (the defaults) keeps the string in its normal motion from G1 to E5; much lighter or heavier bowing can make it
-// jump an octave.
-class BowedString {
-  constructor() { this.a = new Float32Array(WG_BUF); this.b = new Float32Array(WG_BUF); this.i = 0; this.w1 = 0; this.f = 0; this.pole = 0; this.len = 0; }
-  // a read from a delay line d samples back (linear interpolation)
-  tap(buf, d) {
-    const r = this.i - d, i = Math.floor(r), fr = r - i;
-    return buf[i & WG_MASK] + (buf[(i + 1) & WG_MASK] - buf[i & WG_MASK]) * fr;
-  }
-  // the loss filter keeps 3.2 kHz, or the first 25 overtones of high notes, so they ring as well as low ones; the
-  // loop is shorter than the period by the filter's delay at the note (and a fixed part, found by measuring)
-  tune(p, f) {
-    this.f = f;
-    const w = (TWO_PI * f) / p.sr, a = (this.pole = Math.exp((-TWO_PI * Math.min(0.4 * p.sr, Math.max(3200, 25 * f))) / p.sr));
-    this.len = Math.max(4, p.sr / f - Math.atan2(a * Math.sin(w), 1 - a * Math.cos(w)) / w);
-  }
-  // one sample at frequency f with the bow moving at speed v; returns the bridge's motion
-  tick(p, f, v) {
-    if (Math.abs(f - this.f) > f * 0.001) this.tune(p, f);
-    const a = this.pole, bridgeLen = this.len * p.bowBeta, neckLen = this.len - bridgeLen;
-    const bridgeOut = this.tap(this.b, bridgeLen), neckOut = this.tap(this.a, neckLen);
-    this.w1 = (1 - a) * 0.95 * bridgeOut + a * this.w1; // string losses at the bridge (one pole)
-    const bridgeRefl = -this.w1, nutRefl = -neckOut, stringVel = bridgeRefl + nutRefl;
-    const velDiff = v - stringVel;
-    const b = Math.abs(velDiff * p.bowSlope) + 0.75, b2 = b * b;
-    let k = 1 / (b2 * b2); // the bow table: (|Δv|·slope + 0.75)^-4
-    if (k > 1) k = 1;
-    const newVel = velDiff * k;
-    this.a[this.i & WG_MASK] = bridgeRefl + newVel;
-    this.b[this.i & WG_MASK] = nutRefl + newVel;
-    this.i++;
-    return bridgeOut;
-  }
-}
-
-class Voice {
-  constructor() {
-    this.stage = IDLE; this.level = 0; this.gate = false;
-    this.ph = new Float64Array(4); this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
-    this.arp = null; this.arpIdx = 0; this.arpT = 0;
-    this.lvl = 0; // wavetable level for the current pitch
-    this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string voices: loop buffer, write index
-    for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
-    // ensemble: per player a slow drift rate, a vibrato rate and a phase; ens holds their pitch factors
-    this.rnd = Array.from({ length: 4 }, () => [0.13 + Math.random() * 0.25, 4.8 + Math.random() * 1.4, Math.random() * TWO_PI]);
-    this.ens = new Float64Array(4).fill(1); this.ensT = 0;
-    this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
-    this.bows = []; // bowed: a string per player
-    this.m = NaN; this.f = 440; // the pitch the frequency (and what follows from it) was last worked out for
-    this.bms = 0; this.blo = 0; this.bband = 0; // breath: the tone's power, the band's state
-  }
-  start(p, midi, vel, arp, short = false) {
-    const legato = this.stage !== IDLE && p.glideCoef > 0;
-    this.target = midi;
-    if (!legato) this.cur = midi - p.scoop;
-    this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
-    this.arp = arp; this.arpIdx = 0; this.arpT = 0; this.m = NaN;
-    if (p.type === 'string') this.pluck(p, 440 * Math.pow(2, (midi - 69) / 12), short ? p.sMute : 0); // every note is picked; glide still slides into it
-    if (p.type === 'bowed') while (this.bows.length < p.U) this.bows.push(new BowedString());
-    if (p.type === 'sample' && !legato) {
-      this.zone = null; this.spos = 0;
-      for (const z of p.zones) if (!this.zone || Math.abs(z.root - midi) < Math.abs(this.zone.root - midi)) this.zone = z;
-    }
-  }
-  // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass.
-  // mute 0..1: a palm-muted note, much duller and dying within a few hundredths of a second (through a driven amp,
-  // anything above about -35 dB still clips, so the string has to fall fast to sound damped)
-  pluck(p, f, mute = 0) {
-    const kb = (this.kb ||= new Float32Array(STRING_BUF)), mask = STRING_BUF - 1;
-    const n = Math.min(STRING_BUF - 4, Math.ceil(p.sr / f) + 2), c = (0.15 + 0.85 * p.sBright * (0.5 + 0.5 * this.vel)) * (1 - 0.85 * mute);
-    let lp = 0, mean = 0;
-    for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
-    mean /= n;
-    for (let i = 1; i <= n; i++) kb[(this.kw - i) & mask] -= mean; // no DC in the loop
-    this.kPrev = 0;
-    this.kLoss = Math.exp(-6.9 / (Math.pow(p.sDecay, 1 - mute) * Math.pow(0.035, mute) * f)); // -60 dB after sDecay s (35 ms fully muted)
-  }
-  // one sample of the string at frequency f (glide and vibrato change the loop length)
-  string(p, f) {
-    const kb = this.kb, mask = STRING_BUF - 1, b = p.sBright;
-    const d = Math.min(STRING_BUF - 4, p.sr / f - 0.5 * (1 - b)); // the loop filter adds half a sample of delay
-    const r = this.kw - d, i = Math.floor(r), fr = r - i;
-    const y = kb[i & mask] + (kb[(i + 1) & mask] - kb[i & mask]) * fr;
-    kb[this.kw & mask] = this.kLoss * (b * y + (1 - b) * 0.5 * (y + this.kPrev));
-    this.kPrev = y;
-    this.kw = (this.kw + 1) | 0;
-    return y;
-  }
-  release() { if (this.stage !== IDLE) this.stage = REL; this.gate = false; }
-  // a section's players: each wanders slowly off pitch (up to 5 cents) and has its own vibrato (7 cents), fading in
-  drift(p) {
-    const a = this.age, k = p.ensemble, fade = Math.min(1, a / 0.4);
-    for (let u = 0; u < p.U; u++) {
-      const r = this.rnd[u];
-      this.ens[u] = Math.pow(2, (k * (5 * Math.sin(TWO_PI * r[0] * a + r[2]) + 7 * fade * Math.sin(TWO_PI * r[1] * a + 3 * r[2]))) / 1200);
-    }
-  }
-  // one sample: the tone, and the breath around it
-  render(p) {
-    const y = this.tone(p);
-    return p.breath && this.stage !== IDLE ? y + this.breathe(p, y) : y;
-  }
-  // Breath: noise in a band around the note (centred an octave up, about two octaves wide), so it sounds like air in
-  // the note rather than hiss beside it. Its level follows the tone's own (over 20 ms), so every type breathes alike,
-  // a string as it dies away too.
-  breathe(p, y) {
-    this.bms += (y * y - this.bms) * p.breathCoef;
-    const F = this.bF;
-    this.blo += F * this.bband;
-    this.bband += F * (Math.random() * 2 - 1 - this.blo - this.bband); // a state-variable band-pass, Q 1
-    return this.bband * Math.sqrt(this.bms / this.bP) * p.breath;
-  }
-  // the breath band's centre (an octave above the note) as the filter's coefficient, and the part of white noise's
-  // power it keeps (π·fc/sr of 1/3): breathe scales that back to the power of the tone
-  breathBand(p) {
-    const fc = Math.min(6000, Math.max(200, 2 * this.f));
-    this.bF = 2 * Math.sin(Math.PI * fc * p.invSr);
-    this.bP = (Math.PI * fc * p.invSr) / 3;
-  }
-  tone(p) {
-    let lv = this.level;
-    switch (this.stage) {
-      case IDLE: return 0;
-      case ATT: lv += p.attInc; if (lv >= 1) { lv = 1; this.stage = DEC; } break;
-      case DEC: lv = p.sus + (lv - p.sus) * p.decCoef; if (p.sus <= 0 && lv < 1e-4) this.stage = IDLE; break;
-      case REL: lv *= p.relCoef; if (lv < 1e-4) this.stage = IDLE; break;
-    }
-    this.level = lv;
-    if (this.stage === IDLE) { this.level = 0; return 0; }
-    this.age += p.invSr;
-
-    let m;
-    if (this.arp) {
-      this.arpT += p.invSr;
-      if (this.arpT >= p.arpPeriod) { this.arpT -= p.arpPeriod; this.arpIdx = (this.arpIdx + 1) % this.arp.length; }
-      m = this.arp[this.arpIdx];
-    } else {
-      const k = p.glideCoef || p.scoopCoef;
-      this.cur = k ? this.target + (this.cur - this.target) * k : this.target;
-      m = this.cur;
-    }
-    if (p.vibDepth && this.age > p.vibDelay) {
-      const ramp = Math.min(1, (this.age - p.vibDelay) / 0.4);
-      m += p.vibDepth * ramp * Math.sin(TWO_PI * p.vibRate * this.age);
-    }
-    if (m !== this.m) {
-      this.m = m;
-      this.f = 440 * Math.pow(2, (m - 69) / 12);
-      this.breathBand(p);
-      if (this.zone) this.sInc = Math.pow(2, (m - this.zone.root) / 12) * this.zone.rate * p.invSr;
-    }
-    const f = this.f, sr = p.sr;
-    let out = 0;
-    if (p.ensemble && (this.ensT = (this.ensT + 1) & 31) === 1) this.drift(p);
-    // bowed: the envelope is the bow's speed, so a note swells like a bow stroke; with unison a section of players,
-    // and with ensemble each player's pitch wanders and their vibrato is never quite even
-    if (p.type === 'bowed') {
-      if (this.bows.length < p.U) return 0; // the sound became bowed while this voice was sounding
-      const v = (0.03 + 0.2 * this.vel) * lv;
-      for (let u = 0; u < p.U; u++) out += this.bows[u].tick(p, f * p.detuneMul[u] * this.ens[u], v);
-      return out * p.uniNorm * this.vel;
-    }
-    if (p.type === 'sample') {
-      // the recording, resampled to the note (glide and vibrato too); sustained notes loop, others end
-      const z = this.zone;
-      if (!z) return 0;
-      const d = z.data, i = this.spos | 0, fr = this.spos - i, j = z.loopEnd && i + 1 >= z.loopEnd ? z.loopStart : i + 1;
-      const y = d[i] + ((d[j] || 0) - d[i]) * fr;
-      this.spos += this.sInc;
-      if (z.loopEnd) { if (this.spos >= z.loopEnd) this.spos -= z.loopEnd - z.loopStart; }
-      else if (this.spos >= d.length - 1) { this.stage = IDLE; this.level = 0; }
-      return y * lv * this.vel * 5; // recordings sit at -16 dB: about as loud as a saw
-    }
-    if (p.type === 'string') {
-      if (!this.kb) this.pluck(p, f); // the sound became a string while this voice was sounding
-      return this.string(p, f) * lv * this.vel * 3.5;
-    }
-    if (p.type === 'fm') {
-      const I = p.fmIndex * (1 - p.fmEnv + p.fmEnv * lv) * (0.5 + 0.5 * this.vel);
-      for (let u = 0; u < p.U; u++) {
-        const dt = (f * p.detuneMul[u] * this.ens[u]) / sr;
-        let ph = this.ph[u] + dt;
-        if (ph >= 1) ph -= 1;
-        this.ph[u] = ph;
-        let mp = this.mph[u] + dt * p.fmRatio;
-        mp -= Math.floor(mp);
-        this.mph[u] = mp;
-        const mod = Math.sin(TWO_PI * mp + p.fmFb * this.mfb[u]);
-        this.mfb[u] = mod;
-        out += Math.sin(TWO_PI * ph + I * mod);
-      }
-      return out * p.uniNorm * lv * this.vel;
-    }
-    let duty = p.duty, tb = null;
-    if (p.mips) {
-      // the fullest table whose harmonics stay below Nyquist at this pitch
-      const lim = p.mipLimits, fmax = f * 1.03; // headroom for unison detune
-      let l = this.lvl;
-      while (l > 0 && fmax < lim[l - 1]) l--;
-      while (l < lim.length - 1 && fmax > lim[l]) l++;
-      this.lvl = l;
-      tb = p.mips[l];
-    } else if (p.pwmDepth) duty += p.pwmDepth * Math.sin(TWO_PI * p.pwmRate * this.age);
-    duty = duty < 0.05 ? 0.05 : duty > 0.95 ? 0.95 : duty;
-    for (let u = 0; u < p.U; u++) {
-      const dt = (f * p.detuneMul[u] * this.ens[u]) / sr;
-      let ph = this.ph[u] + dt;
-      if (ph >= 1) ph -= 1;
-      this.ph[u] = ph;
-      if (p.type === 'pulse') {
-        let v = ph < duty ? 1 : -1;
-        v += blep(ph, dt);
-        let t2 = ph - duty;
-        if (t2 < 0) t2 += 1;
-        v -= blep(t2, dt);
-        out += v - (2 * duty - 1); // remove DC of narrow pulses
-      } else {
-        const x = ph * TABLE_SIZE, i = x | 0;
-        out += tb[i] + (tb[i + 1] - tb[i]) * (x - i);
-      }
-    }
-    return out * p.uniNorm * lv * this.vel;
-  }
-}
+import { FxChain } from './fx.js';
+import { compileInst, timeMoves, Voice, IDLE } from './voice.js';
 
 class TrackBus {
   constructor(poly, isDrum) {
@@ -374,6 +33,7 @@ class TrackBus {
     this.echo = tr.echo || 0; this.rev = tr.reverb || 0;
     this.pump = clamp01(tr.pump || 0); // sidechain: dips on every kick
     (this.fx ||= new FxChain(sr)).set(p.fx, { music: true, bps, drums: this.isDrum });
+    timeMoves(p, { music: true, bps }); // its layers' moves, in beats: each note starts them again
     // double tracking: a second take, a few ms late with a slowly wandering delay, on the other side;
     // the two sit at pan ± double
     this.dbl = clamp01(tr.double || 0);
@@ -436,7 +96,7 @@ class TrackBus {
     }
   }
   allOff() {
-    for (const v of this.voices) { if (this.isDrum) v.active = false; else { v.stage = IDLE; v.level = 0; v.gate = false; } }
+    for (const v of this.voices) { if (this.isDrum) v.active = false; else v.stop(); }
   }
   idle() {
     for (const v of this.voices) if (this.isDrum ? v.active : v.stage !== IDLE) return false;
@@ -668,7 +328,7 @@ export class Synth {
       if (this.sfx.length < 8) this.sfx.push((v = new SfxVoice(this.sr)));
       else v = this.sfx.reduce((a, b) => (b.t > a.t ? b : a));
     }
-    v.start(p);
+    v.start(p, this.samples);
   }
   stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
@@ -706,8 +366,10 @@ export class Synth {
   // Audition an instrument outside the song (editor). events: [{ t: seconds, notes: [midi] | hit: 'k', dur, vel }]
   // Plays on its own bus that ignores mute/solo, so it works with the song held or playing.
   preview(def, events, { poly = 1, volume = 0.3 } = {}) {
+    const was = this.pv;
     this.pv = this.audition(this.pv, def, poly, volume);
-    this.pv.allOff();
+    // the last preview's notes let go rather than stop: a hard stop mid-wave clicks (a chord after a chord)
+    if (this.pv === was) this.pv.release(); else was?.allOff();
     const q = [];
     for (const ev of events || []) {
       const at = Math.round((ev.t || 0) * this.sr), vel = ev.vel ?? 0.8;

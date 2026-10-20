@@ -4,16 +4,17 @@
 //   validateSong(song, { samples }) → { errors: [text], warnings: [text] }   samples: the library's names, to check those
 import { SCALES, SHAPES, parseChord } from './engine/theory.js';
 import { expandTokens, parseToken, FORMS } from './engine/pattern.js';
-import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_NAMES, getAt } from './engine/params.js';
+import { SOUND_PARAMS, LAYER_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_NAMES, getAt } from './engine/params.js';
 import { migrateSong } from './engine/plays.js';
 import { KITS } from './engine/drums.js';
-import { WAVE_PRESETS } from './engine/synth.js';
+import { WAVE_PRESETS } from './engine/voice.js';
 import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
-import { SFX_WAVES, SFX_AT, SFX_PARAMS, LAYER_PARAMS, LAYER_MOVES, SFX_MAX_LAYERS } from './engine/sfx.js';
-import { EFFECT_KINDS, FX_OPTIONS, MOVE_SHAPES, MOVE_PARAMS, fxParams } from './engine/fx.js';
+import { SFX_AT, SFX_PARAMS } from './engine/sfx.js';
+import { MAX_LAYERS, LAYER_TYPES, LAYER_MOVE_PARAMS } from './engine/inst.js';
+import { EFFECT_KINDS, FX_OPTIONS, MOVE_SHAPES, MOVE_PARAMS, fxParams, fxClock, moveClock } from './engine/fx.js';
 
 export const KEYS = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B'];
-export const TYPES = ['pulse', 'triangle', 'wave', 'string', 'fm', 'bowed', 'sample', 'drums'];
+export const TYPES = LAYER_TYPES;
 export const MODES = ['chord', 'scale', 'key'];
 export const STING_AT = ['step', 'beat', 'half', 'bar'];
 export const FLOW_THEN = ['loop', 'drift', 'stop'];
@@ -23,8 +24,9 @@ export const FIELDS = {
   song: ['$schema', 'format', 'name', 'bpm', 'key', 'scale', 'stepsPerBeat', 'beatsPerBar', 'swing', 'humanize', 'variation', 'blockChange', 'fillChance',
     'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'effectTracks', 'blocks', 'sections',
     'progressions', 'moods', 'stingers', 'sounds'],
-  instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'wave', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'kit', 'preset', 'unison',
-    'detune', 'ensemble', 'breath', 'env', 'gain', 'glide', 'scoop', 'vibrato', 'fx'],
+  instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'kit', 'preset', 'layers', 'unison', 'detune', 'ensemble', 'breath', 'noise', 'gain', 'glide',
+    'scoop', 'vibrato', 'fx'],
+  layer: ['type', 'wave', 'drawbars', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'env', 'pitch', 'level', 'delay', 'noise', 'moves', 'off'],
   track: ['id', 'name', 'color', 'instrument', 'octave', 'clips', 'mode', 'follow', 'stickiness', 'volume', 'pan', 'echo', 'reverb', 'double', 'pump', 'fade'],
   effectTrack: ['id', 'name', 'color', 'target', 'except', 'clips'],
   block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track', 'fx'],
@@ -35,8 +37,7 @@ export const FIELDS = {
   part: ['track', 'pattern', 'block', 'mode'],
   breath: ['every', 'bars', 'keep'],
   fx: ['kind', 'from', 'to', 'shape', 'beats', 'rate', 'at'],
-  sound: ['id', 'name', 'color', ...Object.keys(SFX_PARAMS), 'key', 'at', 'layers', 'fx'],
-  layer: ['wave', 'off', ...Object.keys(LAYER_PARAMS), 'moves'],
+  sound: ['id', 'name', 'color', 'instrument', ...Object.keys(SFX_PARAMS), 'key', 'at'],
   effect: ['kind', 'off', ...new Set(Object.values(EFFECT_KINDS).flatMap((k) => [...Object.keys(k.params), ...(k.beats ? ['beats'] : []), ...(k.rate ? ['rate'] : []), ...(k.opts || [])])), 'moves'],
   move: ['on', 'shape', 'to', 'beats', 'rate', 'at', 'every'],
 };
@@ -61,20 +62,20 @@ export function validateSong(raw, { samples } = {}) {
       else if (v < min || v > max) warn(`${where}: "${path}" is ${v}, outside ${min}–${max}`);
     }
   };
-  // moves (of a sound's layer, of an effect) and effects (an instrument's, a sound's): music in beats, a sound in Hz
+  // moves (of a layer, of an effect) and effects: each in its own clock (beats or Hz; fx.js moveClock, fxClock), else
+  // where it plays (music: beats, a sound: Hz)
   const ranges = (params) => Object.entries(params).map(([k, p]) => [k, p.min, p.max]);
   const moves = (ms, params, music, where) => {
     if (ms === undefined) return;
     if (!Array.isArray(ms)) return err(`${where}: "moves" must be a list`);
-    const mp = music ? MOVE_PARAMS.music : MOVE_PARAMS.sound;
     ms.forEach((m, i) => {
       const at = `${where} move ${i + 1}`;
       if (!isObj(m)) return err(`${at}: must be an object { on, shape, to }`);
       fields(m, 'move', at);
       if (!params[m.on]) return err(`${at}: "on" must be ${list(Object.keys(params))}`);
       if (m.shape !== undefined && !MOVE_SHAPES.includes(m.shape)) err(`${at}: "shape" must be ${list(MOVE_SHAPES)}`);
-      if (music ? m.rate !== undefined : m.beats !== undefined) warn(`${at}: "${music ? 'rate' : 'beats'}" is a ${music ? 'sound' : 'track'}'s; ${music ? 'music goes in beats' : 'a sound goes in rate (Hz)'} (ignored)`);
-      inRange(m, [['to', params[m.on].min, params[m.on].max], ...ranges(mp)], at);
+      if (m.rate !== undefined && m.beats !== undefined) warn(`${at}: "beats" or "rate", not both (it goes in beats)`);
+      inRange(m, [['to', params[m.on].min, params[m.on].max], ...ranges(moveClock(m, music) ? MOVE_PARAMS.music : MOVE_PARAMS.sound)], at);
     });
   };
   const effects = (fx, music, where) => {
@@ -84,17 +85,34 @@ export function validateSong(raw, { samples } = {}) {
     fx.forEach((f, i) => {
       const at = `${where} effect ${i + 1}`;
       if (!isObj(f)) return err(`${at}: must be an object { kind }`);
-      const params = fxParams(f.kind, music);
+      const params = fxParams(f.kind, fxClock(f, music));
       if (!params) return err(`${at}: "kind" must be ${list(Object.keys(EFFECT_KINDS))}`);
       if (seen.has(f.kind)) warn(`${at}: a second ${f.kind} (only the first plays)`);
       seen.add(f.kind);
       fields(f, 'effect', at);
       for (const [o, vals] of Object.entries(FX_OPTIONS[f.kind] || {})) if (f[o] !== undefined && !vals.includes(f[o]) && !(o === 'type' && f.kind === 'body' && f.bands)) err(`${at}: "${o}" must be ${list(vals)}`);
-      if (music ? f.rate !== undefined && f.kind !== 'crush' : f.beats !== undefined) warn(`${at}: "${music ? 'rate' : 'beats'}" is a ${music ? 'sound' : 'track'}'s (ignored)`);
+      if (f.beats !== undefined && f.rate !== undefined && f.kind !== 'crush') warn(`${at}: "beats" or "rate", not both (it goes in beats)`);
       inRange(f, ranges(params), at);
       moves(f.moves, params, music, at);
     });
+  };  // an instrument's or a sound's layers: each a source with its envelope and moves
+  const layers = (ls, music, where) => {
+    if (ls === undefined) return;
+    if (!Array.isArray(ls) || !ls.length) return err(`${where}: "layers" must be a list of 1 to ${MAX_LAYERS} layers`);
+    if (ls.length > MAX_LAYERS) warn(`${where}: has ${ls.length} layers; only the first ${MAX_LAYERS} play`);
+    ls.forEach((l, i) => {
+      const at = `${where} layer ${i + 1}`;
+      if (!isObj(l)) return err(`${at}: must be an object { type, env, … }`);
+      fields(l, 'layer', at);
+      if (l.type !== undefined && !LAYER_TYPES.includes(l.type)) err(`${at}: no type ${JSON.stringify(l.type)} (${list(LAYER_TYPES)})`);
+      inRange(l, LAYER_PARAMS, at);
+      if (l.type === 'sample' && typeof l.sample !== 'string') err(`${at}: a sample layer needs "sample": the recording's name`);
+      if (l.type === 'sample' && samples && typeof l.sample === 'string' && !samples.includes(l.sample)) err(`${at}: no recording "${l.sample}" (${list(samples)})`);
+      if (l.wave !== undefined && !WAVE_PRESETS.includes(l.wave) && !(Array.isArray(l.wave) && l.wave.length === 32 && l.wave.every((v) => v >= 0 && v <= 15))) err(`${at}: "wave" must be ${list(WAVE_PRESETS)} or 32 numbers 0–15`);
+      moves(l.moves, LAYER_MOVE_PARAMS, music, at);
+    });
   };
+
 
   // a list of objects with unique ids, as a map
   const byId = (items, kind) => {
@@ -168,13 +186,10 @@ export function validateSong(raw, { samples } = {}) {
     const where = `instrument "${id}"`;
     if (!isObj(d)) { err(`${where}: must be an object`); continue; }
     fields(d, 'instrument', where);
-    if (d.type !== undefined && !TYPES.includes(d.type)) err(`${where}: no type ${JSON.stringify(d.type)} (${list(TYPES)})`);
+    if (d.type !== undefined && d.type !== 'drums') err(`${where}: "type" is "drums" (a kit) or left out: an instrument's sources are its layers`);
     inRange(d, SOUND_PARAMS, where);
     effects(d.fx, true, where);
-    if (d.type === 'sample' && typeof d.sample !== 'string') err(`${where}: a sample instrument needs "sample": the recording's name`);
-    if (d.type === 'sample' && samples && typeof d.sample === 'string' && !samples.includes(d.sample)) err(`${where}: no recording "${d.sample}" (${list(samples)})`);
-    if (d.wave !== undefined && !WAVE_PRESETS.includes(d.wave) && !(Array.isArray(d.wave) && d.wave.length === 32 && d.wave.every((v) => v >= 0 && v <= 15))) err(`${where}: "wave" must be ${list(WAVE_PRESETS)} or 32 numbers 0–15`);
-    if (d.filter !== undefined && d.filter !== 'high' && d.filter !== 'low') err(`${where}: "filter" is "high" (a high pass) or left out (low pass)`);
+    if (d.type !== 'drums') layers(d.layers, true, where);
     if (d.type === 'drums') {
       const preset = typeof d.kit === 'string' ? d.kit : d.preset;
       if (preset !== undefined && !KITS[preset]) err(`${where}: no kit "${preset}" (${list(Object.keys(KITS))})`);
@@ -327,19 +342,8 @@ export function validateSong(raw, { samples } = {}) {
     if (x.at !== undefined && !SFX_AT.includes(x.at)) err(`${where}: "at" must be ${list(SFX_AT)}`);
     if (x.key !== undefined && typeof x.key !== 'boolean') err(`${where}: "key" must be true or false`);
     inRange(x, ranges(SFX_PARAMS), where);
-    if (!Array.isArray(x.layers) || !x.layers.length) err(`${where}: "layers" must be a list of 1 to ${SFX_MAX_LAYERS} layers`);
-    else {
-      if (x.layers.length > SFX_MAX_LAYERS) warn(`${where}: has ${x.layers.length} layers; only the first ${SFX_MAX_LAYERS} play`);
-      x.layers.forEach((l, i) => {
-        const at = `${where} layer ${i + 1}`;
-        if (!isObj(l)) return err(`${at}: must be an object { wave, pitch, length }`);
-        fields(l, 'layer', at);
-        if (l.wave !== undefined && !SFX_WAVES.includes(l.wave)) err(`${at}: "wave" must be ${list(SFX_WAVES)}`);
-        inRange(l, ranges(LAYER_PARAMS), at);
-        moves(l.moves, Object.fromEntries(LAYER_MOVES.map((k) => [k, LAYER_PARAMS[k]])), false, at);
-      });
-    }
-    effects(x.fx, false, where);
+    if (!(x.instrument in instruments)) err(`${where}: "instrument" must name one of the song's instruments${Object.keys(instruments).length ? ` (${list(Object.keys(instruments))})` : ''}`);
+    else if (instruments[x.instrument]?.type === 'drums') err(`${where}: plays "${x.instrument}", a drum kit: a sound plays a melodic instrument`);
   }
 
   // stingers

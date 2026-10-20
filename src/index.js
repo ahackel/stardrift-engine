@@ -8,4 +8,5 @@ export { renderPhrase, phraseSong } from './phrase.js';
 export { songZip, openSongZip } from './bundle.js';
 export { zip, unzip, isZip } from './zip.js';
 export { validateSong } from './validate.js';
-export { renderSound, soundOf, SFX_WAVES, SFX_FX } from './engine/sfx.js';
+export { renderSound, soundOf, soundLength, resolveSound } from './engine/sfx.js';
+export { costOf, migrateInstrument, migrateSound } from './engine/inst.js';

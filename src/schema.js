@@ -3,11 +3,12 @@
 // something, that patterns and chords read, validateSong checks.
 import { SCALES, SHAPES } from './engine/theory.js';
 import { FORMS } from './engine/pattern.js';
-import { SOUND_PARAMS, TRACK_PARAMS, SONG_PARAMS } from './engine/params.js';
+import { SOUND_PARAMS, LAYER_PARAMS, TRACK_PARAMS, SONG_PARAMS } from './engine/params.js';
 import { KITS } from './engine/drums.js';
-import { WAVE_PRESETS } from './engine/synth.js';
+import { WAVE_PRESETS } from './engine/voice.js';
 import { FX_KINDS, FX_SHAPES } from './engine/moves.js';
-import { SFX_WAVES, SFX_AT, SFX_PARAMS, LAYER_PARAMS, LAYER_MOVES, SFX_MAX_LAYERS } from './engine/sfx.js';
+import { SFX_AT, SFX_PARAMS } from './engine/sfx.js';
+import { MAX_LAYERS, LAYER_MOVES } from './engine/inst.js';
 import { EFFECT_KINDS, FX_OPTIONS, MOVE_SHAPES, MOVE_PARAMS } from './engine/fx.js';
 import { KEYS, TYPES, MODES, STING_AT, FIELDS, FLOW_THEN, SWITCH } from './validate.js';
 
@@ -66,17 +67,16 @@ export const songSchema = () => ({
     instrument: obj('instrument', {
       ...sound,
       name: { type: 'string' },
-      type: { enum: TYPES },
+      type: { const: 'drums', description: 'a drum kit; left out, the instrument plays its layers' },
       poly: { type: 'integer', minimum: 1, maximum: 16, description: 'notes at once (chords); 1: a new note ends the last' },
       arp: num(1, 60, 'runs chords as a chip arpeggio, notes per second'),
       arpChord: { type: 'boolean' },
-      smooth: { type: 'boolean', description: 'no 4-bit staircase' },
-      wave: { oneOf: [{ enum: WAVE_PRESETS }, { type: 'array', items: num(0, 15), minItems: 32, maxItems: 32 }] },
-      sample: { type: 'string', description: 'a recording in the library, e.g. cello, flute, violins' },
+      layers: { type: 'array', items: ref('layer'), minItems: 1, maxItems: MAX_LAYERS, description: 'the sources, played together as one note: each with its own envelope, pitch and moves' },
       kit: { oneOf: [{ enum: Object.keys(KITS) }, { type: 'object', description: 'per-pad overrides { k: { pitch, decay, level } }' }] },
       preset: { enum: Object.keys(KITS) },
+      noise: num(0, 1, 'older songs: breath as white noise'),
       fx: { type: 'array', items: ref('effect'), description: 'its effects, in the order the sound goes through them' },
-    }, ['type']),
+    }),
     track: obj('track', {
       ...ranged(TRACK_PARAMS),
       id: id('unique'), name: { type: 'string' }, color: { type: 'string' },
@@ -148,15 +148,23 @@ export const songSchema = () => ({
     sound: obj('sound', {
       id: id('jump, coin, hit, or your own: music.sound(id)'), name: { type: 'string' }, color: { type: 'string' },
       ...Object.fromEntries(Object.entries(SFX_PARAMS).map(([k, p]) => [k, num(p.min, p.max)])),
+      note: num(SFX_PARAMS.note.min, SFX_PARAMS.note.max, 'the note it plays, in midi notes (69: A4, 440 Hz)'),
+      length: num(SFX_PARAMS.length.min, SFX_PARAMS.length.max, 'seconds the note is held'),
       at: { enum: SFX_AT, description: 'when it starts: now (default), the next step or the next beat' },
       key: { type: 'boolean', description: 'tuned to the nearest note of the chord playing' },
-      layers: { type: 'array', items: ref('layer'), minItems: 1, maxItems: SFX_MAX_LAYERS, description: 'the sources, summed: a wave or noise each, with its own envelope' },
-      fx: { type: 'array', items: ref('effect'), description: 'the effects the layers go through, in order' },
-    }, ['id', 'layers']),
+      instrument: id('an id in "instruments" (not a drum kit): the instrument it plays, one note of it'),
+    }, ['id', 'instrument']),
     layer: obj('layer', {
-      wave: { enum: SFX_WAVES }, off: { type: 'boolean', description: 'muted for now' },
-      ...Object.fromEntries(Object.entries(LAYER_PARAMS).map(([k, p]) => [k, num(p.min, p.max)])),
-      moves: { type: 'array', items: { ...ref('move'), description: `on: ${LAYER_MOVES.join(', ')}` } },
+      ...ranged(LAYER_PARAMS),
+      type: { enum: TYPES, description: 'the source (pulse when left out)' },
+      smooth: { type: 'boolean', description: 'no 4-bit staircase' },
+      wave: { oneOf: [{ enum: WAVE_PRESETS }, { type: 'array', items: num(0, 15), minItems: 32, maxItems: 32 }] },
+      drawbars: { type: 'string', pattern: '^[0-8]{9}$', description: "a wave's tonewheel organ: the drawbars 16′ 5⅓′ 8′ 4′ 2⅔′ 2′ 1⅗′ 1⅓′ 1′, each 0–8, e.g. '888000000' (in place of wave)" },
+      sample: { type: 'string', description: 'a recording in the library, e.g. cello, flute, violins' },
+      pitch: num(-36, 36, 'semitones from the note'),
+      delay: num(0, 1, 'seconds after the note starts'),
+      off: { type: 'boolean', description: 'muted for now' },
+      moves: { type: 'array', items: { ...ref('move'), description: `on: ${LAYER_MOVES.join(', ')} (pitch in semitones from the note)` } },
     }),
     effect: obj('effect', {
       kind: { enum: Object.keys(EFFECT_KINDS) }, off: { type: 'boolean', description: 'bypassed for now' },
@@ -165,7 +173,7 @@ export const songSchema = () => ({
       rate: { type: 'number', description: 'in a sound: how fast it goes, Hz (a crush: its sample rate)' },
       type: { description: `a filter's: ${FX_OPTIONS.filter.type.join(', ')}; a body's: ${FX_OPTIONS.body.type.join(', ')}` },
       bands: { type: 'array', description: 'a body of its own: [kind, Hz, Q, dB] each' },
-      amp: { enum: FX_OPTIONS.drive.amp }, mode: { enum: ['note', 'flanger'], description: 'a wah that follows the notes; a chorus as a flanger' },
+      amp: { enum: FX_OPTIONS.drive.amp }, mode: { enum: ['note', 'flanger', 'ensemble'], description: 'a wah that follows the notes; a chorus as a flanger or a string machine\'s ensemble' },
       square: { type: 'boolean', description: 'a tremolo that chops' },
       moves: { type: 'array', items: ref('move') },
     }, ['kind']),

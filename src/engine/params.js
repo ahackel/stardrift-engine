@@ -8,31 +8,41 @@
 //   when(sound, track): it applies (the oscillator's own settings, the vibrato's rate only with a vibrato …)
 
 const melodic = (s) => s.type !== 'drums';
-const is = (...types) => (s) => types.includes(s.type || 'pulse');
+const is = (...types) => (l) => types.includes(l.type || 'pulse');
 
-export const SOUND_PARAMS = [
-  // oscillator
+// a layer's settings (inst.js), as paths inside the layer: its source, its envelope, where it sits
+export const LAYER_PARAMS = [
+  // source
   ['string.decay', 0.1, 10, 3, { log: true, when: is('string') }],
   ['string.bright', 0, 1, 0.5, { when: is('string') }],
   ['string.mute', 0, 1, 0, { vary: [0, 0.6], when: is('string') }],
+  ['string.position', 0, 0.5, 0, { off: 'string.position', vary: [0, 0.3], when: is('string') }], // 0: not set
   ['bow.pressure', 0, 1, 0.8, { vary: [0.6, 0.95], when: is('bowed') }], // far from 80 % / 40 % the string jumps an octave
   ['bow.position', 0, 1, 0.4, { vary: [0.25, 0.55], when: is('bowed') }],
-  ['fm.ratio', 0.5, 8, 1, { step: 0.5, vary: [0.5, 4], when: is('fm') }],
+  ['fm.ratio', 0.5, 16, 1, { step: 0.5, vary: [0.5, 4], when: is('fm') }],
   ['fm.index', 0, 10, 2, { vary: [0.5, 6], when: is('fm') }],
   ['fm.env', 0, 1, 1, { when: is('fm') }],
   ['fm.feedback', 0, 1.5, 0, { vary: [0, 0.8], when: is('fm') }],
   ['duty', 0.05, 0.5, 0.5, { vary: [0.1, 0.5], when: is('pulse') }],
   ['pwm.depth', 0, 0.4, 0, { off: 'pwm', vary: [0, 0.25], when: is('pulse') }],
-  ['pwm.rate', 0.05, 8, 0.3, { log: true, vary: [0.1, 3], when: (s) => is('pulse')(s) && !!s.pwm }],
+  ['pwm.rate', 0.05, 8, 0.3, { log: true, vary: [0.1, 3], when: (l) => is('pulse')(l) && !!l.pwm }],
+  ['noise', 0, 1, 0, { off: 'noise', vary: [0, 0.3], when: is('pulse', 'triangle', 'wave', 'fm') }], // chip noise mixed in
+  // envelope
+  ['env.a', 0.001, 4, 0.01, { log: true, vary: [0.001, 1] }],
+  ['env.d', 0.01, 6, 0.2, { log: true, vary: [0.03, 3] }],
+  ['env.s', 0, 1, 0.7, {}],
+  ['env.r', 0.01, 8, 0.2, { log: true, vary: [0.02, 3] }],
+  // where it sits: semitones from the note, its level, seconds after the note
+  ['pitch', -36, 36, 0, { step: 1 }],
+  ['level', 0, 1, 1, { vary: [0.5, 1] }],
+  ['delay', 0, 1, 0, { off: 'delay' }],
+];
+// the instrument's own settings: the note's effects (they move every layer), its level
+export const SOUND_PARAMS = [
   ['unison', 1, 4, 1, { step: 1, off: 'unison', when: melodic }],
   ['detune', 0, 50, 0, { step: 1, vary: [0, 25], when: (s) => melodic(s) && (s.unison || 1) > 1 }],
   ['ensemble', 0, 1, 0, { off: 'ensemble', vary: [0, 0.6], when: melodic }],
   ['breath', 0, 1, 0, { off: 'breath', vary: [0, 0.5], when: melodic }],
-  // envelope
-  ['env.a', 0.001, 4, 0.01, { log: true, vary: [0.001, 1], when: melodic }],
-  ['env.d', 0.01, 6, 0.2, { log: true, vary: [0.03, 3], when: melodic }],
-  ['env.s', 0, 1, 0.7, { when: melodic }],
-  ['env.r', 0.01, 8, 0.2, { log: true, vary: [0.02, 3], when: melodic }],
   // pitch
   ['vibrato.depth', 0, 1, 0, { off: 'vibrato', vary: [0, 0.35], when: melodic }],
   ['vibrato.rate', 0.1, 12, 5, { log: true, vary: [3, 7.5], when: (s) => melodic(s) && !!s.vibrato }],
@@ -51,7 +61,8 @@ export const PAD_NAMES = ['k', 's', 'h', 'o', 'c', 't', 'm'];
 export const PAD_LABELS = { k: 'kick', s: 'snare', h: 'hat', o: 'open hat', c: 'crash', t: 'tom', m: 'tick' };
 
 // the fade a track gets unless it sets one (Engine.fadeSec): sustained sounds (chords, a slow attack) fade over a bar
-export const autoFade = (sound, poly = sound?.poly) => (sound?.type !== 'drums' && ((poly || 1) > 1 || (sound?.env?.a ?? 0) >= 0.15) ? 1 : 0);
+const attack = (s) => Math.max(s?.env?.a ?? 0, ...(Array.isArray(s?.layers) ? s.layers.map((l) => l?.env?.a ?? 0) : []));
+export const autoFade = (sound, poly = sound?.poly) => (sound?.type !== 'drums' && ((poly || 1) > 1 || attack(sound) >= 0.15) ? 1 : 0);
 
 const trackMelodic = (s) => s?.type !== 'drums';
 export const TRACK_PARAMS = [
@@ -80,8 +91,9 @@ export const getAt = (o, path) => path.split('.').reduce((x, k) => (x == null ? 
 // where v sits in min..max as 0..1 (log: on an exponential range), and back
 export const toUnit = (v, min, max, log) => (log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min));
 export const fromUnit = (t, min, max, log) => (log ? min * (max / min) ** t : min + t * (max - min));
-// a sound's setting, or its default when it has none
+// a sound's setting (a layer's: in the layer), or its default when it has none
 export const soundAt = (s, path) => getAt(s, path) ?? SOUND[path][3];
+export const layerAt = (l, path) => getAt(l, path) ?? LAYER[path][3];
 export function setAt(o, path, v) {
   const ks = path.split('.');
   let x = o;
@@ -102,4 +114,4 @@ export function putParam(obj, [path, min, , , o], v) {
 }
 // the lists by path: SOUND['env.a'] → its entry
 const byPath = (list) => Object.fromEntries(list.map((p) => [p[0], p]));
-export const SOUND = byPath(SOUND_PARAMS), TRACK = byPath(TRACK_PARAMS), SONG = byPath(SONG_PARAMS);
+export const SOUND = byPath(SOUND_PARAMS), LAYER = byPath(LAYER_PARAMS), TRACK = byPath(TRACK_PARAMS), SONG = byPath(SONG_PARAMS);

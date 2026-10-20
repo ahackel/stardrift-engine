@@ -128,6 +128,16 @@ const WAH_GAIN = 1.3; // the band's level back near the dry sound's
 const VOWELS = [[800, 1150, 2800], [400, 1700, 2600], [300, 2200, 3000], [450, 800, 2830], [325, 700, 2530]]; // a e i o u: F1 F2 F3
 const VOWEL_GAIN = [1, 0.5, 0.25];
 const DELAY_MAX = 1; // seconds
+const ENSEMBLE_FAST = 6; // Hz: the ensemble chorus's shimmer, under its slow sweep
+// The Leslie's two rotors: the treble horn above the crossover and the bass drum below it. Each turns at its slow and
+// fast speeds (Hz) and gets there with inertia (up: speeding up, down: slowing, as multiples of the ramp); the Doppler
+// sweep (s: how far its path to you changes) and how much louder it is facing you (am), at full depth.
+const LESLIE_X = 800;
+const ROTORS = [
+  { slow: 0.83, fast: 6.75, up: 1, down: 1.8, dop: 0.00045, am: 0.38 }, // the horn
+  { slow: 0.67, fast: 5.9, up: 4, down: 5, dop: 0.00022, am: 0.2 }, // the drum
+];
+const LESLIE_BASE = 0.0012; // seconds: the delay the Doppler sweeps around
 
 // ---------------------------------------------------------------- the kinds
 // a setting: its range, its default, log (it moves in octaves), step (it keeps to steps of that)
@@ -138,7 +148,7 @@ export const EFFECT_KINDS = {
   body: { params: {}, opts: ['type', 'bands'] },
   wah: { params: { depth: P(0.05, 1, 0.7), resonance: P(1, 10, 4, { log: true }) }, beats: P(0.25, 8, 1, { log: true }), rate: P(0.1, 20, 2, { log: true }), opts: ['mode'] },
   drive: { params: { amount: P(0, 2, 0.6) }, opts: ['amp'] },
-  filter: { params: { cutoff: P(40, 16000, 2000, { log: true }), resonance: P(0.3, 6, 0.707, { log: true }), env: P(0, 5, 0), decay: P(0.02, 2, 0.2, { log: true }), swell: P(0, 3, 0) }, opts: ['type'] },
+  filter: { params: { cutoff: P(40, 16000, 2000, { log: true }), resonance: P(0.3, 6, 0.707, { log: true }), env: P(0, 5, 0), decay: P(0.02, 2, 0.2, { log: true }), swell: P(0, 3, 0), bite: P(0, 1, 0) }, opts: ['type'] },
   crush: { params: { bits: P(2, 12, 6, { step: 1 }), rate: P(1000, 48000, 11025, { log: true }) } },
   eq: { params: { low: P(-12, 12, 0, { step: 0.5 }), mid: P(-12, 12, 0, { step: 0.5 }), midHz: P(200, 5000, 1000, { log: true }), high: P(-12, 12, 0, { step: 0.5 }) } },
   ring: { params: { freq: P(20, 4000, 300, { log: true }), mix: P(0, 1, 1) } },
@@ -148,10 +158,18 @@ export const EFFECT_KINDS = {
   chorus: { params: { depth: P(0.05, 1, 0.5) }, beats: P(0.25, 16, 4, { log: true }), rate: P(0.05, 10, 1, { log: true }), opts: ['mode'] },
   tremolo: { params: { depth: P(0.05, 1, 0.5) }, beats: P(0.0625, 4, 0.25, { log: true }), rate: P(0.5, 60, 8, { log: true }), opts: ['square'] },
   autopan: { params: { depth: P(0.05, 1, 0.7) }, beats: P(0.125, 16, 2, { log: true }), rate: P(0.1, 20, 1, { log: true }) },
+  // a rotating speaker: speed 0 stop, 1 slow (chorale), 2 fast (tremolo), between them in between; ramp: seconds the
+  // horn takes to get to a new speed (the heavier drum takes about four times as long)
+  leslie: { params: { speed: P(0, 2, 1, { step: 1 }), depth: P(0, 1, 0.7), ramp: P(0.2, 4, 1, { log: true }) } },
 };
 export const FX_ORDER = Object.keys(EFFECT_KINDS); // the order an older instrument's effects went in
 export const FILTER_TYPES = ['low', 'high', 'band'];
-export const FX_OPTIONS = { filter: { type: FILTER_TYPES }, drive: { amp: Object.keys(AMPS) }, wah: { mode: ['note'] }, chorus: { mode: ['flanger'] }, body: { type: Object.keys(BODIES) } };
+export const FX_OPTIONS = { filter: { type: FILTER_TYPES }, drive: { amp: Object.keys(AMPS) }, wah: { mode: ['note'] }, chorus: { mode: ['flanger', 'ensemble'] }, body: { type: Object.keys(BODIES) } };
+// The clock an effect or a move keeps: its own when it says (beats: in time with the music; rate: Hz, a sound's), else
+// where it plays (a track: beats; a game sound: Hz, and a ramp over the sound). So one instrument plays alike on a
+// track and as a game sound: what was set in beats stays in beats (at the song's tempo), what was set in Hz in Hz.
+export const fxClock = (f, music) => (f?.beats !== undefined ? true : f?.rate !== undefined && EFFECT_KINDS[f?.kind]?.beats ? false : !!music);
+export const moveClock = (m, music) => (m?.beats !== undefined ? true : m?.rate !== undefined ? false : !!music);
 // a kind's settings that can be set and moved, in music (beats) or a sound (rate in Hz)
 export function fxParams(kind, music) {
   const k = EFFECT_KINDS[kind];
@@ -190,13 +208,14 @@ export function valueAt(base, key, moves, p, t) {
 }
 const inP = (p, v) => clamp(num(v, p.def), p.min, p.max);
 // the moves in a list that move one of params, with every setting there; in seconds: { on, to, shape, rate, at, every, len }.
-// music: in beats at bps (len: the move's beats); a sound: len is what it moves over (the sound, a layer), in seconds
-export function movesOf(list, params, { music = false, bps = 2, len = 1 } = {}) {
+// Each in its clock (moveClock): in beats at bps (len: the move's beats), or in Hz and seconds, a ramp over len (a
+// sound's length; on a track, a beat)
+export function movesOf(list, params, { music: where = false, bps = 2, len = where ? 1 / bps : 1 } = {}) {
   const out = [];
   for (const m of Array.isArray(list) ? list : []) {
     const p = params[m?.on];
     if (!p) continue;
-    const mp = music ? MOVE_PARAMS.music : MOVE_PARAMS.sound, shape = MOVE_SHAPES.includes(m.shape) ? m.shape : 'ramp';
+    const music = moveClock(m, where), mp = music ? MOVE_PARAMS.music : MOVE_PARAMS.sound, shape = MOVE_SHAPES.includes(m.shape) ? m.shape : 'ramp';
     const at = inP(mp.at, m.at), every = inP(mp.every, m.every);
     if (music) { const beats = inP(mp.beats, m.beats); out.push({ on: m.on, to: inP(p, m.to), shape, at, rate: bps / beats, len: beats / bps, every: every / bps }); }
     else out.push({ on: m.on, to: inP(p, m.to), shape, at, rate: inP(mp.rate, m.rate), len, every });
@@ -206,7 +225,7 @@ export function movesOf(list, params, { music = false, bps = 2, len = 1 } = {}) 
 
 // ---------------------------------------------------------------- an effect with every setting there
 export function fxOf(def, music) {
-  const params = fxParams(def?.kind, music);
+  const params = fxParams(def?.kind, fxClock(def, music));
   if (!params) return null;
   const f = { kind: def.kind, off: !!def.off };
   for (const [k, p] of Object.entries(params)) f[k] = inP(p, def[k]);
@@ -230,7 +249,7 @@ export function fxList(list, music) {
 // An older instrument's effects (its keys: body, wah, drive and amp, the filter, crush, eq, phaser, chorus, tremolo,
 // autopan) as a list in the order they went in; the instrument without them. One with a list already is as it was.
 const OLD_FX = ['body', 'wah', 'drive', 'amp', 'cutoff', 'resonance', 'filter', 'swell', 'filterEnv', 'crush', 'eq', 'phaser', 'chorus', 'tremolo', 'autopan'];
-export function migrateInstrument(def) {
+export function migrateFx(def) {
   if (!def || typeof def !== 'object' || !OLD_FX.some((k) => def[k] !== undefined)) return def;
   const d = { ...def }, fx = [];
   const take = (k) => { const v = d[k]; delete d[k]; return v; };
@@ -263,15 +282,16 @@ const CTL = 16; // samples between new settings (moves, sweeps)
 class Stage {
   constructor(f, sr, ctx) {
     this.kind = f.kind; this.sr = sr;
-    this.params = fxParams(f.kind, ctx.music);
+    this.params = fxParams(f.kind, fxClock(f, ctx.music));
     this.ph = 0; this.u1 = 0; this.F1 = 0; this.cPh = 1; this.hold = 0; this.pa = 0; this.pz = new Float64Array(4); this.pLast = 0;
     this.st = [{ ic1: 0, ic2: 0 }, { ic1: 0, ic2: 0 }, { ic1: 0, ic2: 0 }];
     this.svf = [{ mode: LP, k: 1, a1: 0, a2: 0, a3: 0 }, { mode: BP, k: 1, a1: 0, a2: 0, a3: 0 }, { mode: BP, k: 1, a1: 0, a2: 0, a3: 0 }];
-    this.cut = 0; this.fenv = 0;
+    this.cut = 0; this.fenv = 0; this.ph2 = 0;
     this.set(f, ctx);
   }
   set(f, { music, bps, drums, len }) {
     this.f = f; this.bps = bps;
+    this.params = fxParams(f.kind, fxClock(f, music));
     const v = (this.v = {});
     for (const k of Object.keys(this.params)) v[k] = f[k];
     this.moves = movesOf(f.moves, this.params, { music, bps, len });
@@ -297,7 +317,18 @@ class Stage {
         break;
       }
       case 'delay': if (!this.buf) { this.buf = new Float32Array(Math.ceil(DELAY_MAX * sr) + 2); this.w = 0; } this.dl = v.time * sr; this.dlD = 0; break;
-      case 'chorus': if (!this.buf) { this.buf = new Float32Array(Math.ceil(sr * 0.03) + 2); this.w = 0; } break;
+      case 'chorus':
+        if (!this.buf) { this.buf = new Float32Array(Math.ceil(sr * 0.03) + 2); this.w = 0; }
+        this.ens = f.mode === 'ensemble' ? this.ens || new Float64Array(3) : null; this.ensD = new Float64Array(3);
+        break;
+      case 'leslie':
+        if (!this.rot) { // the rotors keep turning through a change: a new speed is a ramp, never a jump
+          const n = Math.ceil(sr * (LESLIE_BASE + 0.001)) + 2;
+          this.rot = ROTORS.map((r) => ({ ...r, hz: r.slow, c: 1, s: 0, dc: 1, ds: 0, buf: new Float32Array(n) }));
+          this.w = 0;
+          svfSet(this.svf[0], LESLIE_X, Math.SQRT2, sr).mode = LP;
+        }
+        break;
     }
     this.apply();
   }
@@ -324,7 +355,9 @@ class Stage {
       case 'phaser': this.span = 4 * clamp01(v.depth); this.fb = clamp(v.feedback, 0, 0.9); break;
       case 'chorus': {
         const depth = clamp01(v.depth);
-        Object.assign(this, f.mode === 'flanger' ? { base: 0.001, width: 0.005 * depth, cfb: 0.5, cnorm: 0.5 } : { base: 0.012, width: 0.012 * depth, cfb: 0, cnorm: Math.SQRT1_2 });
+        Object.assign(this, f.mode === 'flanger' ? { base: 0.001, width: 0.005 * depth, cfb: 0.5, cnorm: 0.5 }
+          : f.mode === 'ensemble' ? { base: 0.005, width: 0.006 * depth, fast: 0.0006 * depth, cfb: 0, cnorm: 0.62 }
+          : { base: 0.012, width: 0.012 * depth, cfb: 0, cnorm: Math.SQRT1_2 });
         break;
       }
     }
@@ -357,10 +390,38 @@ class Stage {
         const v = this.v, env = this.fenv > 0.002;
         if (Math.abs(this.cut - this.cutTarget) > 0.5) this.cut += (this.cutTarget - this.cut) * 0.0015; // ~0.25 s glide
         const c = this.cut * Math.pow(2, v.env * (env ? this.fenv : 0) + v.swell * (loud - 1));
-        if (c !== this.lastCut || this.q !== this.lastQ) { svfSet(this.svf[0], c, 1 / Math.max(0.3, this.q), sr); this.lastCut = c; this.lastQ = this.q; }
+        // bite: the resonance rises with the note's loudness, up to its own at full (brass bites when blown hard)
+        const q = v.bite > 0 ? this.q * Math.pow(4, v.bite * (loud - 1)) : this.q;
+        if (c !== this.lastCut || q !== this.lastQ) { svfSet(this.svf[0], c, 1 / Math.max(0.3, q), sr); this.lastCut = c; this.lastQ = q; }
+        break;
+      }
+      case 'chorus': {
+        if (!this.ens) break;
+        // the three copies 120° apart on both waves (the fast at ENSEMBLE_FAST Hz); each glides to where it is going
+        // over the next CTL samples, so the waves are worked out here and not every sample
+        if ((this.ph += this.hz * n) >= 1) this.ph -= Math.floor(this.ph);
+        if ((this.ph2 += ENSEMBLE_FAST * n) >= 1) this.ph2 -= 1;
+        for (let k = 0; k < 3; k++) {
+          const to = sr * (this.base + this.width * hump(this.ph + k / 3) + this.fast * hump(this.ph2 + k / 3));
+          if (!this.ens[k]) this.ens[k] = to;
+          this.ensD[k] = (to - this.ens[k]) / CTL;
+        }
         break;
       }
       case 'autopan': if ((this.ph += this.hz * n) >= 1) this.ph -= Math.floor(this.ph); this.pan = clamp01(this.v.depth) * Math.sin(TWO_PI * this.ph); break;
+      case 'leslie': {
+        // each rotor eases towards its speed (stop, slow, fast or between), then turns by a rotation per sample
+        const sp = clamp(this.v.speed, 0, 2), ramp = Math.max(0.05, this.v.ramp) / 3; // ~3 time constants to get there
+        for (const r of this.rot) {
+          const to = sp <= 1 ? r.slow * sp : r.slow + (r.fast - r.slow) * (sp - 1);
+          r.hz += (to - r.hz) * (1 - Math.exp(-n / (ramp * (to > r.hz ? r.up : r.down))));
+          const a = (TWO_PI * r.hz) / sr;
+          r.dc = Math.cos(a); r.ds = Math.sin(a);
+          const m = 1 / Math.hypot(r.c, r.s); r.c *= m; r.s *= m; // keep it on the circle
+        }
+        this.pan = 0.55 * clamp01(this.v.depth) * this.rot[0].s; // the horn throws the treble round the room
+        break;
+      }
     }
   }
   run(x) {
@@ -417,6 +478,21 @@ class Stage {
       case 'chorus': {
         // a copy from a delay line that wanders, mixed with the dry sound (a flanger: shorter, fed back)
         const buf = this.buf, n = buf.length;
+        if (this.ens) {
+          // a string machine's ensemble (the Solina's): three copies, each moved by the slow wave and a fast shimmer
+          // (control: where each is going), all wet with the dry
+          buf[this.w] = x;
+          const dl = this.ens, dd = this.ensD;
+          let y = 0;
+          for (let k = 0; k < 3; k++) {
+            let r = this.w - (dl[k] += dd[k]);
+            if (r < 0) r += n;
+            const i = Math.floor(r), fr = r - i;
+            y += buf[i] + (buf[i + 1 === n ? 0 : i + 1] - buf[i]) * fr;
+          }
+          if (++this.w >= n) this.w = 0;
+          return (x + 0.58 * y) * this.cnorm;
+        }
         if ((this.ph += this.hz / this.sr) >= 1) this.ph -= 1;
         let r = this.w - this.sr * (this.base + this.width * hump(this.ph));
         if (r < 0) r += n;
@@ -429,6 +505,23 @@ class Stage {
         if ((this.ph += this.hz / this.sr) >= 1) this.ph -= 1;
         const d = clamp01(this.v.depth);
         return x * (1 - d * (this.f.square ? (this.ph < 0.5 ? 0 : 1) : hump(this.ph)));
+      }
+      case 'leslie': {
+        // the crossover, then each band from its rotor: a delay that sweeps (Doppler: the pitch wobble) and a level
+        // that swells as it faces you (90° on from the sweep, as on a real one)
+        const lo = svf(this.svf[0], this.st[0], x), d = clamp01(this.v.depth), sr = this.sr, w = this.w;
+        let y = 0;
+        for (let k = 0; k < 2; k++) {
+          const r = this.rot[k], buf = r.buf, n = buf.length;
+          buf[w] = k ? lo : x - lo;
+          const c = r.c * r.dc - r.s * r.ds; r.s = r.s * r.dc + r.c * r.ds; r.c = c;
+          let q = w - sr * (LESLIE_BASE + r.dop * d * r.s);
+          if (q < 0) q += n;
+          const i = q | 0, fr = q - i, v = buf[i] + (buf[i + 1 === n ? 0 : i + 1] - buf[i]) * fr;
+          y += v * (1 - r.am * d * (1 - r.c) * 0.5);
+        }
+        if (++this.w >= this.rot[0].buf.length) this.w = 0;
+        return y;
       }
     }
     return x; // autopan: the host pans by .pan
@@ -450,7 +543,7 @@ export class FxChain {
     this.stages = fx.map((f) => { let s = this.byKind[f.kind]; if (s) s.set(f, ctx); else s = new Stage(f, this.sr, ctx); by[f.kind] = s; return s; });
     this.byKind = by;
     this.n = this.stages.length;
-    this.panning = !!by.autopan;
+    this.panning = !!(by.autopan || by.leslie);
     if (!this.panning) this.pan = 0;
     this.moving = this.stages.some((s) => s.moves.length);
     this.timer = 0;
@@ -463,7 +556,7 @@ export class FxChain {
     if (--this.timer <= 0) {
       this.timer = CTL;
       for (let i = 0; i < n; i++) st[i].control(this.t, loud);
-      if (this.panning) this.pan = this.byKind.autopan.pan;
+      if (this.panning) this.pan = clamp((this.byKind.autopan?.pan || 0) + (this.byKind.leslie?.pan || 0), -1, 1);
     }
     this.t += 1 / this.sr;
     for (let i = 0; i < n; i++) x = st[i].run(x);

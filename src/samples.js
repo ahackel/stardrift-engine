@@ -4,6 +4,7 @@
 // names: only these (what a song uses: songSamples), or all of them.
 import { decodeWav } from './wav.js';
 import { KITS, kitParts } from './engine/drums.js';
+import { migrateSound } from './engine/inst.js';
 
 export async function loadSamples(read, names) {
   const index = JSON.parse(new TextDecoder().decode(await read('samples.json')));
@@ -30,12 +31,12 @@ export function fetchSamples(libraryUrl = LIBRARY_URL, names) {
   }, names);
 }
 
-// the recordings a sound plays: its own (a sample sound), its kit's (drums: the preset's hits and the ones it changes)
+// the recordings a sound plays: its layers' (a sample layer), its kit's (drums: the preset's hits and the ones it changes)
 export function soundSamples(def) {
-  if (def?.type === 'sample') return def.sample ? [def.sample] : [];
-  if (def?.type !== 'drums') return [];
+  if (def?.type === 'sample') return def.sample ? [def.sample] : []; // an instrument from before layers
+  if (def?.type !== 'drums') return [...new Set((Array.isArray(def?.layers) ? def.layers : []).filter((l) => l?.type === 'sample' && l.sample).map((l) => l.sample))];
   const { preset, over } = kitParts(def), kit = KITS[preset] || KITS.clean;
   return [...new Set(Object.keys({ ...kit, ...over }).map((k) => ({ ...kit[k], ...over[k] }).sample).filter(Boolean))];
 }
 // … and all of a song's
-export const songSamples = (song) => [...new Set(Object.values(song?.instruments || {}).flatMap(soundSamples))];
+export const songSamples = (song) => [...new Set([...Object.values(song?.instruments || {}), ...(song?.sounds || []).map((x) => migrateSound(x)?.inst).filter(Boolean)].flatMap(soundSamples))]; // a sound's own instrument too (one the song hasn't taken in yet)

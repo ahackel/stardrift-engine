@@ -11,7 +11,7 @@
 // works out what the old rules picked in each section and rounds it to a step.
 export const STEPS = [0, 0.25, 0.5, 0.75, 1];
 // a song's own copy (structuredClone where there is one, which Safari has only from 15.4; a song is JSON)
-import { migrateInstrument } from './fx.js';
+import { migrateInstrument, migrateSound } from './inst.js';
 const clone = typeof structuredClone === 'function' ? structuredClone : (x) => JSON.parse(JSON.stringify(x));
 export const snap = (v) => Math.round(Math.min(1, Math.max(0, +v || 0)) * 4) / 4;
 
@@ -145,16 +145,30 @@ function rangeFit(v, r) {
 // when there is nothing to turn. Each section is weighed as the old conductor did around its intensity and tension
 // (it wobbled them by up to 0.04): clips that share a tag with it (or name no section) against each other, the one
 // picked most at 100.
-// Instruments from before effects were a list: their effect keys (drive, cutoff, eq …) become instrument.fx, in the
-// order they went in; effect rows' hold is a step at the start
+// Instruments from before effects were a list or before layers (inst.js migrateInstrument: their effect keys become
+// instrument.fx, their source the first layer); game sounds from before they were instruments (migrateSound), and
+// ones with an instrument of their own: it joins the song's instruments, under the sound's id (a track can play it
+// too), and the sound plays it from there; effect rows' hold is a step at the start
 function migrateFx(raw) {
   if (!raw || typeof raw !== 'object') return raw;
   const insts = raw.instruments && typeof raw.instruments === 'object' ? raw.instruments : null;
   const old = insts && Object.values(insts).some((d) => migrateInstrument(d) !== d);
+  const oldSounds = Array.isArray(raw.sounds) && raw.sounds.some((x) => x && typeof x === 'object' && typeof x.instrument !== 'string');
   const holds = (raw.blocks || []).some((b) => b?.fx?.shape === 'hold');
-  if (!old && !holds) return raw;
+  if (!old && !holds && !oldSounds) return raw;
   const s = { ...raw };
   if (old) s.instruments = Object.fromEntries(Object.entries(insts).map(([k, d]) => [k, migrateInstrument(d)]));
+  if (oldSounds) {
+    const into = (s.instruments = { ...(s.instruments || {}) });
+    s.sounds = s.sounds.map((x) => {
+      if (!x || typeof x !== 'object' || typeof x.instrument === 'string') return x;
+      const { inst, ...own } = migrateSound(x);
+      let key = String(own.id || 'sound'), n = 2;
+      while (key in into) key = `${own.id || 'sound'}_${n++}`;
+      into[key] = { name: own.name || own.id || key, ...inst };
+      return { ...own, instrument: key };
+    });
+  }
   if (holds) s.blocks = s.blocks.map((b) => (b?.fx?.shape === 'hold' ? { ...b, fx: { ...b.fx, shape: 'step', at: 0 } } : b));
   return s;
 }

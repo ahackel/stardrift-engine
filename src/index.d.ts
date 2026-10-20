@@ -5,20 +5,43 @@ export type Weight = number;
 export type Mode = 'chord' | 'scale' | 'key';
 
 export interface Instrument {
-  type: 'pulse' | 'triangle' | 'wave' | 'string' | 'fm' | 'bowed' | 'sample' | 'drums';
+  /** 'drums': a drum kit; left out, the instrument plays its layers */
+  type?: 'drums';
   name?: string;
   poly?: number;
   arp?: number;
   arpChord?: boolean;
-  smooth?: boolean;
-  wave?: 'soft' | 'sine' | 'saw' | 'warm' | 'organ' | 'hollow' | number[];
-  sample?: string;
+  /** the sources, played together as one note (1–3) */
+  layers?: Layer[];
   kit?: 'clean' | 'chip' | 'rock' | 'orchestra' | Record<string, { pitch?: number; decay?: number; level?: number; sample?: string }>;
   preset?: 'clean' | 'chip' | 'rock' | 'orchestra';
-  env?: { a?: number; d?: number; s?: number; r?: number };
   /** its effects, in the order the sound goes through them */
   fx?: Effect[];
-  /** every other setting (SONG_FORMAT.md, src/engine/params.js) */
+  /** the note's effects: unison, detune, ensemble, breath, vibrato, glide, scoop; gain (SONG_FORMAT.md, src/engine/params.js) */
+  [setting: string]: unknown;
+}
+/** one source of an instrument or a sound, with its own envelope */
+export interface Layer {
+  type?: 'pulse' | 'triangle' | 'wave' | 'string' | 'fm' | 'bowed' | 'sample' | 'noise';
+  smooth?: boolean;
+  wave?: 'soft' | 'sine' | 'saw' | 'warm' | 'organ' | 'hollow' | number[];
+  /** a wave's tonewheel organ (in place of `wave`): drawbars 16′ 5⅓′ 8′ 4′ 2⅔′ 2′ 1⅗′ 1⅓′ 1′, each 0–8, e.g. '888000000' */
+  drawbars?: string;
+  sample?: string;
+  env?: { a?: number; d?: number; s?: number; r?: number };
+  /** semitones from the note */
+  pitch?: number;
+  level?: number;
+  /** seconds after the note starts */
+  delay?: number;
+  /** chip noise mixed in, 0–1 */
+  noise?: number;
+  duty?: number;
+  /** muted for now */
+  off?: boolean;
+  /** on: pitch (semitones), level, duty, noise; each note starts them again */
+  moves?: SoundMove[];
+  /** the source's own settings: pwm, fm, string, bow */
   [setting: string]: unknown;
 }
 
@@ -114,13 +137,18 @@ export interface Stinger {
 }
 
 /** A game sound: a short sound effect made by synthesis (SONG_FORMAT.md, "Game sounds"). Every setting is optional. */
+/** a game sound: an instrument and the note it plays */
 export interface Sound {
   id: string;
   name?: string;
-  /** the sources, summed (1–3) */
-  layers: SoundLayer[];
-  /** the effects the layers go through, in order */
-  fx?: Effect[];
+  /** the instrument it plays: a key of the song's instruments (not a drum kit) */
+  instrument?: string;
+  /** an instrument of its own, for music.sound({ … }) and renderSound (a song's sounds name one of its instruments) */
+  inst?: Omit<Instrument, 'type' | 'kit' | 'preset'>;
+  /** the note it plays, in midi notes (69: A4) */
+  note?: number;
+  /** seconds the note is held */
+  length?: number;
   echo?: number; reverb?: number; volume?: number;
   /** how much each play differs, 0–1 */
   vary?: number;
@@ -130,38 +158,24 @@ export interface Sound {
   /** how much quieter the music gets under it, 0–1 */
   duck?: number;
 }
-export interface SoundLayer {
-  wave?: 'square' | 'triangle' | 'saw' | 'sine' | 'noise';
-  /** Hz */
-  pitch?: number;
-  /** seconds */
-  length?: number;
-  attack?: number; punch?: number; noise?: number; duty?: number; level?: number;
-  /** seconds after the sound starts */
-  delay?: number;
-  /** muted for now */
-  off?: boolean;
-  /** on: pitch, level, noise, duty */
-  moves?: SoundMove[];
-}
 /** an effect of an instrument's chain or a sound's (the same kinds in both) */
 export interface Effect {
-  kind: 'body' | 'wah' | 'drive' | 'filter' | 'crush' | 'eq' | 'ring' | 'vowel' | 'delay' | 'phaser' | 'chorus' | 'tremolo' | 'autopan';
+  kind: 'body' | 'wah' | 'drive' | 'filter' | 'crush' | 'eq' | 'ring' | 'vowel' | 'delay' | 'phaser' | 'chorus' | 'tremolo' | 'autopan' | 'leslie';
   /** bypassed for now */
   off?: boolean;
   /** a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, ah, oh, oo, ee */
   type?: string;
   bands?: [string, number, number?, number?][];
   amp?: 'guitar' | 'bass';
-  /** a wah that follows the notes ('note'); a chorus as a flanger ('flanger') */
-  mode?: 'note' | 'flanger';
+  /** a wah that follows the notes ('note'); a chorus as a flanger ('flanger') or a string machine's ensemble ('ensemble') */
+  mode?: 'note' | 'flanger' | 'ensemble';
   /** a tremolo that chops */
   square?: boolean;
   /** in music: how long one sweep takes, in beats */
   beats?: number;
   /** in a sound: how fast it goes, Hz (a crush: its sample rate) */
   rate?: number;
-  amount?: number; cutoff?: number; resonance?: number; env?: number; decay?: number; swell?: number; bits?: number;
+  amount?: number; cutoff?: number; resonance?: number; env?: number; decay?: number; swell?: number; bite?: number; bits?: number;
   low?: number; mid?: number; midHz?: number; high?: number; depth?: number; feedback?: number;
   freq?: number; mix?: number; vowel?: number; time?: number;
   moves?: SoundMove[];
@@ -311,5 +325,10 @@ export function isZip(buffer: ArrayBuffer | Uint8Array): boolean;
 export function renderSound(sound: Omit<Sound, 'id'>, options?: { sr?: number; seed?: number; opts?: SoundOptions }): Float32Array;
 /** a sound with every setting there, in range */
 export function soundOf(sound: Partial<Sound>): Required<Omit<Sound, 'id' | 'name'>>;
-export const SFX_WAVES: string[];
-export const SFX_FX: Record<Effect['kind'], Record<string, { min: number; max: number; def: number; log: boolean }>>;
+export function soundLength(sound: Partial<Sound>): number;
+/** what an instrument costs to play: 1 is a plain pulse note */
+export function costOf(inst: Instrument, poly?: number): { note: number; notes: number; fx: number; total: number };
+export function migrateInstrument(inst: object): Instrument;
+export function migrateSound(sound: object): Sound;
+/** a sound with the song's instrument it names in inst */
+export function resolveSound(song: Song, sound: Partial<Sound>): Partial<Sound>;
