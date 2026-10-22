@@ -9,6 +9,7 @@ import { FX_KINDS, fxAt, fxJoin, onMix } from './moves.js';
 import { playOf, resolveSound } from './sfx.js';
 import { autoFade } from './params.js';
 import { weightIn, chanceIn } from './plays.js';
+import { chordNotes, guitarStrings } from './guitar.js';
 
 const DEFAULT_CHORD = { degree: 0, shape: SHAPES.triad, shapeName: 'triad', beats: 4 };
 // an arpeggio that runs the chord on single notes (sound.arpChord), in one voice
@@ -401,7 +402,7 @@ export class Engine {
     const syn = this.synth, later = this.later;
     for (let i = 0; i < n; i++) {
       this.clock++;
-      if (later.length) for (let j = later.length - 1; j >= 0; j--) if (later[j].t <= this.clock) { later[j].fn(); later.splice(j, 1); } // humanized notes
+      if (later.length) for (let j = 0; j < later.length;) if (later[j].t <= this.clock) later.splice(j, 1)[0].fn(); else j++; // humanized notes, strums: in order
       if (this.hold) {
         if (this.curSting || this.nextSting) { // a stinger still sounds while the song stands still
           if (this.stepTimer <= 0) { this.heldTick(); this.stepTimer += this.stepLen; }
@@ -544,6 +545,7 @@ export class Engine {
       this.emit({ type: 'note', track: tr.id });
       return;
     }
+    if (st.atoms.some((a) => a.kind === 'gtr')) return this.strum(tr, ts, st, isFollow, src, vel);
     let midis = this.resolve(tr, src, st.atoms);
     if (!midis.length) { // nothing to play: a whole chord under N.C. (held on, it comes back with the next chord)
       if (isFollow) this.synth.release(tr.id);
@@ -557,6 +559,46 @@ export class Engine {
   }
 
   scaleNow() { return this.prog ? this.prog.scale : this.song.scale; }
+
+  // The chord playing as a guitar fingers it (guitar.js): six notes, null for a string not played, in the voicing the
+  // clip asks for (block.voicing), else the instrument's (guitar.shape), else open chords; at the guitar's pitch on
+  // octave 3, an octave higher on 4. Null for no chord (N.C.).
+  guitarNotes(tr, block) {
+    const chord = this.chord;
+    if (chord.nc) return null;
+    const scale = this.scaleNow(), root = foldDegree(chord.degree, scale.length);
+    const pcs = chord.shape.map((o) => mod(this.song.keyRoot + degSemis(scale, root + o), 12));
+    const shape = block?.voicing || notesOf(block, this.song.blockMap)?.voicing || tr.inst.guitar?.shape || 'open';
+    return chordNotes(pcs[0], pcs, shape, 12 * ((tr.octave ?? 3) - 3));
+  }
+
+  // A step with guitar strokes (D U X B A S1…): the strings it plays, each in its turn of the strum (guitar.strum ms
+  // apart, a little uneven; an upstroke softer), numbers and chords with them as notes of their own. A downstroke
+  // (and a dead one) damps the strings it leaves out; on a guitar the rest ring on (TrackBus.strike).
+  strum(tr, ts, st, isFollow, src, vel) {
+    const notes = this.guitarNotes(tr, src);
+    if (!notes) { if (isFollow) this.synth.release(tr.id); return; }
+    const hits = [];
+    let dead = false, down = false;
+    for (const a of st.atoms) {
+      if (a.kind === 'gtr') {
+        for (const x of guitarStrings(notes, a.value)) hits.push({ m: x.m + 12 * a.oct + a.semi, s: x.s, order: x.order, up: a.value === 'U' });
+        if (a.value === 'X') dead = true;
+        if (a.value === 'D' || a.value === 'X') down = true;
+      } else this.resolve(tr, src, [a]).forEach((m) => hits.push({ m, s: 6 + hits.length, order: 0 }));
+    }
+    if (!hits.length) return;
+    const g = tr.inst.guitar, ms = g ? Math.min(60, Math.max(0, g.strum ?? 10)) : 0;
+    const gap = (ms * this.sr * (0.8 + 0.4 * this.vrng.next())) / 1000, lag = isFollow ? 0 : this.lagOf(tr);
+    const short = dead ? 2 : st.short && !isFollow;
+    if (down) { const keep = hits.map((h) => h.s); this.at(lag, () => this.synth.damp(tr.id, keep)); }
+    hits.sort((a, b) => a.order - b.order).forEach((h, i) => {
+      const v = vel * (h.up ? 0.8 : 1) * (1 - 0.03 * h.order) * (dead ? 0.8 : 1);
+      this.at(lag + Math.round(h.order * gap), () => this.synth.strike(tr.id, h.m, h.s, v, short, i === 0));
+    });
+    ts.sounding = st;
+    if (!isFollow) this.emit({ type: 'note', track: tr.id, midi: hits[0].m });
+  }
 
   // A single note on an arpeggio that runs the chord (a tracker's 0xy): the note, then the chord's next tones above
   // it, so the arpeggio starts on the melody and follows the harmony (a triad: three notes, a seventh chord: four)
@@ -575,7 +617,7 @@ export class Engine {
   // With no chord (N.C.) a whole chord rests, and so does a stack built on the chord (chord or scale mode: a voicing);
   // single notes and stacks in the key play on, over the home chord
   restsNC(tr, block, atoms = []) {
-    return atoms.some((a) => a.kind === 'chord') || (this.modeOf(tr, block) !== 'key' && atoms.filter((a) => a.kind === 'num').length > 1);
+    return atoms.some((a) => a.kind === 'chord' || a.kind === 'gtr') || (this.modeOf(tr, block) !== 'key' && atoms.filter((a) => a.kind === 'num').length > 1);
   }
 
   resolve(tr, block, atoms) {

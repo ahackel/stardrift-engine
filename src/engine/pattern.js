@@ -6,6 +6,8 @@
 //   *        the whole current chord (instruments with poly) or a fast chip arpeggio (instruments with `arp`)
 //   0+4+8    several notes at once
 //   k s h    drum hits: k kick, s snare, h hat, o open hat, c crash/wash, t tom, m metal tick
+//   D U X    guitar: a downstroke, an upstroke, a dead strum of the chord as a guitar fingers it (guitar.js)
+//   B A S1   guitar: the bass string (the root), the alternate bass, the highest string played (S2 the next …)
 // Suffixes: ' octave up, , octave down, # / b semitone up/down
 // Flags:    ! accent, ? 50% chance, ?30 30% chance
 // Repeat:   T*n repeats token T n times ("-*15"), `|` is ignored (visual bar separator)
@@ -33,7 +35,7 @@ export function fitLength(tokens, length) {
 }
 
 function parseAtom(a) {
-  const m = /^(\*|-?\d+|[a-z])([',#b]*)$/.exec(a);
+  const m = /^(\*|-?\d+|[a-z]|[DUXBA]|S[1-6])([',#b]*)$/.exec(a);
   if (!m) return null;
   let oct = 0, semi = 0;
   for (const c of m[2]) {
@@ -44,6 +46,7 @@ function parseAtom(a) {
   }
   if (m[1] === '*') return { kind: 'chord', value: 0, oct, semi };
   if (/^-?\d+$/.test(m[1])) return { kind: 'num', value: +m[1], oct, semi };
+  if (/^[A-Z]/.test(m[1])) return { kind: 'gtr', value: m[1], oct, semi };
   return { kind: 'hit', value: m[1], oct, semi };
 }
 

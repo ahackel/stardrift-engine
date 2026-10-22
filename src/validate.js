@@ -4,6 +4,7 @@
 //   validateSong(song, { samples }) → { errors: [text], warnings: [text] }   samples: the library's names, to check those
 import { SCALES, SHAPES, parseChord } from './engine/theory.js';
 import { expandTokens, parseToken, FORMS } from './engine/pattern.js';
+import { SHAPES as GUITAR_SHAPES } from './engine/guitar.js';
 import { SOUND_PARAMS, LAYER_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_NAMES, getAt } from './engine/params.js';
 import { migrateSong } from './engine/plays.js';
 import { KITS } from './engine/drums.js';
@@ -24,12 +25,12 @@ export const FIELDS = {
   song: ['$schema', 'format', 'name', 'bpm', 'key', 'scale', 'stepsPerBeat', 'beatsPerBar', 'swing', 'humanize', 'variation', 'blockChange', 'fillChance',
     'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'effectTracks', 'blocks', 'sections',
     'progressions', 'moods', 'stingers', 'sounds'],
-  instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'kit', 'preset', 'layers', 'unison', 'detune', 'ensemble', 'breath', 'noise', 'gain', 'glide',
+  instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'guitar', 'legato', 'kit', 'preset', 'layers', 'unison', 'detune', 'ensemble', 'breath', 'noise', 'gain', 'glide',
     'scoop', 'vibrato', 'fx'],
   layer: ['type', 'wave', 'drawbars', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'env', 'pitch', 'level', 'delay', 'noise', 'moves', 'off'],
   track: ['id', 'name', 'color', 'instrument', 'octave', 'clips', 'mode', 'follow', 'stickiness', 'volume', 'pan', 'echo', 'reverb', 'double', 'pump', 'fade'],
   effectTrack: ['id', 'name', 'color', 'target', 'except', 'clips'],
-  block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track', 'fx'],
+  block: ['id', 'name', 'color', 'beats', 'pattern', 'mode', 'fit', 'from', 'forms', 'sections', 'fill', 'mutate', 'track', 'fx', 'voicing'],
   section: ['id', 'name', 'color', 'bars', 'tracks', 'next', 'blocks', 'chords'],
   progression: ['id', 'name', 'color', 'chords', 'scale', 'sections'],
   mood: ['sections', 'flow', 'loopFrom', 'then', 'switch'],
@@ -155,7 +156,7 @@ export function validateSong(raw, { samples } = {}) {
     tokens.forEach((t, i) => {
       if (t === '.' || t === '-') return;
       const st = parseToken(t), at = `step ${i + 1} "${t}"`;
-      if (!st.atoms) return bad.push(`${at} is not a step (. rest, - hold, a number, * the chord, ${PAD_NAMES.join(' ')} drum hits, joined by +; then ' , # b and ! ?30)`);
+      if (!st.atoms) return bad.push(`${at} is not a step (. rest, - hold, a number, * the chord, D U X B A S1–S6 guitar strokes, ${PAD_NAMES.join(' ')} drum hits, joined by +; then ' , # b and ! ?30)`);
       const a = st.atoms.find((x) => (x.kind === 'hit' ? drums === false || !PAD_NAMES.includes(x.value) : drums === true));
       if (!a) return;
       if (a.kind === 'hit' && !PAD_NAMES.includes(a.value)) bad.push(`${at}: no drum hit "${a.value}" (${PAD_NAMES.join(' ')})`);
@@ -245,6 +246,7 @@ export function validateSong(raw, { samples } = {}) {
     mode(b.mode, where);
     weights(b.sections, sections, 'section', `${where} "sections"`);
     if (b.forms !== undefined) for (const f of Array.isArray(b.forms) ? b.forms : [b.forms]) if (!FORMS.includes(f)) err(`${where}: no form ${JSON.stringify(f)} (${list(FORMS)})`);
+    if (b.voicing !== undefined && !GUITAR_SHAPES.includes(b.voicing)) err(`${where}: no voicing ${JSON.stringify(b.voicing)} (${list(GUITAR_SHAPES)})`);
     if (b.fx !== undefined) { // an effect block: one setting moved across the bars it is placed on
       const fx = b.fx, k = isObj(fx) && FX_KINDS[fx.kind];
       if (!isObj(fx)) err(`${where}: "fx" must be an object { kind, from, to, shape }`);

@@ -59,6 +59,12 @@ export const AMPS = {
   // tight lows and a mid push into the clipper (a Tube Screamer in front of the amp), then a 4×12 cabinet:
   // lows gone below 75 Hz with a bump at 110, a dip where fizz lives, a steep roll-off from about 4 kHz
   guitar: { bias: 0.25, gain: 0.71, pre: [['hp', 110], ['peak', 850, 0.8, 8]], post: [['hp', 75], ['peak', 110, 1, 3], ['peak', 2600, 1.5, -3], ['lp', 4200], ['lp', 5000, 1.2]] },
+  // a clean amp (a Fender's): hardly any clipping, scooped mids, an open, bright 2×12 that goes up to 7 kHz
+  clean: { bias: 0.05, gain: 1.02, pre: [['hp', 70]], post: [['peak', 110, 1, 2], ['peak', 450, 0.7, -4], ['peak', 2500, 1, 3], ['lp', 7000, 0.8]] },
+  // crunch (a cranked Vox or Marshall without a boost): a little mid push into it, an open-back cabinet
+  crunch: { bias: 0.2, gain: 0.71, pre: [['hp', 90], ['peak', 700, 0.7, 5]], post: [['hp', 70], ['peak', 120, 1, 2], ['peak', 1500, 0.8, 2], ['lp', 5000], ['lp', 6000, 1.1]] },
+  // a lead amp: a big mid boost into high gain, tight lows, a 4×12 with a scooped low mid and a presence peak
+  lead: { bias: 0.3, gain: 0.57, pre: [['hp', 140], ['peak', 900, 0.7, 10]], post: [['hp', 80], ['peak', 100, 1.2, 4], ['peak', 700, 0.8, -2], ['peak', 2200, 1.5, 3], ['lp', 4500], ['lp', 5200, 1.2]] },
   // a bass amp keeps the lows and rounds off the top
   bass: { bias: 0.1, gain: 0.83, pre: [['hp', 35], ['peak', 700, 0.7, 3]], post: [['lp', 2800], ['lp', 3600, 0.9]] },
 };
@@ -82,6 +88,13 @@ export const BODIES = {
     ['peak', 2130, 47, 9], ['peak', 2231, 45, -6.4], ['peak', 2274, 45, 8.5], ['peak', 2389, 35, -6.3], ['peak', 2540, 41, 6.1], ['peak', 2629, 45, -6], ['peak', 2758, 38, 5.4], ['peak', 2840, 50, -9],
     ['peak', 3001, 47, 8.6], ['peak', 3089, 43, -5.1], ['peak', 3262, 41, 8], ['peak', 3463, 40, -5.3],
     ['lp', 4500, 0.7]],
+  // a steel-string acoustic (a dreadnought): the air in it near 100 Hz, the top near 200 Hz, less box around 450 Hz,
+  // the shimmer of the strings around 3 kHz
+  acoustic: [['hp', 70], ['peak', 100, 2, 6], ['peak', 200, 2, 5], ['peak', 450, 1.5, -3], ['peak', 2800, 1, 3], ['lp', 9000, 0.7]],
+  // a nylon-string (classical) guitar: the same box, warmer and softer on top
+  nylon: [['hp', 70], ['peak', 95, 2, 6], ['peak', 190, 2, 4], ['peak', 500, 1.2, -2], ['peak', 1500, 1, 1], ['lp', 5000, 0.7]],
+  // a jazz archtop: hollow and woody in the mids, dark above 3 kHz
+  archtop: [['hp', 90], ['peak', 150, 1.5, 3], ['peak', 600, 1.2, 4], ['peak', 3000, 1, -4], ['lp', 3500, 0.7]],
   // a string section: violins to basses together, their peaks smeared
   strings: [['peak', 300, 1.2, 4], ['peak', 1200, 1, -3], ['peak', 2600, 1, 4], ['lp', 6000, 0.7]],
   // a french horn: the bell faces away from you, full around 180 Hz, warm around 400 Hz, dark above 2 kHz

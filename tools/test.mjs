@@ -771,5 +771,57 @@ for (const [file, sg] of toCheck) {
   ok(Math.abs(level('ensemble') - level()) < 1.5, `the ensemble chorus plays at the chorus's level (${level('ensemble').toFixed(1)} dB / ${level().toFixed(1)} dB)`);
 }
 
+// 21. Guitars: chords fingered as a guitarist does (open, barre, power, the top strings); a strum plays its strings in
+// turn, low to high down and high to low up; on a guitar the strings ring on through the next stroke, a downstroke
+// damps the ones it leaves out, a rest every one; a dead strum dies at once; legato on a string: a note a step away
+// from one held is a hammer-on, not picked again
+{
+  const { chordFrets, fretText, chordNotes, guitarStrings } = await import('../src/engine/guitar.js');
+  const chord = (root, ivs, shape) => fretText(chordFrets(root, ivs.map((i) => (root + i) % 12), shape));
+  const MAJ = [0, 4, 7], MIN = [0, 3, 7];
+  ok(chord(0, MAJ) === 'x32010' && chord(7, MAJ) === '320003' && chord(2, MAJ) === 'xx0232' && chord(9, MIN) === 'x02210' && chord(4, MIN) === '022000' && chord(5, MAJ) === '133211' && chord(11, MIN) === 'x24432',
+    `open chords: C ${chord(0, MAJ)}, G ${chord(7, MAJ)}, D ${chord(2, MAJ)}, Am ${chord(9, MIN)}, Em ${chord(4, MIN)}, F ${chord(5, MAJ)}, Bm ${chord(11, MIN)}`);
+  ok(chord(9, MAJ, 'barre') === '577655' && chord(0, MAJ, 'barre') === 'x35553' && chord(4, MAJ, 'power') === '022xxx' && chord(0, MAJ, 'power') === 'x355xx' && /^xxx/.test(chord(0, MAJ, 'high')),
+    `barre ${chord(9, MAJ, 'barre')} ${chord(0, MAJ, 'barre')}, power ${chord(4, MAJ, 'power')} ${chord(0, MAJ, 'power')}, high ${chord(0, MAJ, 'high')}`);
+  const c = chordNotes(0, MAJ, 'open'), str = (a) => guitarStrings(c, a).map((x) => x.m).join(' ');
+  ok(str('D') === '48 52 55 60 64' && str('U') === '64 60 55 52' && str('B') === '48' && str('A') === '52' && str('S1') === '64' && str('S3') === '55',
+    'D plays the strings up from the root, U the top four down, B the root, A the string above, S1 the highest');
+  // a song of one guitar track: notes as they start (the synth's strike), and the voices sounding
+  const gsong = (pattern, inst = {}) => ({ name: 'g', bpm: 120, key: 'C', scale: 'major', humanize: 0, variation: 0, blockChange: 0, fillChance: 0, layerChurn: 0, leadIn: 0,
+    instruments: { g: { poly: 6, guitar: { strum: 10 }, layers: [{ type: 'string', string: { decay: 4, bright: 0.6 }, env: { a: 0.001, d: 1, s: 1, r: 0.2 } }], ...inst } },
+    tracks: [{ id: 'g', instrument: 'g', octave: 3, volume: 0.3, clips: ['b'] }], blocks: [{ id: 'b', beats: 4, pattern, mutate: 0 }],
+    sections: [{ id: 's', bars: [4] }], progressions: [{ id: 'p', chords: 'I:16' }] });
+  const watch = (song, secs) => {
+    const e = newEngine(SR, song, 1), bus = () => e.synth.tracks.g, hits = [], L = new Float32Array(128), R = new Float32Array(128);
+    let t = 0;
+    const strike = e.synth.strike.bind(e.synth);
+    e.synth.strike = (id, m, s, vel, short, first) => { hits.push({ t, m, s, short }); strike(id, m, s, vel, short, first); };
+    const ringing = [];
+    for (; t < secs * SR; t += 128) { e.process(L, R, 128); ringing.push(bus().voices.filter((v) => v.gate).length); }
+    return { hits, ringing, e };
+  };
+  const down = watch(gsong('D - - - U - - - D - - - . . . .'), 2);
+  const first = down.hits.filter((h) => h.t < SR / 4), up = down.hits.filter((h) => h.t >= 0.45 * SR && h.t < 0.75 * SR); // the beats at 0 and 0.5 s
+  const gaps = first.slice(1).map((h, i) => h.t - first[i].t);
+  ok(first.map((h) => h.m).join(' ') === '48 52 55 60 64' && gaps.every((g) => g >= 0.004 * SR && g <= 0.016 * SR) && up.map((h) => h.m).join(' ') === '64 60 55 52',
+    `a downstroke plays C's strings low to high, about 10 ms apart (${gaps.map((g) => Math.round((g / SR) * 1000)).join(' ')} ms), the upstroke the top four back down`);
+  const at = (sec) => down.ringing[Math.floor((sec * SR) / 128)];
+  ok(at(0.8) === 5 && at(1.8) === 0, `the strings ring on through the upstroke (${at(0.8)} sounding), a rest damps them all (${at(1.8)})`);
+  const power = watch(gsong('D - - - D - - - . . . . . . . .', { guitar: { strum: 10, shape: 'power' } }), 0.4);
+  ok(power.hits.map((h) => h.m).join(' ') === '48 55 60', 'power chords: the root, fifth and octave (C3 G3 C4 for C)');
+  const dead = watch(gsong('X - - - . . . . . . . . . . . .'), 0.3);
+  ok(dead.hits.length === 5 && dead.hits.every((h) => h.short === 2), 'a dead strum (X) plays every string damped');
+  // legato: a note a step from a held one is not picked again (the string's loop is not refilled)
+  const { compileInst, Voice } = await import('../src/engine/voice.js');
+  const p = compileInst({ legato: true, layers: [{ type: 'string', string: { decay: 4 } }] }, SR), v = new Voice();
+  v.start(p, 60, 0.8, null);
+  for (let i = 0; i < SR / 10; i++) v.render(p);
+  const before = v.osc[0].kb.slice(), was = v.osc[0].kw;
+  v.start(p, 62, 0.8, null);
+  const same = v.osc[0].kw === was && v.osc[0].kb.every((x, i) => x === before[i]);
+  v.start(p, 69, 0.8, null);
+  ok(same && v.osc[0].kb.some((x, i) => x !== before[i]), 'legato: a note a step from a held one is a hammer-on (not picked again), a leap is picked');
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

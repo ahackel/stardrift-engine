@@ -11,6 +11,10 @@ export interface Instrument {
   poly?: number;
   arp?: number;
   arpChord?: boolean;
+  /** chords as a guitar plays them: fingered on six strings that ring on (pattern strokes D U X B A S1–S6) */
+  guitar?: { shape?: 'open' | 'barre' | 'power' | 'high'; strum?: number };
+  /** a note into a held one is a hammer-on or a slide: not picked again */
+  legato?: boolean;
   /** the sources, played together as one note (1–3) */
   layers?: Layer[];
   kit?: 'clean' | 'chip' | 'rock' | 'orchestra' | Record<string, { pitch?: number; decay?: number; level?: number; sample?: string }>;
@@ -104,6 +108,8 @@ export interface Block {
   sections?: Record<string, Weight>;
   fill?: boolean;
   mutate?: number;
+  /** a guitar track: how this block fingers the chords, in place of the instrument's */
+  voicing?: 'open' | 'barre' | 'power' | 'high';
   name?: string;
   color?: string;
 }
@@ -163,10 +169,10 @@ export interface Effect {
   kind: 'body' | 'wah' | 'drive' | 'filter' | 'crush' | 'eq' | 'ring' | 'vowel' | 'delay' | 'phaser' | 'chorus' | 'tremolo' | 'autopan' | 'leslie';
   /** bypassed for now */
   off?: boolean;
-  /** a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, ah, oh, oo, ee */
+  /** a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, acoustic, nylon, archtop, ah, oh, oo, ee */
   type?: string;
   bands?: [string, number, number?, number?][];
-  amp?: 'guitar' | 'bass';
+  amp?: 'guitar' | 'clean' | 'crunch' | 'lead' | 'bass';
   /** a wah that follows the notes ('note'); a chorus as a flanger ('flanger') or a string machine's ensemble ('ensemble') */
   mode?: 'note' | 'flanger' | 'ensemble';
   /** a tremolo that chops */

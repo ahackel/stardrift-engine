@@ -72,8 +72,24 @@ class TrackBus {
       return;
     }
     for (const v of vs) if (v.gate) v.release();
-    for (const m of midis) this.alloc().start(p, m, vel, null, short);
+    for (const m of midis) { const v = this.alloc(); v.str = -1; v.start(p, m, vel, null, short); }
   }
+  // A guitar's string s (0 = low E; 6 and up: other notes) plays m: on a guitar (p.ring) it ends only what that
+  // string played, the others ring on; else, as a chord does, every note before. first: the stroke's first string.
+  // short: palm-muted, 2: dead (Osc.start)
+  strike(m, s, vel, short, first) {
+    const p = this.p, vs = this.voices;
+    if (first) {
+      this.fx.noteOn(vel);
+      if (!p.ring) for (const v of vs) if (v.gate) v.release();
+    }
+    let v = p.ring ? vs.find((x) => x.str === s && x.stage !== IDLE) : null;
+    if (!v) v = this.alloc();
+    v.str = s;
+    v.start(p, m, vel, null, short);
+  }
+  // a downstroke damps the strings it doesn't play (keep: the ones it does)
+  damp(keep) { if (!this.isDrum) for (const v of this.voices) if (v.gate && !keep.includes(v.str)) v.release(); }
   alloc() {
     let best = null, score = Infinity;
     for (const v of this.voices) {
@@ -332,6 +348,8 @@ export class Synth {
   }
   stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
+  strike(id, m, s, vel, short, first) { this.tracks[id]?.strike(m, s, vel, short, first); }
+  damp(id, keep) { this.tracks[id]?.damp(keep); }
   release(id) { this.tracks[id]?.release(); }
   drum(id, hits, vel) {
     this.tracks[id]?.drum(hits, vel);

@@ -11,6 +11,7 @@ import { SFX_AT, SFX_PARAMS } from './engine/sfx.js';
 import { MAX_LAYERS, LAYER_MOVES } from './engine/inst.js';
 import { EFFECT_KINDS, FX_OPTIONS, MOVE_SHAPES, MOVE_PARAMS } from './engine/fx.js';
 import { KEYS, TYPES, MODES, STING_AT, FIELDS, FLOW_THEN, SWITCH } from './validate.js';
+import { SHAPES as SHAPES_GTR } from './engine/guitar.js';
 
 const num = (min, max, description) => ({ type: 'number', minimum: min, maximum: max, ...(description && { description }) });
 const id = (description) => ({ type: 'string', description });
@@ -33,7 +34,7 @@ function ranged(params) {
   return out;
 }
 
-const PATTERN = { type: 'string', description: 'steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, k s h o c t m drum hits, a+b together; suffixes \' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored' };
+const PATTERN = { type: 'string', description: 'steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, D U X down/up/dead strum and B A S1–S6 strings (guitars), k s h o c t m drum hits, a+b together; suffixes \' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored' };
 const CHORDS = { type: 'string', description: `roman numerals (i–vii, 1–7) with an optional (shape) and :beats, e.g. "i:4 VI:4 IV(sus2):2 .:2"; . is no chord. Shapes: ${Object.keys(SHAPES).join(' ')}` };
 const sound = ranged(SOUND_PARAMS);
 
@@ -71,6 +72,9 @@ export const songSchema = () => ({
       poly: { type: 'integer', minimum: 1, maximum: 16, description: 'notes at once (chords); 1: a new note ends the last' },
       arp: num(1, 60, 'runs chords as a chip arpeggio, notes per second'),
       arpChord: { type: 'boolean' },
+      guitar: { type: 'object', additionalProperties: false, description: 'chords as a guitar plays them (poly 6): each string rings on; patterns strum (D U X) and pick (B A S1–S6)',
+        properties: { shape: { enum: SHAPES_GTR, description: 'how it fingers chords: open (default), barre, power, high (the top three strings)' }, strum: num(0, 40, 'ms between the strings of a strum (10)') } },
+      legato: { type: 'boolean', description: 'a note into a held one is a hammer-on or slide: not picked or started again' },
       layers: { type: 'array', items: ref('layer'), minItems: 1, maxItems: MAX_LAYERS, description: 'the sources, played together as one note: each with its own envelope, pitch and moves' },
       kit: { oneOf: [{ enum: Object.keys(KITS) }, { type: 'object', description: 'per-pad overrides { k: { pitch, decay, level } }' }] },
       preset: { enum: Object.keys(KITS) },
@@ -104,6 +108,7 @@ export const songSchema = () => ({
       sections: weights('section'),
       fill: { type: 'boolean', description: 'a drum fill for the bar before a section change' },
       mutate: num(0, 2, 'how much it changes when it loops (default 1)'),
+      voicing: { enum: SHAPES_GTR, description: 'a guitar track: how this block fingers the chords (open, barre, power, high), in place of the instrument\'s' },
       track: id('older songs: the track it is on'),
       fx: obj('fx', {
         kind: { enum: Object.keys(FX_KINDS), description: 'filter (low pass, Hz), highpass (Hz), volume 0–1, echo and reverb (more send, 0–1), pan −1–1, gate (chop depth 0–1), crush 0–1' },

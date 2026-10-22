@@ -17,6 +17,8 @@ export const LAYER_PARAMS = [
   ['string.bright', 0, 1, 0.5, { when: is('string') }],
   ['string.mute', 0, 1, 0, { vary: [0, 0.6], when: is('string') }],
   ['string.position', 0, 0.5, 0, { off: 'string.position', vary: [0, 0.3], when: is('string') }], // 0: not set
+  ['string.pickup', 0, 0.5, 0, { off: 'string.pickup', vary: [0, 0.3], when: is('string') }], // 0: an acoustic's
+  ['string.pick', 0, 1, 0, { off: 'string.pick', vary: [0, 0.7], when: is('string') }],
   ['bow.pressure', 0, 1, 0.8, { vary: [0.6, 0.95], when: is('bowed') }], // far from 80 % / 40 % the string jumps an octave
   ['bow.position', 0, 1, 0.4, { vary: [0.25, 0.55], when: is('bowed') }],
   ['fm.ratio', 0.5, 16, 1, { step: 0.5, vary: [0.5, 4], when: is('fm') }],
@@ -50,6 +52,7 @@ export const SOUND_PARAMS = [
   ['glide', 0, 0.5, 0, { off: 'glide', vary: [0, 0.12], when: (s) => melodic(s) && (s.poly || 1) <= 1 && !s.arp }],
   ['scoop', 0, 2, 0, { off: 'scoop', vary: [0, 0.8], when: melodic }],
   ['arp', 1, 60, 24, { step: 1, vary: [10, 40], when: (s) => !!s.arp }],
+  ['guitar.strum', 0, 40, 10, { step: 1, vary: [4, 20], when: (s) => !!s.guitar }], // ms between strings: a guitar's strum
   // the effects (the filter, drive, EQ …) are a list of their own: fx.js EFFECT_KINDS
   ['gain', 0, 2, 1, { vary: [0.7, 1.3] }],
 ];

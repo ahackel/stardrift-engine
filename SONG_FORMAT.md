@@ -109,7 +109,7 @@ A layer's source, `type`:
 | `triangle` | NES triangle (`smooth`: a clean one) |
 | `wave` | wavetable: `wave` `soft sine saw warm organ hollow`, or 32 values 0–15 (`smooth`: no 4-bit staircase); or a tonewheel organ: `drawbars` `'888000000'`, the nine drawbars 16′ 5⅓′ 8′ 4′ 2⅔′ 2′ 1⅗′ 1⅓′ 1′, each 0–8 (a step is 3 dB) |
 | `fm` | two-operator FM: bells, e-pianos, basses |
-| `string` | plucked: guitars, harps; `mute` palm-mutes short notes; `position` where it is plucked |
+| `string` | plucked: guitars, harps; `mute` palm-mutes short notes; `position` where it is plucked, `pickup` where an electric's pickup sits, `pick` the pick's click |
 | `bowed` | a bowed string |
 | `sample` | a recording: `sample` `cello trombone flute violins violins_pizz bass_pizz glockenspiel xylophone` |
 | `noise` | chip noise, pitched by the note: hats, wind, explosions |
@@ -125,7 +125,7 @@ A layer's settings, with their range and (default):
 | `noise` | 0–1: chip noise mixed into the tone (0) |
 | `duty`, `pwm` | 0.05–0.5 (0.5); `{ depth 0–0.4, rate 0.05–8 (0.3) }` |
 | `fm` | `ratio` 0.5–16 (1; 11–16: an electric piano's tine), `index` 0–10 (2), `env` 0–1 (1), `feedback` 0–1.5 (0) |
-| `string` | `decay` 0.1–10 (3), `bright` 0–1 (0.5), `mute` 0–1 (0), `position` 0–0.5 of the string from the bridge (not set): near it thin and twangy (a banjo), at the middle round and hollow |
+| `string` | `decay` 0.1–10 (3), `bright` 0–1 (0.5), `mute` 0–1 (0), `position` 0–0.5 of the string from the bridge (not set): near it thin and twangy (a banjo), at the middle round and hollow; `pickup` 0–0.5 (not set: an acoustic): an electric's pickup, the bridge's about 0.08, the neck's 0.25; `pick` 0–1 (0): the click of a pick, 0 the fingers, 1 a hard plectrum |
 | `bow` | `pressure` 0–1 (0.8), `position` 0–1 (0.4) |
 | `off` | muted for now |
 | `moves` | a layer's `pitch` (in semitones), `level`, `duty` and `noise` can move, as an effect's settings do (Moves, below): each note starts them again |
@@ -135,6 +135,8 @@ The instrument's own, which move every layer:
 | Key | Settings |
 |---|---|
 | `poly`, `arp`, `arpChord` | notes at once, for chords (1: a new note ends the last); chords as a chip arpeggio, notes per second 1–60; single notes arpeggiate the chord too |
+| `guitar` | `{ shape, strum }`: chords as a guitar plays them (with `poly` 6): each string rings on until it plays again, a downstroke damps the strings it leaves out, a rest every one. `shape` how it fingers the chords: `open` (default: C x32010, G 320003), `barre` (F 133211), `power` (root, fifth, octave) or `high` (the top three strings); `strum` 0–40 ms between the strings (10). See Guitars, below |
+| `legato` | a note a step or two from one still held is a hammer-on or a pull-off: on a string it is not picked again |
 | `unison`, `detune`, `ensemble` | stacked voices 1–4; cents 0–50; each voice a player who drifts 0–1 |
 | `breath` | air in the note 0–1 |
 | `glide`, `scoop` | 0–0.5 s; 0–2 |
@@ -151,9 +153,9 @@ Instruments from before layers (`type`, `wave`, `env` … on the instrument itse
 
 | `kind` | Settings (default) |
 |---|---|
-| `body` | fixed resonances: `type` `violin cello strings horn brass`, vowels `ah oh oo ee`, or `bands`: a list of `[kind, Hz, Q, dB]` |
+| `body` | fixed resonances: `type` `violin cello strings horn brass`, guitars `acoustic nylon archtop`, vowels `ah oh oo ee`, or `bands`: a list of `[kind, Hz, Q, dB]` |
 | `wah` | `depth` 0.05–1 (0.7), `resonance` 1–10 (4); `beats` 0.25–8 (1) / `rate` 0.1–20 Hz (2); `mode: "note"`: it opens with each note |
-| `drive` | `amount` 0–2 (0.6): crunch at 1, high gain at 2; `amp` `guitar` or `bass`: through an amp and a cabinet |
+| `drive` | `amount` 0–2 (0.6): crunch at 1, high gain at 2; `amp`: through an amp and a cabinet, `clean` (a Fender's), `crunch`, `guitar` (rock), `lead` (high gain that sings) or `bass` |
 | `filter` | `type` `low` (default), `high` or `band`; `cutoff` 40–16000 Hz (2000), `resonance` 0.3–6 (0.707); `env` 0–5 octaves it opens on each note, closing over `decay` 0.02–2 s (0.2); `swell` 0–3: it follows the note's loudness; `bite` 0–1: so does the resonance (brass) |
 | `crush` | `bits` 2–12 (6), `rate` 1000–48000 Hz (11025) |
 | `eq` | `low`, `mid`, `high` −12–12 dB (0), `midHz` 200–5000 (1000) |
@@ -176,7 +178,7 @@ Songs from before effects were a list (`cutoff`, `drive`, `eq` … on the instru
 
 ## Blocks
 
-`{ id, beats, pattern }`, or `{ id, beats, from }` to play another block's notes. Also `mode`, `fit`, `forms`, `sections`, `fill`, `mutate`.
+`{ id, beats, pattern }`, or `{ id, beats, from }` to play another block's notes. Also `mode`, `fit`, `forms`, `sections`, `fill`, `mutate`, `voicing`.
 
 **Pattern**: one token per step, separated by spaces.
 
@@ -187,6 +189,8 @@ Songs from before effects were a list (`cutoff`, `drive`, `eq` … on the instru
 | `0` `1` `-1` `7` | a note: see `mode` |
 | `*` | the whole chord (needs `poly` > 1, or `arp`) |
 | `0+2+4` | notes together |
+| `D` `U` `X` | guitar strokes of the chord playing, as a guitar fingers it: a downstroke (every string, low to high), an upstroke (the top four, high to low), a dead strum (muted, a chuck) |
+| `B` `A` `S1`–`S6` | guitar strings of the chord: the bass (the root), the alternate bass (the string above it), the highest string played (`S2` the next …): picking patterns |
 | `k s h o c t m` | drum hits: kick, snare, hat, open hat, crash, tom, tick. Only on drum tracks, and drum tracks play only these |
 | `'` `,` after a note | an octave up, down (`0'`, `2,,`) |
 | `#` `b` after a note | a semitone up, down |
@@ -198,6 +202,8 @@ Songs from before effects were a list (`cutoff`, `drive`, `eq` … on the instru
 **`mode`**: `chord` (default): `0` the root, `1` the third, `2` the fifth, `3` the root an octave up. `scale`: steps of the scale above the chord root. `key`: degrees of the key (`0` the tonic … `7` the tonic an octave up), for melodies; with `"fit": true`, notes on the beat move to the nearest chord tone.
 
 **Themes**: one melody (a block in `key` mode with `fit`) that other blocks quote with `from` gives the endless music a tune you remember. The block named by `from` must have a pattern of its own. `forms`, one picked each time the block starts: `whole` (as written), `head` (first half, then space), `sequence` (first half, then again a step or two up or down), `slow` (first half at half speed), `shift` (all of it a step or two up or down), `answer` (space, then the first half).
+
+**Guitars**: an instrument with `guitar` plays the strokes `D U X` and the strings `B A S1`–`S6` on the chord as a guitarist fingers it, the strings of a strum `guitar.strum` ms apart, each ringing on until it plays again. A strum: `D - - - D - U - - - U - D - U -`; Travis picking: `B - S2 - A - S1 - B - S2 - A - S1 -`; a reggae skank (`voicing` `high`): `. . D . . . D . . . D . . . D .`. `voicing` on a block (`open barre power high`) fingers its chords its own way. A guitar sounds at its own pitch on `octave` 3 (the low E is E2), an octave up on 4. Other instruments play the same notes, all at once.
 
 `"fill": true`: a drum fill for the bar before a section change (list it in the drum track's clips). `mutate` 0–2 (1): how much it changes when it loops; 0 never.
 
@@ -281,7 +287,7 @@ A song can also be laid out like a sequencer's arrangement: each section holds b
 
 ## Writing a good song
 
-- Give the song its own sounds; the example's are one palette of many. Bells: `fm` (`ratio` 3–7, short `env`); e-pianos: a gentle `fm` `ratio` 1 and a short layer with `ratio` 11–16 for the tine; marimbas and vibraphones: sines at 1, 4 (and 10) times the note; strings: `wave` `saw`, `smooth`, `unison` 3, `ensemble`, a `body` `strings`; brass: a `body` `brass` and a `filter` with an `env`, `swell` and `bite`; string machines: a `chorus` `ensemble`; plucks and guitars: `string` (rock: a `drive` with `amp` `guitar`); choirs: `wave` `saw` with a `body` `ah` or `oo`; organs: `wave` with `drawbars`, a short `noise` layer for the key click, a `leslie`; real instruments: `sample`.
+- Give the song its own sounds; the example's are one palette of many. Bells: `fm` (`ratio` 3–7, short `env`); e-pianos: a gentle `fm` `ratio` 1 and a short layer with `ratio` 11–16 for the tine; marimbas and vibraphones: sines at 1, 4 (and 10) times the note; strings: `wave` `saw`, `smooth`, `unison` 3, `ensemble`, a `body` `strings`; brass: a `body` `brass` and a `filter` with an `env`, `swell` and `bite`; string machines: a `chorus` `ensemble`; plucks and guitars: `string` (an acoustic: a `body` `acoustic`, `pick`; an electric: a `pickup`, a `drive` with an `amp`), rhythm guitars with `guitar` and strokes in their blocks, leads with `legato`; choirs: `wave` `saw` with a `body` `ah` or `oo`; organs: `wave` with `drawbars`, a short `noise` layer for the key click, a `leslie`; real instruments: `sample`.
 - Give each track 2–4 blocks and each section its own mix (`section.tracks`, `block.sections`): the variety comes from the choices.
 - Keep bass and chords simple and repetitive; put the tune in one theme block and quote it with `from` and `forms`.
 - Calm sections thin out (fewer tracks, soft drums), action sections fill up; `next` links lead from calm to action and back.

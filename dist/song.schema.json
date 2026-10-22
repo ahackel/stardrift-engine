@@ -195,6 +195,32 @@
         "arpChord": {
           "type": "boolean"
         },
+        "guitar": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "chords as a guitar plays them (poly 6): each string rings on; patterns strum (D U X) and pick (B A S1–S6)",
+          "properties": {
+            "shape": {
+              "enum": [
+                "open",
+                "barre",
+                "power",
+                "high"
+              ],
+              "description": "how it fingers chords: open (default), barre, power, high (the top three strings)"
+            },
+            "strum": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 40,
+              "description": "ms between the strings of a strum (10)"
+            }
+          }
+        },
+        "legato": {
+          "type": "boolean",
+          "description": "a note into a held one is a hammer-on or slide: not picked or started again"
+        },
         "kit": {
           "oneOf": [
             {
@@ -467,7 +493,7 @@
         },
         "pattern": {
           "type": "string",
-          "description": "steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, k s h o c t m drum hits, a+b together; suffixes ' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored"
+          "description": "steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, D U X down/up/dead strum and B A S1–S6 strings (guitars), k s h o c t m drum hits, a+b together; suffixes ' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored"
         },
         "mode": {
           "enum": [
@@ -571,6 +597,15 @@
             },
             "at": {}
           }
+        },
+        "voicing": {
+          "enum": [
+            "open",
+            "barre",
+            "power",
+            "high"
+          ],
+          "description": "a guitar track: how this block fingers the chords (open, barre, power, high), in place of the instrument's"
         }
       }
     },
@@ -1007,6 +1042,16 @@
               "type": "number",
               "minimum": 0,
               "maximum": 0.5
+            },
+            "pickup": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            },
+            "pick": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             }
           }
         },
@@ -1144,7 +1189,7 @@
           "description": "bypassed for now"
         },
         "type": {
-          "description": "a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, ah, oh, oo, ee"
+          "description": "a filter's: low, high, band; a body's: violin, cello, acoustic, nylon, archtop, strings, horn, brass, ah, oh, oo, ee"
         },
         "bands": {
           "type": "array",
@@ -1184,6 +1229,9 @@
         "amp": {
           "enum": [
             "guitar",
+            "clean",
+            "crunch",
+            "lead",
             "bass"
           ]
         },
@@ -1347,7 +1395,7 @@
         },
         "pattern": {
           "type": "string",
-          "description": "steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, k s h o c t m drum hits, a+b together; suffixes ' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored"
+          "description": "steps, space separated: . rest, - hold, 0 1 2 note, * whole chord, D U X down/up/dead strum and B A S1–S6 strings (guitars), k s h o c t m drum hits, a+b together; suffixes ' , octave, # b semitone, ! accent, ?30 chance; T*n repeats; | is ignored"
         },
         "block": {
           "type": "string",

@@ -132,6 +132,12 @@ const AMPS = {
   // tight lows and a mid push into the clipper (a Tube Screamer in front of the amp), then a 4×12 cabinet:
   // lows gone below 75 Hz with a bump at 110, a dip where fizz lives, a steep roll-off from about 4 kHz
   guitar: { bias: 0.25, gain: 0.71, pre: [['hp', 110], ['peak', 850, 0.8, 8]], post: [['hp', 75], ['peak', 110, 1, 3], ['peak', 2600, 1.5, -3], ['lp', 4200], ['lp', 5000, 1.2]] },
+  // a clean amp (a Fender's): hardly any clipping, scooped mids, an open, bright 2×12 that goes up to 7 kHz
+  clean: { bias: 0.05, gain: 1.02, pre: [['hp', 70]], post: [['peak', 110, 1, 2], ['peak', 450, 0.7, -4], ['peak', 2500, 1, 3], ['lp', 7000, 0.8]] },
+  // crunch (a cranked Vox or Marshall without a boost): a little mid push into it, an open-back cabinet
+  crunch: { bias: 0.2, gain: 0.71, pre: [['hp', 90], ['peak', 700, 0.7, 5]], post: [['hp', 70], ['peak', 120, 1, 2], ['peak', 1500, 0.8, 2], ['lp', 5000], ['lp', 6000, 1.1]] },
+  // a lead amp: a big mid boost into high gain, tight lows, a 4×12 with a scooped low mid and a presence peak
+  lead: { bias: 0.3, gain: 0.57, pre: [['hp', 140], ['peak', 900, 0.7, 10]], post: [['hp', 80], ['peak', 100, 1.2, 4], ['peak', 700, 0.8, -2], ['peak', 2200, 1.5, 3], ['lp', 4500], ['lp', 5200, 1.2]] },
   // a bass amp keeps the lows and rounds off the top
   bass: { bias: 0.1, gain: 0.83, pre: [['hp', 35], ['peak', 700, 0.7, 3]], post: [['lp', 2800], ['lp', 3600, 0.9]] },
 };
@@ -155,6 +161,13 @@ const BODIES = {
     ['peak', 2130, 47, 9], ['peak', 2231, 45, -6.4], ['peak', 2274, 45, 8.5], ['peak', 2389, 35, -6.3], ['peak', 2540, 41, 6.1], ['peak', 2629, 45, -6], ['peak', 2758, 38, 5.4], ['peak', 2840, 50, -9],
     ['peak', 3001, 47, 8.6], ['peak', 3089, 43, -5.1], ['peak', 3262, 41, 8], ['peak', 3463, 40, -5.3],
     ['lp', 4500, 0.7]],
+  // a steel-string acoustic (a dreadnought): the air in it near 100 Hz, the top near 200 Hz, less box around 450 Hz,
+  // the shimmer of the strings around 3 kHz
+  acoustic: [['hp', 70], ['peak', 100, 2, 6], ['peak', 200, 2, 5], ['peak', 450, 1.5, -3], ['peak', 2800, 1, 3], ['lp', 9000, 0.7]],
+  // a nylon-string (classical) guitar: the same box, warmer and softer on top
+  nylon: [['hp', 70], ['peak', 95, 2, 6], ['peak', 190, 2, 4], ['peak', 500, 1.2, -2], ['peak', 1500, 1, 1], ['lp', 5000, 0.7]],
+  // a jazz archtop: hollow and woody in the mids, dark above 3 kHz
+  archtop: [['hp', 90], ['peak', 150, 1.5, 3], ['peak', 600, 1.2, 4], ['peak', 3000, 1, -4], ['lp', 3500, 0.7]],
   // a string section: violins to basses together, their peaks smeared
   strings: [['peak', 300, 1.2, 4], ['peak', 1200, 1, -3], ['peak', 2600, 1, 4], ['lp', 6000, 0.7]],
   // a french horn: the bell faces away from you, full around 180 Hz, warm around 400 Hz, dark above 2 kHz
@@ -995,6 +1008,8 @@ const $engine_pattern = (() => {
 //   *        the whole current chord (instruments with poly) or a fast chip arpeggio (instruments with `arp`)
 //   0+4+8    several notes at once
 //   k s h    drum hits: k kick, s snare, h hat, o open hat, c crash/wash, t tom, m metal tick
+//   D U X    guitar: a downstroke, an upstroke, a dead strum of the chord as a guitar fingers it (guitar.js)
+//   B A S1   guitar: the bass string (the root), the alternate bass, the highest string played (S2 the next …)
 // Suffixes: ' octave up, , octave down, # / b semitone up/down
 // Flags:    ! accent, ? 50% chance, ?30 30% chance
 // Repeat:   T*n repeats token T n times ("-*15"), `|` is ignored (visual bar separator)
@@ -1022,7 +1037,7 @@ function fitLength(tokens, length) {
 }
 
 function parseAtom(a) {
-  const m = /^(\*|-?\d+|[a-z])([',#b]*)$/.exec(a);
+  const m = /^(\*|-?\d+|[a-z]|[DUXBA]|S[1-6])([',#b]*)$/.exec(a);
   if (!m) return null;
   let oct = 0, semi = 0;
   for (const c of m[2]) {
@@ -1033,6 +1048,7 @@ function parseAtom(a) {
   }
   if (m[1] === '*') return { kind: 'chord', value: 0, oct, semi };
   if (/^-?\d+$/.test(m[1])) return { kind: 'num', value: +m[1], oct, semi };
+  if (/^[A-Z]/.test(m[1])) return { kind: 'gtr', value: m[1], oct, semi };
   return { kind: 'hit', value: m[1], oct, semi };
 }
 
@@ -1998,6 +2014,9 @@ function compileLayer(l, def, sr, samples) {
     // where it is plucked, 0..0.5 of the string from the bridge (0: not set): near it thin and twangy (a banjo), at
     // the middle round and hollow (no even harmonics)
     sPos: clamp(+l.string?.position || 0, 0, 0.5),
+    // where an electric's pickup sits, the same way (0: none): at the bridge thin and biting, at the neck warm and round
+    sPickup: clamp(+l.string?.pickup || 0, 0, 0.5),
+    sPick: clamp01(+l.string?.pick || 0), // the pick's click on the string: 0 a thumb, 1 a hard plectrum
     // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
     bowSlope: 5 - 4 * clamp01(l.bow?.pressure ?? 0.8), bowBeta: 0.04 + 0.2 * clamp01(l.bow?.position ?? 0.4),
     // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
@@ -2026,6 +2045,8 @@ function compileInst(def = {}, sr, samples = {}) {
     ensemble: def.unison > 1 || def.ensemble ? clamp01(def.ensemble || 0) : 0,
     // scoop: a note starts this many semitones flat and slides up within about 70 ms (brass, voices)
     scoop: clamp(def.scoop || 0, 0, 2), scoopCoef: def.scoop ? t60(0.07, sr) : 0,
+    legato: !!def.legato, // a note into a held one is a hammer-on or a slide: the string is not picked again
+    ring: !!def.guitar, // a guitar: each string rings until it plays again or is damped (TrackBus.strike)
   };
 }
 
@@ -2082,20 +2103,26 @@ class Osc {
     this.ph = new Float64Array(4);
     for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
     this.lvl = 0; // wavetable level for the current pitch
+    this.pk = 0; this.pkN = 1; this.pkZ = 0; // string: the pick's click, samples left of it
     this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string: loop buffer, write index
     this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
     this.bows = []; // bowed: a string per player
     this.m = NaN; this.f = 440; // the pitch the frequency (and what follows from it) was last worked out for
     this.nz = 0; this.nzPh = 0; // chip noise: the value it holds, and how far to the next
   }
-  start(L, midi, vel, short, legato, seed) {
+  // short: a palm-muted note (true), or 2: a dead one (the strings damped by the fretting hand). hammer: the string
+  // sounds on and only changes its pitch
+  start(L, midi, vel, short, legato, seed, hammer = false) {
     this.L = L; this.vel = vel; this.seed = seed;
     this.age = 0; this.ctl = 0; this.m = NaN;
     this.wait = legato ? 0 : L.delay; this.late = false;
     this.stage = ATT;
     this.control();
     const m = midi + this.dp;
-    if (L.type === 'string') this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short ? L.sMute : 0); // every note is picked; glide still slides into it
+    if (L.type === 'string' && !(hammer && this.kb)) { // every note is picked (but a hammer-on); glide still slides into it
+      this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short === 2 ? 1 : short ? L.sMute : 0);
+      this.pk = this.pkN = L.sPick > 0 ? Math.round(0.004 * L.sr) : 0; this.pkZ = 0;
+    }
     if (L.type === 'bowed') while (this.bows.length < L.U) this.bows.push(new BowedString());
     if (L.type === 'sample' && !legato) {
       this.zone = null; this.spos = 0;
@@ -2126,11 +2153,13 @@ class Osc {
     for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
     mean /= n;
     for (let i = 1; i <= n; i++) kb[(this.kw - i) & mask] -= mean; // no DC in the loop
-    if (L.sPos > 0) {
+    for (const at of [L.sPos, L.sPickup]) {
+      if (!(at > 0)) continue;
       // the pick position: a comb (the burst less itself a fraction of the period later) takes out the harmonics
       // that have a node where the string is plucked; then back to the burst's loudness
-      // over one period of the loop as it will play (its filter adds half a sample)
-      const P = Math.max(2, Math.min(n, Math.round(L.sr / f - 0.5 * (1 - L.sBright)))), d = Math.max(1, Math.round(L.sPos * P));
+      // over one period of the loop as it will play (its filter adds half a sample). A pickup hears the string the
+      // same way (a node there is silent to it), and the loop is linear: so its comb goes into the burst too
+      const P = Math.max(2, Math.min(n, Math.round(L.sr / f - 0.5 * (1 - L.sBright)))), d = Math.max(1, Math.round(at * P));
       const tmp = (this.kTmp ||= new Float32Array(STRING_BUF));
       let e0 = 0, e1 = 0;
       for (let i = 0; i < P; i++) { tmp[i] = kb[(this.kw - 1 - i) & mask]; e0 += tmp[i] * tmp[i]; }
@@ -2196,7 +2225,13 @@ class Osc {
     }
     if (L.type === 'string') {
       if (!this.kb) this.pluck(L, f); // the layer became a string while this voice was sounding
-      return this.string(L, f) * lv * this.vel * 3.5 * this.lv;
+      let y = this.string(L, f);
+      if (this.pk > 0) { // the pick's click: 4 ms of noise, its lows taken out, dying fast
+        const e = this.pk-- / this.pkN, r = this.rand();
+        y += L.sPick * 0.5 * e * e * (r - this.pkZ);
+        this.pkZ = r;
+      }
+      return y * lv * this.vel * 3.5 * this.lv;
     }
     if (L.type === 'noise') return this.chip(f) * g;
     if (L.type === 'fm') {
@@ -2261,6 +2296,7 @@ class Osc {
 class Voice {
   constructor() {
     this.stage = IDLE; this.level = 0; this.gate = false;
+    this.str = -1; // the guitar string it sounds (TrackBus.strike), -1: none
     this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
     this.arp = null; this.arpIdx = 0; this.arpT = 0;
     this.osc = Array.from({ length: MAX_LAYERS }, () => new Osc());
@@ -2274,13 +2310,15 @@ class Voice {
   }
   start(p, midi, vel, arp, short = false) {
     const legato = this.stage !== IDLE && p.glideCoef > 0;
+    // into a note still held, a step or two away: a hammer-on or a pull-off (further, it is picked and glide slides there)
+    const hammer = p.legato && this.gate && this.stage !== IDLE && Math.abs(midi - this.target) <= 2;
     this.target = midi;
-    if (!legato) this.cur = midi - p.scoop;
+    if (!legato && !hammer) this.cur = midi - p.scoop;
     this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
     this.arp = arp; this.arpIdx = 0; this.arpT = 0; this.m = NaN;
     const ls = p.layers;
     this.n = ls.length;
-    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, legato && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1);
+    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, (legato || hammer) && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1, hammer && this.osc[i].stage !== IDLE);
     for (let i = ls.length; i < MAX_LAYERS; i++) this.osc[i].stage = IDLE;
   }
   release() {
@@ -2562,8 +2600,24 @@ class TrackBus {
       return;
     }
     for (const v of vs) if (v.gate) v.release();
-    for (const m of midis) this.alloc().start(p, m, vel, null, short);
+    for (const m of midis) { const v = this.alloc(); v.str = -1; v.start(p, m, vel, null, short); }
   }
+  // A guitar's string s (0 = low E; 6 and up: other notes) plays m: on a guitar (p.ring) it ends only what that
+  // string played, the others ring on; else, as a chord does, every note before. first: the stroke's first string.
+  // short: palm-muted, 2: dead (Osc.start)
+  strike(m, s, vel, short, first) {
+    const p = this.p, vs = this.voices;
+    if (first) {
+      this.fx.noteOn(vel);
+      if (!p.ring) for (const v of vs) if (v.gate) v.release();
+    }
+    let v = p.ring ? vs.find((x) => x.str === s && x.stage !== IDLE) : null;
+    if (!v) v = this.alloc();
+    v.str = s;
+    v.start(p, m, vel, null, short);
+  }
+  // a downstroke damps the strings it doesn't play (keep: the ones it does)
+  damp(keep) { if (!this.isDrum) for (const v of this.voices) if (v.gate && !keep.includes(v.str)) v.release(); }
   alloc() {
     let best = null, score = Infinity;
     for (const v of this.voices) {
@@ -2822,6 +2876,8 @@ class Synth {
   }
   stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
+  strike(id, m, s, vel, short, first) { this.tracks[id]?.strike(m, s, vel, short, first); }
+  damp(id, keep) { this.tracks[id]?.damp(keep); }
   release(id) { this.tracks[id]?.release(); }
   drum(id, hits, vel) {
     this.tracks[id]?.drum(hits, vel);
@@ -2972,6 +3028,8 @@ const LAYER_PARAMS = [
   ['string.bright', 0, 1, 0.5, { when: is('string') }],
   ['string.mute', 0, 1, 0, { vary: [0, 0.6], when: is('string') }],
   ['string.position', 0, 0.5, 0, { off: 'string.position', vary: [0, 0.3], when: is('string') }], // 0: not set
+  ['string.pickup', 0, 0.5, 0, { off: 'string.pickup', vary: [0, 0.3], when: is('string') }], // 0: an acoustic's
+  ['string.pick', 0, 1, 0, { off: 'string.pick', vary: [0, 0.7], when: is('string') }],
   ['bow.pressure', 0, 1, 0.8, { vary: [0.6, 0.95], when: is('bowed') }], // far from 80 % / 40 % the string jumps an octave
   ['bow.position', 0, 1, 0.4, { vary: [0.25, 0.55], when: is('bowed') }],
   ['fm.ratio', 0.5, 16, 1, { step: 0.5, vary: [0.5, 4], when: is('fm') }],
@@ -3005,6 +3063,7 @@ const SOUND_PARAMS = [
   ['glide', 0, 0.5, 0, { off: 'glide', vary: [0, 0.12], when: (s) => melodic(s) && (s.poly || 1) <= 1 && !s.arp }],
   ['scoop', 0, 2, 0, { off: 'scoop', vary: [0, 0.8], when: melodic }],
   ['arp', 1, 60, 24, { step: 1, vary: [10, 40], when: (s) => !!s.arp }],
+  ['guitar.strum', 0, 40, 10, { step: 1, vary: [4, 20], when: (s) => !!s.guitar }], // ms between strings: a guitar's strum
   // the effects (the filter, drive, EQ …) are a list of their own: fx.js EFFECT_KINDS
   ['gain', 0, 2, 1, { vary: [0.7, 1.3] }],
 ];
@@ -3074,6 +3133,147 @@ const SOUND = byPath(SOUND_PARAMS), LAYER = byPath(LAYER_PARAMS), TRACK = byPath
 return { LAYER, LAYER_PARAMS, LEAD_INS, MODE_ALIAS, MODE_FAMILIES, PAD_LABELS, PAD_NAMES, PAD_PARAMS, SONG, SONG_PARAMS, SOUND, SOUND_PARAMS, SWAP_TYPES, TRACK, TRACK_PARAMS, autoFade, fromUnit, getAt, layerAt, putParam, setAt, soundAt, toUnit, unsetAt };
 })();
 
+const $engine_guitar = (() => {
+
+// Guitar chords: a chord laid out on six strings in standard tuning, the way a player fingers it, so strums and
+// picking patterns (the pattern's D U X B A S1–S4) play real voicings instead of a keyboard's close chord.
+// A voicing is six notes (midi or null for a string not played), low E first, at the guitar's own pitch (E2–E4 open).
+//   open   first position, open strings where they fit (C x32010, G 320003, D xx0232, Am x02210); a barre where none does
+//   barre  movable barre chords with the root on the low E or A string (F 133211, Bm x24432)
+//   power  root, fifth and octave on the low strings (E5 022xxx, A5 x022xx): rock rhythm
+//   high   the top three strings, around the 5th fret: funk chops, reggae skanks, a second guitar
+// Shared by the engine and the editor (its chord names and the rows a grid hears).
+
+const TUNING = [40, 45, 50, 55, 59, 64]; // E2 A2 D3 G3 B3 E4: string 6 to string 1
+const SHAPES = ['open', 'barre', 'power', 'high'];
+const STR = 6;
+
+// every way to finger the chord on strings from..5 with each fret in [lo, hi] (0 always allowed when open), the
+// lowest string on the root; scored, the best returned
+function search(root, pcs, { lo, hi, open, from = [0, 1, 2], top = 5, posAt = 0 }) {
+  let best = null, bestScore = -Infinity;
+  const cur = new Array(STR).fill(null);
+  const fretsFor = (s) => {
+    const out = [];
+    if (open && pcs.includes(TUNING[s] % 12)) out.push(0);
+    for (let f = Math.max(1, lo); f <= hi; f++) if (pcs.includes((TUNING[s] + f) % 12)) out.push(f);
+    return out;
+  };
+  const score = (bs, last) => {
+    const frets = cur.slice(bs, last + 1), fretted = frets.filter((f) => f > 0);
+    const min = fretted.length ? Math.min(...fretted) : 0, max = fretted.length ? Math.max(...fretted) : 0;
+    if (max - min > 3) return -Infinity;
+    // fingers: a barre (two or more strings at the lowest fret) is one, every other fretted note one more
+    const atMin = fretted.filter((f) => f === min).length, fingers = (atMin > 1 ? 1 : atMin) + fretted.length - atMin;
+    if (fingers > 4) return -Infinity;
+    // a barre stops every string under it: no open string between its first and last
+    if (atMin > 1) { const a = frets.indexOf(min), b = frets.lastIndexOf(min); if (frets.slice(a, b).some((f) => f === 0)) return -Infinity; }
+    const notes = frets.map((f, i) => (TUNING[bs + i] + f) % 12), has = (pc) => notes.includes(pc);
+    let sc = frets.length * 0.6;
+    pcs.forEach((pc, i) => { if (!has(pc)) sc -= i === 2 && pcs.length > 3 ? 2 : 6; }); // a seventh chord may drop its fifth
+    if (open) {
+      const opens = frets.filter((f) => f === 0).length;
+      if (!opens) return -Infinity; // that is a barre chord, played better as one
+      sc += 0.6 * opens - 0.25 * min;
+      // an open string beside a note high up the neck: a shape no one plays
+      for (let i = 1; i < frets.length; i++) if ((frets[i] === 0 && frets[i - 1] >= 4) || (frets[i - 1] === 0 && frets[i] >= 4)) sc -= 1;
+    } else sc -= 0.3 * Math.abs(min - posAt);
+    if (max - min === 3) sc -= 2; // a stretch
+    sc -= 0.4 * (top - last); // the top strings left out
+    return sc;
+  };
+  const take = (bs, last) => {
+    const sc = score(bs, last);
+    if (sc > bestScore) { bestScore = sc; best = cur.slice(); }
+  };
+  // the strings from bs up, each a chord tone; it may stop early (the top strings not played) after three
+  const walk = (s, bs) => {
+    if (s > top) return take(bs, top);
+    if (s - bs >= 3) take(bs, s - 1);
+    for (const f of fretsFor(s)) { cur[s] = f; walk(s + 1, bs); }
+    cur[s] = null;
+  };
+  for (const bs of from) {
+    for (const f of fretsFor(bs)) {
+      if ((TUNING[bs] + f) % 12 !== root) continue;
+      if (!open && lo > 0 && f !== lo) continue; // a barre chord: the root under the barre
+      cur.fill(null); cur[bs] = f;
+      walk(bs + 1, bs);
+    }
+  }
+  return best && { frets: best, score: bestScore };
+}
+
+const cache = new Map();
+// the frets of a chord (root: pitch class; pcs: its pitch classes, root first) in a shape: six frets, null = not played
+function chordFrets(root, pcs, shape = 'open') {
+  const key = `${shape}:${root}:${pcs.join(',')}`;
+  let v = cache.get(key);
+  if (v) return v;
+  pcs = [...new Set(pcs.map((p) => ((p % 12) + 12) % 12))];
+  root = ((root % 12) + 12) % 12;
+  if (shape === 'power') {
+    // on the low E string up to the 7th fret, else on the A string
+    const f6 = (root - TUNING[0] % 12 + 12) % 12, s = f6 <= 7 ? 0 : 1, f = s ? (root - TUNING[1] % 12 + 12) % 12 : f6;
+    v = new Array(STR).fill(null);
+    v[s] = f; v[s + 1] = f + 2; v[s + 2] = f + 2;
+  } else if (shape === 'high') {
+    let best = null;
+    // any inversion on strings 3–1: every note a chord tone, as many of the chord's notes as fit, near the 5th fret
+    for (let b = 2; b <= 10; b++) for (let f3 = b; f3 <= b + 3; f3++) for (let f2 = b; f2 <= b + 3; f2++) for (let f1 = b; f1 <= b + 3; f1++) {
+      const fr = [f3, f2, f1], ns = fr.map((f, i) => (TUNING[3 + i] + f) % 12);
+      if (!ns.every((n) => pcs.includes(n)) || Math.max(...fr) - Math.min(...fr) > 2) continue;
+      const sc = new Set(ns).size * 3 - 0.3 * Math.abs(Math.min(...fr) - 5) - 0.2 * (Math.max(...fr) - Math.min(...fr)) + (ns.includes(pcs[0]) ? 0.5 : 0);
+      if (!best || sc > best.sc) best = { sc, fr };
+    }
+    v = [null, null, null, ...(best ? best.fr : [5, 5, 5])];
+  } else {
+    const opn = shape === 'open' ? search(root, pcs, { lo: 0, hi: 4, open: true }) : null;
+    let bar = null;
+    for (let b = 1; b <= 11; b++) {
+      const r = search(root, pcs, { lo: b, hi: b + 3, open: false, from: [0, 1], posAt: 2 });
+      if (r && (!bar || r.score > bar.score)) bar = r;
+    }
+    v = (opn && (!bar || opn.score >= bar.score - 0.75) ? opn : bar || opn)?.frets || [null, 3, 2, 0, 1, 0];
+  }
+  cache.set(key, v);
+  return v;
+}
+
+// the voicing's notes, string 6 first (null: not played), at the guitar's pitch moved by `shift` semitones
+function chordNotes(root, pcs, shape, shift = 0) {
+  return chordFrets(root, pcs, shape).map((f, s) => (f === null ? null : TUNING[s] + f + shift));
+}
+
+// the frets as a guitarist writes them: x32010
+const fretText = (frets) => frets.map((f) => (f === null ? 'x' : f > 9 ? `(${f})` : String(f))).join('');
+
+// What a guitar atom plays from a voicing (notes: six, null = not played): [{ m, s, order }] with s the string
+// (0 = low E) and order its place in the strum.
+//   D  a downstroke: every string played, low to high     U  an upstroke: the top four, high to low
+//   X  a dead strum: every string, muted (a chuck)         B  the bass: the lowest string, the root
+//   A  the alternate bass: the string above it             S1–S4  the highest string played, the next …
+function guitarStrings(notes, atom) {
+  const played = [];
+  notes.forEach((m, s) => { if (m != null) played.push({ m, s }); });
+  if (!played.length) return [];
+  const n = played.length;
+  switch (atom) {
+    case 'D': case 'X': return played.map((x, i) => ({ ...x, order: i }));
+    case 'U': return played.slice(Math.max(0, n - 4)).reverse().map((x, i) => ({ ...x, order: i }));
+    case 'B': return [{ ...played[0], order: 0 }];
+    case 'A': return [{ ...played[Math.min(1, n - 1)], order: 0 }];
+    default: {
+      const k = /^S([1-6])$/.exec(atom);
+      return k ? [{ ...played[Math.max(0, n - +k[1])], order: 0 }] : [];
+    }
+  }
+}
+const GUITAR_ATOMS = ['D', 'U', 'X', 'B', 'A', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+
+return { GUITAR_ATOMS, SHAPES, TUNING, chordFrets, chordNotes, fretText, guitarStrings };
+})();
+
 const $engine_engine = (() => {
 const { Rng } = $engine_rng;
 const { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod } = $engine_theory;
@@ -3083,6 +3283,7 @@ const { FX_KINDS, fxAt, fxJoin, onMix } = $engine_moves;
 const { playOf, resolveSound } = $engine_sfx;
 const { autoFade } = $engine_params;
 const { weightIn, chanceIn } = $engine_plays;
+const { chordNotes, guitarStrings } = $engine_guitar;
 // The engine = conductor (decides WHAT plays) + sequencer (WHEN) + synth (HOW it sounds).
 // It is a pure function of (song, seed, parameter calls) -> audio samples.
 
@@ -3478,7 +3679,7 @@ class Engine {
     const syn = this.synth, later = this.later;
     for (let i = 0; i < n; i++) {
       this.clock++;
-      if (later.length) for (let j = later.length - 1; j >= 0; j--) if (later[j].t <= this.clock) { later[j].fn(); later.splice(j, 1); } // humanized notes
+      if (later.length) for (let j = 0; j < later.length;) if (later[j].t <= this.clock) later.splice(j, 1)[0].fn(); else j++; // humanized notes, strums: in order
       if (this.hold) {
         if (this.curSting || this.nextSting) { // a stinger still sounds while the song stands still
           if (this.stepTimer <= 0) { this.heldTick(); this.stepTimer += this.stepLen; }
@@ -3621,6 +3822,7 @@ class Engine {
       this.emit({ type: 'note', track: tr.id });
       return;
     }
+    if (st.atoms.some((a) => a.kind === 'gtr')) return this.strum(tr, ts, st, isFollow, src, vel);
     let midis = this.resolve(tr, src, st.atoms);
     if (!midis.length) { // nothing to play: a whole chord under N.C. (held on, it comes back with the next chord)
       if (isFollow) this.synth.release(tr.id);
@@ -3634,6 +3836,46 @@ class Engine {
   }
 
   scaleNow() { return this.prog ? this.prog.scale : this.song.scale; }
+
+  // The chord playing as a guitar fingers it (guitar.js): six notes, null for a string not played, in the voicing the
+  // clip asks for (block.voicing), else the instrument's (guitar.shape), else open chords; at the guitar's pitch on
+  // octave 3, an octave higher on 4. Null for no chord (N.C.).
+  guitarNotes(tr, block) {
+    const chord = this.chord;
+    if (chord.nc) return null;
+    const scale = this.scaleNow(), root = foldDegree(chord.degree, scale.length);
+    const pcs = chord.shape.map((o) => mod(this.song.keyRoot + degSemis(scale, root + o), 12));
+    const shape = block?.voicing || notesOf(block, this.song.blockMap)?.voicing || tr.inst.guitar?.shape || 'open';
+    return chordNotes(pcs[0], pcs, shape, 12 * ((tr.octave ?? 3) - 3));
+  }
+
+  // A step with guitar strokes (D U X B A S1…): the strings it plays, each in its turn of the strum (guitar.strum ms
+  // apart, a little uneven; an upstroke softer), numbers and chords with them as notes of their own. A downstroke
+  // (and a dead one) damps the strings it leaves out; on a guitar the rest ring on (TrackBus.strike).
+  strum(tr, ts, st, isFollow, src, vel) {
+    const notes = this.guitarNotes(tr, src);
+    if (!notes) { if (isFollow) this.synth.release(tr.id); return; }
+    const hits = [];
+    let dead = false, down = false;
+    for (const a of st.atoms) {
+      if (a.kind === 'gtr') {
+        for (const x of guitarStrings(notes, a.value)) hits.push({ m: x.m + 12 * a.oct + a.semi, s: x.s, order: x.order, up: a.value === 'U' });
+        if (a.value === 'X') dead = true;
+        if (a.value === 'D' || a.value === 'X') down = true;
+      } else this.resolve(tr, src, [a]).forEach((m) => hits.push({ m, s: 6 + hits.length, order: 0 }));
+    }
+    if (!hits.length) return;
+    const g = tr.inst.guitar, ms = g ? Math.min(60, Math.max(0, g.strum ?? 10)) : 0;
+    const gap = (ms * this.sr * (0.8 + 0.4 * this.vrng.next())) / 1000, lag = isFollow ? 0 : this.lagOf(tr);
+    const short = dead ? 2 : st.short && !isFollow;
+    if (down) { const keep = hits.map((h) => h.s); this.at(lag, () => this.synth.damp(tr.id, keep)); }
+    hits.sort((a, b) => a.order - b.order).forEach((h, i) => {
+      const v = vel * (h.up ? 0.8 : 1) * (1 - 0.03 * h.order) * (dead ? 0.8 : 1);
+      this.at(lag + Math.round(h.order * gap), () => this.synth.strike(tr.id, h.m, h.s, v, short, i === 0));
+    });
+    ts.sounding = st;
+    if (!isFollow) this.emit({ type: 'note', track: tr.id, midi: hits[0].m });
+  }
 
   // A single note on an arpeggio that runs the chord (a tracker's 0xy): the note, then the chord's next tones above
   // it, so the arpeggio starts on the melody and follows the harmony (a triad: three notes, a seventh chord: four)
@@ -3652,7 +3894,7 @@ class Engine {
   // With no chord (N.C.) a whole chord rests, and so does a stack built on the chord (chord or scale mode: a voicing);
   // single notes and stacks in the key play on, over the home chord
   restsNC(tr, block, atoms = []) {
-    return atoms.some((a) => a.kind === 'chord') || (this.modeOf(tr, block) !== 'key' && atoms.filter((a) => a.kind === 'num').length > 1);
+    return atoms.some((a) => a.kind === 'chord' || a.kind === 'gtr') || (this.modeOf(tr, block) !== 'key' && atoms.filter((a) => a.kind === 'num').length > 1);
   }
 
   resolve(tr, block, atoms) {

@@ -126,6 +126,9 @@ function compileLayer(l, def, sr, samples) {
     // where it is plucked, 0..0.5 of the string from the bridge (0: not set): near it thin and twangy (a banjo), at
     // the middle round and hollow (no even harmonics)
     sPos: clamp(+l.string?.position || 0, 0, 0.5),
+    // where an electric's pickup sits, the same way (0: none): at the bridge thin and biting, at the neck warm and round
+    sPickup: clamp(+l.string?.pickup || 0, 0, 0.5),
+    sPick: clamp01(+l.string?.pick || 0), // the pick's click on the string: 0 a thumb, 1 a hard plectrum
     // bowed: pressure 0..1 (light and airy … scratchy), position 0..1 (near the bridge … towards the fingerboard)
     bowSlope: 5 - 4 * clamp01(l.bow?.pressure ?? 0.8), bowBeta: 0.04 + 0.2 * clamp01(l.bow?.position ?? 0.4),
     // sample: recorded notes (zones), each played from the one whose root is nearest; empty until the library is loaded
@@ -154,6 +157,8 @@ export function compileInst(def = {}, sr, samples = {}) {
     ensemble: def.unison > 1 || def.ensemble ? clamp01(def.ensemble || 0) : 0,
     // scoop: a note starts this many semitones flat and slides up within about 70 ms (brass, voices)
     scoop: clamp(def.scoop || 0, 0, 2), scoopCoef: def.scoop ? t60(0.07, sr) : 0,
+    legato: !!def.legato, // a note into a held one is a hammer-on or a slide: the string is not picked again
+    ring: !!def.guitar, // a guitar: each string rings until it plays again or is damped (TrackBus.strike)
   };
 }
 
@@ -210,20 +215,26 @@ class Osc {
     this.ph = new Float64Array(4);
     for (let i = 0; i < 4; i++) this.ph[i] = Math.random();
     this.lvl = 0; // wavetable level for the current pitch
+    this.pk = 0; this.pkN = 1; this.pkZ = 0; // string: the pick's click, samples left of it
     this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string: loop buffer, write index
     this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
     this.bows = []; // bowed: a string per player
     this.m = NaN; this.f = 440; // the pitch the frequency (and what follows from it) was last worked out for
     this.nz = 0; this.nzPh = 0; // chip noise: the value it holds, and how far to the next
   }
-  start(L, midi, vel, short, legato, seed) {
+  // short: a palm-muted note (true), or 2: a dead one (the strings damped by the fretting hand). hammer: the string
+  // sounds on and only changes its pitch
+  start(L, midi, vel, short, legato, seed, hammer = false) {
     this.L = L; this.vel = vel; this.seed = seed;
     this.age = 0; this.ctl = 0; this.m = NaN;
     this.wait = legato ? 0 : L.delay; this.late = false;
     this.stage = ATT;
     this.control();
     const m = midi + this.dp;
-    if (L.type === 'string') this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short ? L.sMute : 0); // every note is picked; glide still slides into it
+    if (L.type === 'string' && !(hammer && this.kb)) { // every note is picked (but a hammer-on); glide still slides into it
+      this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short === 2 ? 1 : short ? L.sMute : 0);
+      this.pk = this.pkN = L.sPick > 0 ? Math.round(0.004 * L.sr) : 0; this.pkZ = 0;
+    }
     if (L.type === 'bowed') while (this.bows.length < L.U) this.bows.push(new BowedString());
     if (L.type === 'sample' && !legato) {
       this.zone = null; this.spos = 0;
@@ -254,11 +265,13 @@ class Osc {
     for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
     mean /= n;
     for (let i = 1; i <= n; i++) kb[(this.kw - i) & mask] -= mean; // no DC in the loop
-    if (L.sPos > 0) {
+    for (const at of [L.sPos, L.sPickup]) {
+      if (!(at > 0)) continue;
       // the pick position: a comb (the burst less itself a fraction of the period later) takes out the harmonics
       // that have a node where the string is plucked; then back to the burst's loudness
-      // over one period of the loop as it will play (its filter adds half a sample)
-      const P = Math.max(2, Math.min(n, Math.round(L.sr / f - 0.5 * (1 - L.sBright)))), d = Math.max(1, Math.round(L.sPos * P));
+      // over one period of the loop as it will play (its filter adds half a sample). A pickup hears the string the
+      // same way (a node there is silent to it), and the loop is linear: so its comb goes into the burst too
+      const P = Math.max(2, Math.min(n, Math.round(L.sr / f - 0.5 * (1 - L.sBright)))), d = Math.max(1, Math.round(at * P));
       const tmp = (this.kTmp ||= new Float32Array(STRING_BUF));
       let e0 = 0, e1 = 0;
       for (let i = 0; i < P; i++) { tmp[i] = kb[(this.kw - 1 - i) & mask]; e0 += tmp[i] * tmp[i]; }
@@ -324,7 +337,13 @@ class Osc {
     }
     if (L.type === 'string') {
       if (!this.kb) this.pluck(L, f); // the layer became a string while this voice was sounding
-      return this.string(L, f) * lv * this.vel * 3.5 * this.lv;
+      let y = this.string(L, f);
+      if (this.pk > 0) { // the pick's click: 4 ms of noise, its lows taken out, dying fast
+        const e = this.pk-- / this.pkN, r = this.rand();
+        y += L.sPick * 0.5 * e * e * (r - this.pkZ);
+        this.pkZ = r;
+      }
+      return y * lv * this.vel * 3.5 * this.lv;
     }
     if (L.type === 'noise') return this.chip(f) * g;
     if (L.type === 'fm') {
@@ -389,6 +408,7 @@ class Osc {
 export class Voice {
   constructor() {
     this.stage = IDLE; this.level = 0; this.gate = false;
+    this.str = -1; // the guitar string it sounds (TrackBus.strike), -1: none
     this.cur = 60; this.target = 60; this.vel = 1; this.age = 0;
     this.arp = null; this.arpIdx = 0; this.arpT = 0;
     this.osc = Array.from({ length: MAX_LAYERS }, () => new Osc());
@@ -402,13 +422,15 @@ export class Voice {
   }
   start(p, midi, vel, arp, short = false) {
     const legato = this.stage !== IDLE && p.glideCoef > 0;
+    // into a note still held, a step or two away: a hammer-on or a pull-off (further, it is picked and glide slides there)
+    const hammer = p.legato && this.gate && this.stage !== IDLE && Math.abs(midi - this.target) <= 2;
     this.target = midi;
-    if (!legato) this.cur = midi - p.scoop;
+    if (!legato && !hammer) this.cur = midi - p.scoop;
     this.vel = vel; this.stage = ATT; this.gate = true; this.age = 0;
     this.arp = arp; this.arpIdx = 0; this.arpT = 0; this.m = NaN;
     const ls = p.layers;
     this.n = ls.length;
-    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, legato && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1);
+    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, (legato || hammer) && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1, hammer && this.osc[i].stage !== IDLE);
     for (let i = ls.length; i < MAX_LAYERS; i++) this.osc[i].stage = IDLE;
   }
   release() {
