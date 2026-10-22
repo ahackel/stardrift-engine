@@ -8,6 +8,8 @@ export interface Instrument {
   /** 'drums': a drum kit; left out, the instrument plays its layers */
   type?: 'drums';
   name?: string;
+  /** the editor's picture for it (guitar, keys, drums …); not played */
+  icon?: string;
   poly?: number;
   arp?: number;
   arpChord?: boolean;
@@ -147,6 +149,8 @@ export interface Stinger {
 export interface Sound {
   id: string;
   name?: string;
+  /** the editor's picture for it; not played */
+  icon?: string;
   /** the instrument it plays: a key of the song's instruments (not a drum kit) */
   instrument?: string;
   /** an instrument of its own, for music.sound({ … }) and renderSound (a song's sounds name one of its instruments) */

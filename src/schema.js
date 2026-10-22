@@ -68,6 +68,7 @@ export const songSchema = () => ({
     instrument: obj('instrument', {
       ...sound,
       name: { type: 'string' },
+      icon: { type: 'string', description: 'the editor\'s picture for it (guitar, keys, drums …); not played' },
       type: { const: 'drums', description: 'a drum kit; left out, the instrument plays its layers' },
       poly: { type: 'integer', minimum: 1, maximum: 16, description: 'notes at once (chords); 1: a new note ends the last' },
       arp: num(1, 60, 'runs chords as a chip arpeggio, notes per second'),
@@ -151,7 +152,7 @@ export const songSchema = () => ({
       then: id('a mood with a flow: as the stinger ends, the music is there at once'),
     }, ['id', 'beats', 'parts']),
     sound: obj('sound', {
-      id: id('jump, coin, hit, or your own: music.sound(id)'), name: { type: 'string' }, color: { type: 'string' },
+      id: id('jump, coin, hit, or your own: music.sound(id)'), name: { type: 'string' }, color: { type: 'string' }, icon: { type: 'string', description: 'the editor\'s picture for it; not played' },
       ...Object.fromEntries(Object.entries(SFX_PARAMS).map(([k, p]) => [k, num(p.min, p.max)])),
       note: num(SFX_PARAMS.note.min, SFX_PARAMS.note.max, 'the note it plays, in midi notes (69: A4, 440 Hz)'),
       length: num(SFX_PARAMS.length.min, SFX_PARAMS.length.max, 'seconds the note is held'),

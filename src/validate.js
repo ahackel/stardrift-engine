@@ -20,12 +20,12 @@ export const MODES = ['chord', 'scale', 'key'];
 export const STING_AT = ['step', 'beat', 'half', 'bar'];
 export const FLOW_THEN = ['loop', 'drift', 'stop'];
 export const SWITCH = ['bar', 'phrase', 'section'];
-// the keys each part of a song may have (the editor adds name and color)
+// the keys each part of a song may have (the editor adds name, color and an instrument's or sound's icon)
 export const FIELDS = {
   song: ['$schema', 'format', 'name', 'bpm', 'key', 'scale', 'stepsPerBeat', 'beatsPerBar', 'swing', 'humanize', 'variation', 'blockChange', 'fillChance',
     'layerChurn', 'progStickiness', 'transitBars', 'leadIn', 'breath', 'startSection', 'startMood', 'master', 'fx', 'instruments', 'tracks', 'effectTracks', 'blocks', 'sections',
     'progressions', 'moods', 'stingers', 'sounds'],
-  instrument: ['name', 'type', 'poly', 'arp', 'arpChord', 'guitar', 'legato', 'kit', 'preset', 'layers', 'unison', 'detune', 'ensemble', 'breath', 'noise', 'gain', 'glide',
+  instrument: ['name', 'icon', 'type', 'poly', 'arp', 'arpChord', 'guitar', 'legato', 'kit', 'preset', 'layers', 'unison', 'detune', 'ensemble', 'breath', 'noise', 'gain', 'glide',
     'scoop', 'vibrato', 'fx'],
   layer: ['type', 'wave', 'drawbars', 'smooth', 'duty', 'pwm', 'string', 'fm', 'bow', 'sample', 'env', 'pitch', 'level', 'delay', 'noise', 'moves', 'off'],
   track: ['id', 'name', 'color', 'instrument', 'octave', 'clips', 'mode', 'follow', 'stickiness', 'volume', 'pan', 'echo', 'reverb', 'double', 'pump', 'fade'],
@@ -38,7 +38,7 @@ export const FIELDS = {
   part: ['track', 'pattern', 'block', 'mode'],
   breath: ['every', 'bars', 'keep'],
   fx: ['kind', 'from', 'to', 'shape', 'beats', 'rate', 'at'],
-  sound: ['id', 'name', 'color', 'instrument', ...Object.keys(SFX_PARAMS), 'key', 'at'],
+  sound: ['id', 'name', 'color', 'icon', 'instrument', ...Object.keys(SFX_PARAMS), 'key', 'at'],
   effect: ['kind', 'off', ...new Set(Object.values(EFFECT_KINDS).flatMap((k) => [...Object.keys(k.params), ...(k.beats ? ['beats'] : []), ...(k.rate ? ['rate'] : []), ...(k.opts || [])])), 'moves'],
   move: ['on', 'shape', 'to', 'beats', 'rate', 'at', 'every'],
 };

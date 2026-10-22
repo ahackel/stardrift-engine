@@ -176,6 +176,10 @@
         "name": {
           "type": "string"
         },
+        "icon": {
+          "type": "string",
+          "description": "the editor's picture for it (guitar, keys, drums …); not played"
+        },
         "type": {
           "const": "drums",
           "description": "a drum kit; left out, the instrument plays its layers"
@@ -893,6 +897,10 @@
         },
         "color": {
           "type": "string"
+        },
+        "icon": {
+          "type": "string",
+          "description": "the editor's picture for it; not played"
         },
         "instrument": {
           "type": "string",
