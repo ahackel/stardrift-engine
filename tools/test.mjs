@@ -803,12 +803,24 @@ for (const [file, sg] of toCheck) {
   const down = watch(gsong('D - - - U - - - D - - - . . . .'), 2);
   const first = down.hits.filter((h) => h.t < SR / 4), up = down.hits.filter((h) => h.t >= 0.45 * SR && h.t < 0.75 * SR); // the beats at 0 and 0.5 s
   const gaps = first.slice(1).map((h, i) => h.t - first[i].t);
-  ok(first.map((h) => h.m).join(' ') === '48 52 55 60 64' && gaps.every((g) => g >= 0.004 * SR && g <= 0.016 * SR) && up.map((h) => h.m).join(' ') === '64 60 55 52',
-    `a downstroke plays C's strings low to high, about 10 ms apart (${gaps.map((g) => Math.round((g / SR) * 1000)).join(' ')} ms), the upstroke the top four back down`);
+  ok(first.map((h) => h.m).join(' ') === '48 52 55 60 64' && gaps.every((g) => g >= 0.004 * SR && g <= 0.016 * SR) && '64 60 55 52'.startsWith(up.map((h) => h.m).join(' ')) && up.length >= 2,
+    `a downstroke plays C's strings low to high, about 10 ms apart (${gaps.map((g) => Math.round((g / SR) * 1000)).join(' ')} ms), the upstroke the top ones back down`);
+  // upstrokes catch the top two to four strings, not always the same; strums are uneven
+  const ups = watch(gsong('U - U - U - U - U - U - U - U -'), 4), sizes = new Set(), spans = new Set();
+  for (let k = 0; k < 15; k++) { // the strokes the 4 s hold whole
+    const st = ups.hits.filter((h) => h.t >= (k * 0.25 - 0.02) * SR && h.t < (k * 0.25 + 0.2) * SR);
+    if (st.length) { sizes.add(st.length); spans.add(st.at(-1).t - st[0].t); }
+  }
+  ok([...sizes].every((n) => n >= 2 && n <= 4) && sizes.size >= 2 && spans.size >= 4, `upstrokes catch 2–4 strings (${[...sizes].sort().join(', ')}), each strum its own speed`);
   const at = (sec) => down.ringing[Math.floor((sec * SR) / 128)];
   ok(at(0.8) === 5 && at(1.8) === 0, `the strings ring on through the upstroke (${at(0.8)} sounding), a rest damps them all (${at(1.8)})`);
   const power = watch(gsong('D - - - D - - - . . . . . . . .', { guitar: { strum: 10, shape: 'power' } }), 0.4);
   ok(power.hits.map((h) => h.m).join(' ') === '48 55 60', 'power chords: the root, fifth and octave (C3 G3 C4 for C)');
+  // with mute on the string, a stroke into the next one rings clean (16ths), one into a rest is a chop (muted)
+  const muted = { guitar: { strum: 4, shape: 'high' }, layers: [{ type: 'string', string: { decay: 1.5, mute: 0.5 }, env: { a: 0.001, d: 1, s: 1, r: 0.05 } }] };
+  const clean16 = watch(gsong('D U D U D U D U D U D U D U D U', muted), 0.45), chop = watch(gsong('D . D . D . D . D . D . D . D .', muted), 0.45);
+  ok(clean16.hits.length > 10 && clean16.hits.every((h) => !h.short) && chop.hits.length > 5 && chop.hits.every((h) => h.short === true),
+    'strokes into strokes ring clean (16ths), strokes into a rest are choked');
   const dead = watch(gsong('X - - - . . . . . . . . . . . .'), 0.3);
   ok(dead.hits.length === 5 && dead.hits.every((h) => h.short === 2), 'a dead strum (X) plays every string damped');
   // legato: a note a step from a held one is not picked again (the string's loop is not refilled)
@@ -821,6 +833,27 @@ for (const [file, sg] of toCheck) {
   const same = v.osc[0].kw === was && v.osc[0].kb.every((x, i) => x === before[i]);
   v.start(p, 69, 0.8, null);
   ok(same && v.osc[0].kb.some((x, i) => x !== before[i]), 'legato: a note a step from a held one is a hammer-on (not picked again), a leap is picked');
+  // a string note alone: its level in windows of 50 ms
+  const ring = (f, vel = 0.8, secs = 1.2, def = { decay: 3, bright: 0.5 }) => {
+    const q = compileInst({ layers: [{ type: 'string', string: def, env: { a: 0.001, d: 1, s: 1, r: 0.2 } }] }, SR), w = new Voice();
+    w.start(q, 69 + 12 * Math.log2(f / 440), vel, null);
+    const n = Math.round(0.05 * SR), lv = [];
+    for (let k = 0; k < (secs * SR) / n; k++) { let e = 0; for (let i = 0; i < n; i++) { const y = w.render(q); e += y * y; } lv.push(10 * Math.log10(e / n + 1e-20)); }
+    return { lv, w };
+  };
+  // two stages: it falls faster in its first 0.15 s than later on
+  const tw = ring(110).lv, early = tw[0] - tw[3], late = tw[8] - tw[11];
+  ok(early > late + 2, `a string falls faster just after the pluck (${early.toFixed(1)} dB in 0.15 s) than later (${late.toFixed(1)} dB)`);
+  // a hard pluck starts sharp and relaxes, a soft one hardly
+  const hard = ring(220, 1, 0.01).w.osc[0], soft = ring(220, 0.3, 0.01).w.osc[0], g0 = hard.kG;
+  for (let i = 0; i < SR / 2; i++) hard.string(hard.L, 220);
+  ok(g0 * 1731 > 4 && soft.kG < g0 / 5 && hard.kG < g0 / 20, `a hard pluck starts ${(g0 * 1731).toFixed(1)} cents sharp and settles within half a second; a soft one ${(soft.kG * 1731).toFixed(1)}`);
+  // the loop's fraction of a sample doesn't change how a note sounds: two notes whose loops are a whole and a half
+  // sample long decay alike (reading between two samples, the half one would die much faster)
+  // (each pluck's noise is its own: the average of four)
+  const per = (N) => SR / (N + 0.25), tail = (N) => { let t = 0; for (let k = 0; k < 4; k++) { const l = ring(per(N)).lv; t += (l[2] - l[20]) / 4; } return t; };
+  const whole = tail(50), half = tail(50.5);
+  ok(Math.abs(whole - half) < 2.5, `notes whose loops end on a whole or a half sample decay alike (${whole.toFixed(1)} and ${half.toFixed(1)} dB in 0.9 s)`);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

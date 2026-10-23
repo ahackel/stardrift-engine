@@ -135,7 +135,7 @@ The instrument's own, which move every layer:
 | Key | Settings |
 |---|---|
 | `poly`, `arp`, `arpChord` | notes at once, for chords (1: a new note ends the last); chords as a chip arpeggio, notes per second 1–60; single notes arpeggiate the chord too |
-| `guitar` | `{ shape, strum }`: chords as a guitar plays them (with `poly` 6): each string rings on until it plays again, a downstroke damps the strings it leaves out, a rest every one. `shape` how it fingers the chords: `open` (default: C x32010, G 320003), `barre` (F 133211), `power` (root, fifth, octave) or `high` (the top three strings); `strum` 0–40 ms between the strings (10). See Guitars, below |
+| `guitar` | `{ shape, strum }`: chords as a guitar plays them (with `poly` 6): each string rings on until it plays again, a downstroke damps the strings it leaves out, a rest every one. `shape` how it fingers the chords: `open` (default: C x32010, G 320003), `barre` (F 133211), `power` (root, fifth, octave) or `high` (the top three strings); `strum` 0–40 ms between the strings (10), played as a player does: faster when harder, each stroke and string a little uneven, an upstroke catching the top two to four strings. See Guitars, below |
 | `name`, `icon` | the editor's: its name and picture (`guitar`, `keys`, `drums` …), not played |
 | `legato` | a note a step or two from one still held is a hammer-on or a pull-off: on a string it is not picked again |
 | `unison`, `detune`, `ensemble` | stacked voices 1–4; cents 0–50; each voice a player who drifts 0–1 |

@@ -67,10 +67,11 @@ export function parseToken(t) {
 }
 
 // a note not held into the next step (a rest or another note follows) is short: string sounds with `mute` play it
-// palm-muted, while held notes ring open
+// palm-muted, while held notes ring open. A guitar stroke is short only before a rest: one stroke into the next
+// rings open until it is struck again (clean 16ths), one into a rest is a chop, the strings choked
 export const parseTokens = (tokens) => tokens.map((t, i) => {
-  const st = parseToken(t);
-  if (st.t === NOTE) st.short = tokens[(i + 1) % tokens.length] !== '-';
+  const st = parseToken(t), next = tokens[(i + 1) % tokens.length];
+  if (st.t === NOTE) st.short = st.atoms.some((a) => a.kind === 'gtr') ? next === '.' : next !== '-';
   return st;
 });
 

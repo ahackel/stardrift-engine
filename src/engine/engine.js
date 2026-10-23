@@ -572,9 +572,12 @@ export class Engine {
     return chordNotes(pcs[0], pcs, shape, 12 * ((tr.octave ?? 3) - 3));
   }
 
-  // A step with guitar strokes (D U X B A S1…): the strings it plays, each in its turn of the strum (guitar.strum ms
-  // apart, a little uneven; an upstroke softer), numbers and chords with them as notes of their own. A downstroke
-  // (and a dead one) damps the strings it leaves out; on a guitar the rest ring on (TrackBus.strike).
+  // A step with guitar strokes (D U X B A S1…): the strings it plays, each in its turn of the strum, numbers and
+  // chords with them as notes of their own. A downstroke (and a dead one) damps the strings it leaves out; on a
+  // guitar the rest ring on (TrackBus.strike). Played as a player does: guitar.strum ms between the strings, faster
+  // when harder, each stroke a little faster or slower and each string a little early or late (the two jitters of a
+  // strummer, apart); the first strings of a stroke a little louder, every string a little different; an upstroke
+  // softer and catching the top two to four strings.
   strum(tr, ts, st, isFollow, src, vel) {
     const notes = this.guitarNotes(tr, src);
     if (!notes) { if (isFollow) this.synth.release(tr.id); return; }
@@ -588,13 +591,20 @@ export class Engine {
       } else this.resolve(tr, src, [a]).forEach((m) => hits.push({ m, s: 6 + hits.length, order: 0 }));
     }
     if (!hits.length) return;
+    const rng = this.vrng, ups = hits.filter((h) => h.up).length;
+    if (ups >= 4) { // an upstroke rarely reaches the fourth string from the top, sometimes only two
+      const r = rng.next(), reach = r < 0.15 ? 2 : r < 0.55 ? 3 : 4;
+      for (let k = hits.length - 1; k >= 0; k--) if (hits[k].up && hits[k].order >= reach) hits.splice(k, 1);
+    }
     const g = tr.inst.guitar, ms = g ? Math.min(60, Math.max(0, g.strum ?? 10)) : 0;
-    const gap = (ms * this.sr * (0.8 + 0.4 * this.vrng.next())) / 1000, lag = isFollow ? 0 : this.lagOf(tr);
+    const gap = (ms * this.sr * (0.8 + 0.4 * rng.next()) * (1.3 - 0.5 * Math.min(1, vel))) / 1000, lag = isFollow ? 0 : this.lagOf(tr);
     const short = dead ? 2 : st.short && !isFollow;
     if (down) { const keep = hits.map((h) => h.s); this.at(lag, () => this.synth.damp(tr.id, keep)); }
+    let t = 0, last = 0;
     hits.sort((a, b) => a.order - b.order).forEach((h, i) => {
-      const v = vel * (h.up ? 0.8 : 1) * (1 - 0.03 * h.order) * (dead ? 0.8 : 1);
-      this.at(lag + Math.round(h.order * gap), () => this.synth.strike(tr.id, h.m, h.s, v, short, i === 0));
+      if (h.order > last) { t += (h.order - last) * gap * (0.75 + 0.5 * rng.next()); last = h.order; }
+      const v = vel * (h.up ? 0.8 : 1) * (1 - 0.03 * h.order) * (dead ? 0.8 : 1) * (0.95 + 0.1 * rng.next());
+      this.at(lag + Math.round(t), () => this.synth.strike(tr.id, h.m, h.s, v, short, i === 0, h.up));
     });
     ts.sounding = st;
     if (!isFollow) this.emit({ type: 'note', track: tr.id, midi: hits[0].m });

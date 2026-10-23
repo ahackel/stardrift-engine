@@ -1069,10 +1069,11 @@ function parseToken(t) {
 }
 
 // a note not held into the next step (a rest or another note follows) is short: string sounds with `mute` play it
-// palm-muted, while held notes ring open
+// palm-muted, while held notes ring open. A guitar stroke is short only before a rest: one stroke into the next
+// rings open until it is struck again (clean 16ths), one into a rest is a chop, the strings choked
 const parseTokens = (tokens) => tokens.map((t, i) => {
-  const st = parseToken(t);
-  if (st.t === NOTE) st.short = tokens[(i + 1) % tokens.length] !== '-';
+  const st = parseToken(t), next = tokens[(i + 1) % tokens.length];
+  if (st.t === NOTE) st.short = st.atoms.some((a) => a.kind === 'gtr') ? next === '.' : next !== '-';
   return st;
 });
 
@@ -2105,14 +2106,16 @@ class Osc {
     this.lvl = 0; // wavetable level for the current pitch
     this.pk = 0; this.pkN = 1; this.pkZ = 0; // string: the pick's click, samples left of it
     this.kb = null; this.kw = 0; this.kPrev = 0; this.kLoss = 0.999; // string: loop buffer, write index
+    this.kG = 0; this.kGc = 1; this.kE = 0; this.kEc = 1; // string: the pitch glide and the attack's extra loss, dying away
+    this.kF = 0; this.kD = 4; this.kGt = 0; this.c0 = 0; this.c1 = 1; this.c2 = 0; this.c3 = 0; // string: the loop's length now, its four weights
     this.mph = new Float64Array(4); this.mfb = new Float64Array(4); // fm: modulator phases and last outputs
     this.bows = []; // bowed: a string per player
     this.m = NaN; this.f = 440; // the pitch the frequency (and what follows from it) was last worked out for
     this.nz = 0; this.nzPh = 0; // chip noise: the value it holds, and how far to the next
   }
   // short: a palm-muted note (true), or 2: a dead one (the strings damped by the fretting hand). hammer: the string
-  // sounds on and only changes its pitch
-  start(L, midi, vel, short, legato, seed, hammer = false) {
+  // sounds on and only changes its pitch. up: an upstroke (a guitar's strum)
+  start(L, midi, vel, short, legato, seed, hammer = false, up = false) {
     this.L = L; this.vel = vel; this.seed = seed;
     this.age = 0; this.ctl = 0; this.m = NaN;
     this.wait = legato ? 0 : L.delay; this.late = false;
@@ -2120,8 +2123,9 @@ class Osc {
     this.control();
     const m = midi + this.dp;
     if (L.type === 'string' && !(hammer && this.kb)) { // every note is picked (but a hammer-on); glide still slides into it
-      this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short === 2 ? 1 : short ? L.sMute : 0);
-      this.pk = this.pkN = L.sPick > 0 ? Math.round(0.004 * L.sr) : 0; this.pkZ = 0;
+      this.pluck(L, 440 * Math.pow(2, (m - 69) / 12), short === 2 ? 1 : short ? L.sMute : 0, up);
+      // the pick's click; an upstroke catches the strings with the pick's edge: a shorter click
+      this.pk = this.pkN = L.sPick > 0 ? Math.round((up ? 0.003 : 0.004) * L.sr) : 0; this.pkZ = 0;
     }
     if (L.type === 'bowed') while (this.bows.length < L.U) this.bows.push(new BowedString());
     if (L.type === 'sample' && !legato) {
@@ -2145,10 +2149,12 @@ class Osc {
   rand() { let s = this.seed; s ^= s << 13; s ^= s >>> 17; s ^= s << 5; this.seed = s >>> 0; return this.seed / 2147483648 - 1; }
   // Karplus-Strong: a period of filtered noise circulates in a delay loop that loses a little each pass.
   // mute 0..1: a palm-muted note, much duller and dying within a few hundredths of a second (through a driven amp,
-  // anything above about -35 dB still clips, so the string has to fall fast to sound damped)
-  pluck(L, f, mute = 0) {
+  // anything above about -35 dB still clips, so the string has to fall fast to sound damped). up: an upstroke, a
+  // little brighter and thinner (the pick-direction filter of Jaffe and Smith's extended Karplus-Strong)
+  pluck(L, f, mute = 0, up = false) {
     const kb = (this.kb ||= new Float32Array(STRING_BUF)), mask = STRING_BUF - 1;
-    const n = Math.min(STRING_BUF - 4, Math.ceil(L.sr / f) + 2), c = (0.15 + 0.85 * L.sBright * (0.5 + 0.5 * this.vel)) * (1 - 0.85 * mute);
+    const n = Math.min(STRING_BUF - 4, Math.ceil(L.sr / f) + 2);
+    const c = Math.min(1, (0.15 + 0.85 * L.sBright * (0.5 + 0.5 * this.vel)) * (1 - 0.85 * mute) * (up ? 1.15 : 1));
     let lp = 0, mean = 0;
     for (let i = 1; i <= n; i++) { lp += (Math.random() * 2 - 1 - lp) * c; kb[(this.kw - i) & mask] = lp; mean += lp; }
     mean /= n;
@@ -2169,14 +2175,34 @@ class Osc {
     }
     this.kPrev = 0;
     this.kLoss = Math.exp(-6.9 / (Math.pow(L.sDecay, 1 - mute) * Math.pow(0.035, mute) * f)); // -60 dB after sDecay s (35 ms fully muted)
+    // A real string decays in two stages: it moves in two planes, and the one the bridge gives way to dies fast, so a
+    // strong attack falls quickly into the long tail. One loop does it by losing more at first: 40 dB/s more, fading
+    // over 0.1 s (about 4 dB in all). And a hard pluck stretches the string: it starts up to 8 cents sharp and
+    // relaxes as its energy goes (Bank's tension modulation). Neither for a muted note.
+    const open = 1 - mute;
+    this.kE = open * (40 * 0.1151) / f; this.kEc = Math.exp(-1 / (0.1 * L.sr));
+    this.kG = open * 8 * this.vel * this.vel * 0.000578; this.kGc = Math.exp(-16 / (Math.min(0.12, L.sDecay / 14) * L.sr)); this.kF = 0;
   }
-  // one sample of the string at frequency f (glide and vibrato change the loop length)
+  // one sample of the string at frequency f (glide and vibrato change the loop length). The fraction of a sample in
+  // the loop's length is read between four samples (cubic Lagrange): two would also be a lowpass that changes with
+  // the fraction, so notes a semitone apart would differ in brightness and sustain, the high ones most. The length
+  // and the four weights are worked out again only when the pitch moves; the pitch glide moves it every 16 samples.
   string(L, f) {
     const kb = this.kb, mask = STRING_BUF - 1, b = L.sBright;
-    const d = Math.min(STRING_BUF - 4, L.sr / f - 0.5 * (1 - b)); // the loop filter adds half a sample of delay
-    const r = this.kw - d, i = Math.floor(r), fr = r - i;
-    const y = kb[i & mask] + (kb[(i + 1) & mask] - kb[i & mask]) * fr;
-    kb[this.kw & mask] = this.kLoss * (b * y + (1 - b) * 0.5 * (y + this.kPrev));
+    if (this.kG > 1e-6 && (this.kGt = (this.kGt + 1) & 15) === 0) this.kG *= this.kGc;
+    if (this.kG > 1e-6) f *= 1 + this.kG;
+    if (f !== this.kF) {
+      this.kF = f;
+      const d = Math.max(3, Math.min(STRING_BUF - 4, L.sr / f - 0.5 * (1 - b))); // the loop filter adds half a sample of delay
+      const D = Math.ceil(d), x = D - d, xm = x - 1, xp = x + 1, x2 = x - 2;
+      this.kD = D + 1; // the oldest of the four
+      this.c0 = (-x * xm * x2) / 6; this.c1 = (xp * xm * x2) / 2; this.c2 = (-xp * x * x2) / 2; this.c3 = (xp * x * xm) / 6;
+    }
+    const j = this.kw - this.kD;
+    const y = this.c0 * kb[j & mask] + this.c1 * kb[(j + 1) & mask] + this.c2 * kb[(j + 2) & mask] + this.c3 * kb[(j + 3) & mask];
+    let g = this.kLoss;
+    if (this.kE > 1e-7) { g *= 1 - this.kE; this.kE *= this.kEc; }
+    kb[this.kw & mask] = g * (b * y + (1 - b) * 0.5 * (y + this.kPrev));
     this.kPrev = y;
     this.kw = (this.kw + 1) | 0;
     return y;
@@ -2308,7 +2334,7 @@ class Voice {
     this.bms = 0; this.blo = 0; this.bband = 0; // breath: the tone's power, the band's state
     this.seed = (Math.random() * 4294967296) >>> 0 || 1; // its noise (a game sound sets it, so each play is the same)
   }
-  start(p, midi, vel, arp, short = false) {
+  start(p, midi, vel, arp, short = false, up = false) {
     const legato = this.stage !== IDLE && p.glideCoef > 0;
     // into a note still held, a step or two away: a hammer-on or a pull-off (further, it is picked and glide slides there)
     const hammer = p.legato && this.gate && this.stage !== IDLE && Math.abs(midi - this.target) <= 2;
@@ -2318,7 +2344,7 @@ class Voice {
     this.arp = arp; this.arpIdx = 0; this.arpT = 0; this.m = NaN;
     const ls = p.layers;
     this.n = ls.length;
-    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, (legato || hammer) && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1, hammer && this.osc[i].stage !== IDLE);
+    for (let i = 0; i < ls.length; i++) this.osc[i].start(ls[i], midi, vel, short, (legato || hammer) && this.osc[i].stage !== IDLE, (this.seed + i * 0x9e3779b9) >>> 0 || 1, hammer && this.osc[i].stage !== IDLE, up);
     for (let i = ls.length; i < MAX_LAYERS; i++) this.osc[i].stage = IDLE;
   }
   release() {
@@ -2604,8 +2630,8 @@ class TrackBus {
   }
   // A guitar's string s (0 = low E; 6 and up: other notes) plays m: on a guitar (p.ring) it ends only what that
   // string played, the others ring on; else, as a chord does, every note before. first: the stroke's first string.
-  // short: palm-muted, 2: dead (Osc.start)
-  strike(m, s, vel, short, first) {
+  // short: palm-muted, 2: dead (Osc.start). up: an upstroke
+  strike(m, s, vel, short, first, up = false) {
     const p = this.p, vs = this.voices;
     if (first) {
       this.fx.noteOn(vel);
@@ -2614,7 +2640,7 @@ class TrackBus {
     let v = p.ring ? vs.find((x) => x.str === s && x.stage !== IDLE) : null;
     if (!v) v = this.alloc();
     v.str = s;
-    v.start(p, m, vel, null, short);
+    v.start(p, m, vel, null, short, up);
   }
   // a downstroke damps the strings it doesn't play (keep: the ones it does)
   damp(keep) { if (!this.isDrum) for (const v of this.voices) if (v.gate && !keep.includes(v.str)) v.release(); }
@@ -2876,7 +2902,7 @@ class Synth {
   }
   stopSounds() { for (const v of this.sfx) v.done = true; }
   noteOn(id, midis, vel, short) { this.tracks[id]?.noteOn(midis, vel, short); }
-  strike(id, m, s, vel, short, first) { this.tracks[id]?.strike(m, s, vel, short, first); }
+  strike(id, m, s, vel, short, first, up) { this.tracks[id]?.strike(m, s, vel, short, first, up); }
   damp(id, keep) { this.tracks[id]?.damp(keep); }
   release(id) { this.tracks[id]?.release(); }
   drum(id, hits, vel) {
@@ -3849,9 +3875,12 @@ class Engine {
     return chordNotes(pcs[0], pcs, shape, 12 * ((tr.octave ?? 3) - 3));
   }
 
-  // A step with guitar strokes (D U X B A S1…): the strings it plays, each in its turn of the strum (guitar.strum ms
-  // apart, a little uneven; an upstroke softer), numbers and chords with them as notes of their own. A downstroke
-  // (and a dead one) damps the strings it leaves out; on a guitar the rest ring on (TrackBus.strike).
+  // A step with guitar strokes (D U X B A S1…): the strings it plays, each in its turn of the strum, numbers and
+  // chords with them as notes of their own. A downstroke (and a dead one) damps the strings it leaves out; on a
+  // guitar the rest ring on (TrackBus.strike). Played as a player does: guitar.strum ms between the strings, faster
+  // when harder, each stroke a little faster or slower and each string a little early or late (the two jitters of a
+  // strummer, apart); the first strings of a stroke a little louder, every string a little different; an upstroke
+  // softer and catching the top two to four strings.
   strum(tr, ts, st, isFollow, src, vel) {
     const notes = this.guitarNotes(tr, src);
     if (!notes) { if (isFollow) this.synth.release(tr.id); return; }
@@ -3865,13 +3894,20 @@ class Engine {
       } else this.resolve(tr, src, [a]).forEach((m) => hits.push({ m, s: 6 + hits.length, order: 0 }));
     }
     if (!hits.length) return;
+    const rng = this.vrng, ups = hits.filter((h) => h.up).length;
+    if (ups >= 4) { // an upstroke rarely reaches the fourth string from the top, sometimes only two
+      const r = rng.next(), reach = r < 0.15 ? 2 : r < 0.55 ? 3 : 4;
+      for (let k = hits.length - 1; k >= 0; k--) if (hits[k].up && hits[k].order >= reach) hits.splice(k, 1);
+    }
     const g = tr.inst.guitar, ms = g ? Math.min(60, Math.max(0, g.strum ?? 10)) : 0;
-    const gap = (ms * this.sr * (0.8 + 0.4 * this.vrng.next())) / 1000, lag = isFollow ? 0 : this.lagOf(tr);
+    const gap = (ms * this.sr * (0.8 + 0.4 * rng.next()) * (1.3 - 0.5 * Math.min(1, vel))) / 1000, lag = isFollow ? 0 : this.lagOf(tr);
     const short = dead ? 2 : st.short && !isFollow;
     if (down) { const keep = hits.map((h) => h.s); this.at(lag, () => this.synth.damp(tr.id, keep)); }
+    let t = 0, last = 0;
     hits.sort((a, b) => a.order - b.order).forEach((h, i) => {
-      const v = vel * (h.up ? 0.8 : 1) * (1 - 0.03 * h.order) * (dead ? 0.8 : 1);
-      this.at(lag + Math.round(h.order * gap), () => this.synth.strike(tr.id, h.m, h.s, v, short, i === 0));
+      if (h.order > last) { t += (h.order - last) * gap * (0.75 + 0.5 * rng.next()); last = h.order; }
+      const v = vel * (h.up ? 0.8 : 1) * (1 - 0.03 * h.order) * (dead ? 0.8 : 1) * (0.95 + 0.1 * rng.next());
+      this.at(lag + Math.round(t), () => this.synth.strike(tr.id, h.m, h.s, v, short, i === 0, h.up));
     });
     ts.sounding = st;
     if (!isFollow) this.emit({ type: 'note', track: tr.id, midi: hits[0].m });
