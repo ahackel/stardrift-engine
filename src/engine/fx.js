@@ -67,6 +67,12 @@ export const AMPS = {
   lead: { bias: 0.3, gain: 0.57, pre: [['hp', 140], ['peak', 900, 0.7, 10]], post: [['hp', 80], ['peak', 100, 1.2, 4], ['peak', 700, 0.8, -2], ['peak', 2200, 1.5, 3], ['lp', 4500], ['lp', 5200, 1.2]] },
   // a bass amp keeps the lows and rounds off the top
   bass: { bias: 0.1, gain: 0.83, pre: [['hp', 35], ['peak', 700, 0.7, 3]], post: [['lp', 2800], ['lp', 3600, 0.9]] },
+  // warm: tape or a valve desk, for synths and keys: no EQ into it, a soft top after it, even harmonics
+  warm: { bias: 0.15, gain: 0.85, pre: [['hp', 30]], post: [['lp', 6500, 0.7]] },
+  // fuzz: a transistor fuzz box, very lopsided (its gate spits on soft notes), a mid hump in, fizz rolled off after
+  fuzz: { bias: 0.6, gain: 0.59, pre: [['hp', 160], ['peak', 1000, 0.7, 6]], post: [['peak', 800, 0.7, -3], ['lp', 3800], ['lp', 4600, 1.1]] },
+  // organ: a tonewheel organ's valve preamp into its rotating speaker: a little mid push, the top rounded off
+  organ: { bias: 0.2, gain: 0.79, pre: [['hp', 50], ['peak', 1200, 0.7, 3]], post: [['lp', 5500, 0.8]] },
 };
 
 // Bodies: the fixed resonances of an instrument's box, bell or mouth, the same for every note it plays. They are much

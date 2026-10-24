@@ -697,8 +697,21 @@
           "minimum": 0
         },
         "block": {
-          "type": "string",
-          "description": "a block id"
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "a block id"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "description": "a block id"
+              },
+              "description": "a stack: one of these blocks plays, picked each time it starts"
+            }
+          ]
         }
       }
     },
@@ -1240,7 +1253,10 @@
             "clean",
             "crunch",
             "lead",
-            "bass"
+            "bass",
+            "warm",
+            "fuzz",
+            "organ"
           ]
         },
         "cutoff": {

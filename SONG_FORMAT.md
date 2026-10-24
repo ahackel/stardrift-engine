@@ -76,7 +76,7 @@ Check a song with `validateSong(song)` (`import { validateSong } from 'stardrift
   - `block.sections`, `progression.sections` `{ sectionId: weight }`: how often it is picked there, against the track's other blocks (or the other progressions). Not listed: 1. A track whose blocks all weigh 0 in a section rests there.
   - `section.next` `{ sectionId: weight }`: the sections that may follow. Not listed: 0; none listed: any.
   - `mood.sections` `{ sectionId: weight }`: where the mood leads the music. Not listed: 0.
-- Use the shared names, so a game can switch songs without changing its calls: moods `relaxed wonder exploring tension danger action`, stingers `discovery alert jump reward`.
+- Use the shared names, so a game can switch songs without changing its calls: moods `relaxed wonder exploring tension danger action` (calm to intense: a song that leaves one out plays the nearest it has, the calmer of two as near), stingers `discovery alert jump reward`.
 
 ## The song
 
@@ -156,7 +156,7 @@ Instruments from before layers (`type`, `wave`, `env` … on the instrument itse
 |---|---|
 | `body` | fixed resonances: `type` `violin cello strings horn brass`, guitars `acoustic nylon archtop`, vowels `ah oh oo ee`, or `bands`: a list of `[kind, Hz, Q, dB]` |
 | `wah` | `depth` 0.05–1 (0.7), `resonance` 1–10 (4); `beats` 0.25–8 (1) / `rate` 0.1–20 Hz (2); `mode: "note"`: it opens with each note |
-| `drive` | `amount` 0–2 (0.6): crunch at 1, high gain at 2; `amp`: through an amp and a cabinet, `clean` (a Fender's), `crunch`, `guitar` (rock), `lead` (high gain that sings) or `bass` |
+| `drive` | `amount` 0–2 (0.6): crunch at 1, high gain at 2; `amp`: through an amp and a cabinet, `clean` (a Fender's), `crunch`, `guitar` (rock), `lead` (high gain that sings) or `bass`; or a flavour for synths and keys: `warm` (tape, a valve desk), `fuzz` (a fuzz box) or `organ` (a tonewheel organ's preamp, before its Leslie) |
 | `filter` | `type` `low` (default), `high` or `band`; `cutoff` 40–16000 Hz (2000), `resonance` 0.3–6 (0.707); `env` 0–5 octaves it opens on each note, closing over `decay` 0.02–2 s (0.2); `swell` 0–3: it follows the note's loudness; `bite` 0–1: so does the resonance (brass) |
 | `crush` | `bits` 2–12 (6), `rate` 1000–48000 Hz (11025) |
 | `eq` | `low`, `mid`, `high` −12–12 dB (0), `midHz` 200–5000 (1000) |
@@ -236,8 +236,10 @@ A song can also be laid out like a sequencer's arrangement: each section holds b
 "startMood": "relaxed"
 ```
 
-- `section.blocks` `{ trackId: [{ at, block }] }`: a block plays from bar `at` (0 is the first) until the next block on its track or the section's end, looping. A track with nothing placed rests, and a track rests until its first block. The block should be on the track's `clips`. `section.chords` `[{ at, prog }]`: the progression from that bar on; with none, the one that plays goes on. A section with `blocks` has one length (`bars`), and its `tracks` and `next`, and the blocks' and progressions' `sections`, are not used.
-- `mood.flow`: its sections in order, each `[id, times]` (or just the id, once). One section can be in several flows. After its flow the mood does what `then` says: `loop` (default) from `loopFrom` (default: its first section), `drift` (picks among its sections at random) or `stop` (silence until another mood). The first time a mood plays it starts at its flow's start, later at `loopFrom`.
+- `section.blocks` `{ trackId: [{ at, block }] }`: a block plays from bar `at` (0 is the first) until the next block on its track or the section's end, looping. A track with nothing placed rests, and a track rests until its first block. The block should be on the track's `clips`. `section.chords` `[{ at, prog }]`: the progression from that bar on; with none, the one that plays goes on. A section with `blocks` has one length (`bars`), and its `next`, and the blocks' and progressions' `sections`, are not used.
+- **Stacks**: `{ "at": 0, "block": ["beat_a", "beat_b"] }` places a stack of blocks: one of them plays, picked each time the placement starts (the one that played last less likely), and now and then another as it loops (`blockChange`). The variety of the endless music comes from stacks: two or three blocks of the same kind, alike in rhythm.
+- **Sometimes**: `section.tracks` `{ trackId: 0.5 }`: a track that plays there only sometimes; whether it does is drawn as the section starts, and every 4 bars it may join or leave (`layerChurn`). Use `1` (always, the default), `0.5` (sometimes) or `0` (not in this section).
+- `mood.flow`: its sections in order, each `[id, times]` (or just the id, once). One section can be in several flows. After its flow the mood does what `then` says: `loop` (default) from `loopFrom` (default: its first section), `drift` (picks among its sections from `loopFrom` on at random, never the one that just played: an intro before `loopFrom` plays only the first time) or `stop` (silence until another mood). The first time a mood plays it starts at its flow's start, later at `loopFrom`. For endless game music `drift` is the best choice.
 - A change to a mood with a flow comes as soon as it sounds natural, by `switch`: at the next bar line (`bar`, the default; the bar after when less than a beat is left), the next phrase of 4 bars (`phrase`) or the section's end (`section`). The drums play the end of a fill (a block with `fill`, on their `clips`) up to the change; a block that both sections play carries on.
 
 ### Effect tracks

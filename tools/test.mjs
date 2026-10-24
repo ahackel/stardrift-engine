@@ -91,7 +91,12 @@ for (const [mood, want, maxSecs, from] of [['tension', 'tension', 30, 'relaxed']
   const n = newEngine(SR, none, 11);
   run(n, 2);
   n.setMood('wonder');
-  ok(n.moodSec === null && run(n, 20).bad === 0, 'a mood without sections leads nowhere: the music walks on');
+  ok(n.moodName === 'relaxed' && n.moodSec !== null && run(n, 20).bad === 0, `a shared mood without sections plays the nearest one the song has (wonder → ${n.moodName})`);
+  none.moods.menu = {};
+  const n2 = newEngine(SR, none, 11);
+  run(n2, 2);
+  n2.setMood('menu');
+  ok(n2.moodSec === null && run(n2, 20).bad === 0, 'a mood of its own without sections leads nowhere: the music walks on');
 }
 
 // Older songs: sections and moods with intensity and tension, sounds whose filter followed them, links weighed 0–3
@@ -555,6 +560,55 @@ for (const [file, sg] of toCheck) {
   }
 }
 
+// 16b. Chance on the grid: a stack plays one of its blocks (each of them, over time), a track that plays sometimes
+// sits some sections out, drift never plays the intro again, a shared mood the song lacks plays the nearest it has
+{
+  const { validateSong } = await import('../src/validate.js');
+  const { moodFor } = await import('../src/engine/theory.js');
+  const chance = {
+    format: 2, name: 'chance', bpm: 120, key: 'C', scale: 'minor',
+    instruments: { lead: { type: 'pulse' }, drums: { type: 'drums', kit: 'chip' } },
+    tracks: [{ id: 'lead', instrument: 'lead', octave: 5, clips: ['tune'] }, { id: 'drums', instrument: 'drums', clips: ['beat', 'beat2', 'beat3'] }],
+    blocks: [
+      { id: 'tune', beats: 4, pattern: '0 - 2 - 4 - 2 - 0 - . . 1 - . .' },
+      { id: 'beat', beats: 4, pattern: 'k . h . s . h . k . h . s . h .' }, { id: 'beat2', beats: 4, pattern: 'k . h k s . h . k . h . s . h h' },
+      { id: 'beat3', beats: 4, pattern: 'k . . . s . . . k . k . s . . .' },
+    ],
+    progressions: [{ id: 'home', chords: 'i:4 VI:4' }],
+    sections: [
+      { id: 'intro', bars: 1, blocks: { drums: [{ at: 0, block: 'beat' }] }, chords: [{ at: 0, prog: 'home' }] },
+      { id: 'verse', bars: 2, tracks: { lead: 0.5 }, blocks: { drums: [{ at: 0, block: ['beat', 'beat2', 'beat3'] }], lead: [{ at: 0, block: 'tune' }] } },
+      { id: 'chorus', bars: 2, tracks: { lead: 0 }, blocks: { drums: [{ at: 0, block: 'beat2' }], lead: [{ at: 0, block: 'tune' }] } },
+    ],
+    moods: {
+      relaxed: { flow: [['intro', 1], ['verse', 1], ['chorus', 1]], loopFrom: 'verse', then: 'drift' },
+      action: { flow: ['chorus'] },
+    },
+  };
+  const v = validateSong(chance);
+  ok(!v.errors.length && v.warnings.length === 1 && v.warnings[0].includes('"wonder"'), `a song with stacks validates; the shared moods it lacks are a warning (${[...v.errors, ...v.warnings].join('; ')})`);
+  ok(validateSong({ ...chance, sections: [{ ...chance.sections[0], blocks: { drums: [{ at: 0, block: ['beat', 'nope'] }] } }, ...chance.sections.slice(1)] }).errors.some((x) => x.includes('"nope"')), 'a stack naming no block is an error');
+  const e = newEngine(SR, chance, 7), secs = [], beats = new Set(), lead = { verse: [], chorus: [] };
+  let last = null;
+  for (let i = 0; i < 16 * 120; i++) {
+    e.tick();
+    if (e.section && e.section !== last) { last = e.section; secs.push(e.section.id); }
+    if ((e.step - 1) % 16 === 0 && e.sectionBar === 0 && e.section.id !== 'intro') lead[e.section.id].push(e.tracks.lead.active ? 1 : 0);
+    if (e.section.id === 'verse') beats.add(e.tracks.drums.block.id);
+  }
+  ok(secs.filter((x) => x === 'intro').length === 1 && secs.includes('verse') && secs.includes('chorus'), `drift plays the intro only the first time (${secs.slice(0, 8).join(' → ')} …)`);
+  ok(beats.size === 3, `a stack plays each of its blocks over time (${[...beats].join(', ')})`);
+  ok(lead.verse.includes(1) && lead.verse.includes(0) && !lead.chorus.includes(1), `a track that plays sometimes sits some sections out (verse: ${lead.verse.join('')}), one at 0 never plays (chorus: ${lead.chorus.join('')})`);
+  const prep = prepareSong(chance);
+  ok(moodFor(prep, 'wonder') === 'relaxed' && moodFor(prep, 'danger') === 'action' && moodFor(prep, 'exploring') === 'relaxed' && moodFor(prep, 'menu') === null,
+    'a shared mood the song lacks plays the nearest it has (wonder → relaxed, danger → action, exploring → the calmer of two)');
+  const e2 = newEngine(SR, chance, 1);
+  for (let i = 0; i < 16 * 4; i++) e2.tick();
+  e2.setMood('danger');
+  for (let i = 0; i < 16 * 4; i++) e2.tick();
+  ok(e2.moodName === 'action' && e2.section.id === 'chorus', `setMood('danger') with no danger: the music goes to action (${e2.moodName}, ${e2.section.id})`);
+}
+
 // 17. Effect tracks: an effect block moves its setting across the bars it is placed on, on the tracks its row targets
 // ("*": the whole mix), and back once it ends; a muted row moves nothing
 {
@@ -850,8 +904,8 @@ for (const [file, sg] of toCheck) {
   ok(g0 * 1731 > 4 && soft.kG < g0 / 5 && hard.kG < g0 / 20, `a hard pluck starts ${(g0 * 1731).toFixed(1)} cents sharp and settles within half a second; a soft one ${(soft.kG * 1731).toFixed(1)}`);
   // the loop's fraction of a sample doesn't change how a note sounds: two notes whose loops are a whole and a half
   // sample long decay alike (reading between two samples, the half one would die much faster)
-  // (each pluck's noise is its own: the average of four)
-  const per = (N) => SR / (N + 0.25), tail = (N) => { let t = 0; for (let k = 0; k < 4; k++) { const l = ring(per(N)).lv; t += (l[2] - l[20]) / 4; } return t; };
+  // (each pluck's noise is its own: the average of twelve)
+  const per = (N) => SR / (N + 0.25), tail = (N) => { let t = 0; for (let k = 0; k < 12; k++) { const l = ring(per(N)).lv; t += (l[2] - l[20]) / 12; } return t; };
   const whole = tail(50), half = tail(50.5);
   ok(Math.abs(whole - half) < 2.5, `notes whose loops end on a whole or a half sample decay alike (${whole.toFixed(1)} and ${half.toFixed(1)} dB in 0.9 s)`);
 }

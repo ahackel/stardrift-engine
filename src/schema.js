@@ -127,7 +127,8 @@ export const songSchema = () => ({
       blocks: { type: 'object', additionalProperties: { type: 'array', items: ref('placed') }, description: 'the grid: { track id: [{ at: bar, block }] }; each block plays from its bar until the next one or the end, looping' },
       chords: { type: 'array', items: ref('placedChords'), description: 'the grid: [{ at: bar, prog }]' },
     }, ['id', 'bars']),
-    placed: { type: 'object', required: ['at', 'block'], additionalProperties: false, properties: { at: { type: 'integer', minimum: 0 }, block: id('a block id') } },
+    placed: { type: 'object', required: ['at', 'block'], additionalProperties: false, properties: { at: { type: 'integer', minimum: 0 },
+      block: { anyOf: [id('a block id'), { type: 'array', minItems: 1, items: id('a block id'), description: 'a stack: one of these blocks plays, picked each time it starts' }] } } },
     placedChords: { type: 'object', required: ['at', 'prog'], additionalProperties: false, properties: { at: { type: 'integer', minimum: 0 }, prog: id('a progression id') } },
     progression: obj('progression', {
       id: id('unique'), name: { type: 'string' }, color: { type: 'string' },

@@ -2,7 +2,7 @@
 // nothing) is an error; what it would quietly change or ignore (a value out of range, a key it doesn't know) a warning.
 // Each is one line saying where and what, for a person or for the AI that wrote the song.
 //   validateSong(song, { samples }) → { errors: [text], warnings: [text] }   samples: the library's names, to check those
-import { SCALES, SHAPES, parseChord } from './engine/theory.js';
+import { SCALES, SHAPES, parseChord, MOOD_LADDER } from './engine/theory.js';
 import { expandTokens, parseToken, FORMS } from './engine/pattern.js';
 import { SHAPES as GUITAR_SHAPES } from './engine/guitar.js';
 import { SOUND_PARAMS, LAYER_PARAMS, TRACK_PARAMS, SONG_PARAMS, PAD_NAMES, getAt } from './engine/params.js';
@@ -289,7 +289,9 @@ export function validateSong(raw, { samples } = {}) {
       if (!isObj(p)) return err(`${at} #${i + 1}: must be an object { at, ${what} }`);
       if (!Number.isInteger(p.at) || p.at < 0) err(`${at} #${i + 1}: "at" must be a bar, 0 or more`);
       else if (p.at >= bars[0]) warn(`${at} #${i + 1}: bar ${p.at} is past the section's end (${bars[0]} bars)`);
-      if (!known.has(p[what])) err(`${at} #${i + 1}: no ${what === 'prog' ? 'progression' : 'block'} "${p[what]}"`);
+      const ids = what === 'block' && Array.isArray(p[what]) ? p[what] : [p[what]]; // a stack: one of its blocks plays
+      if (!ids.length) err(`${at} #${i + 1}: a stack needs a block, e.g. "block": ["beat_a", "beat_b"]`);
+      for (const id of ids) if (!known.has(id)) err(`${at} #${i + 1}: no ${what === 'prog' ? 'progression' : 'block'} "${id}"`);
     };
     if (x.blocks !== undefined) {
       if (!isObj(x.blocks)) err(`${where}: "blocks" must be an object { track id: [{ at, block }] }`);
@@ -299,7 +301,7 @@ export function validateSong(raw, { samples } = {}) {
         if (!Array.isArray(ps)) { err(`${where} "blocks" "${tid}": must be a list [{ at, block }]`); continue; }
         ps.forEach((p, i) => {
           placed(p, i, 'block', blocks, `${where} "blocks" "${tid}"`);
-          if (isObj(p) && blocks.has(p.block) && !clipsOf(tr).includes(p.block)) warn(`${where} "blocks" "${tid}": "${p.block}" is not on the track's "clips"`);
+          if (isObj(p)) for (const id of [p.block].flat()) if (blocks.has(id) && !clipsOf(tr).includes(id)) warn(`${where} "blocks" "${tid}": "${id}" is not on the track's "clips"`);
         });
       }
       if (Array.isArray(x.bars) && x.bars.length > 1) warn(`${where}: a section with "blocks" has one length; it plays ${bars[0]} bars`);
@@ -336,6 +338,9 @@ export function validateSong(raw, { samples } = {}) {
     } else if (!Object.values(m.sections || {}).some((w) => w > 0)) warn(`${where}: names no section, so it leads nowhere`);
   }
   if (s.startMood !== undefined && !(isObj(s.moods) && Array.isArray(s.moods[s.startMood]?.flow))) err(`the song: "startMood" names no mood with a flow: "${s.startMood}"`);
+  // the shared moods a game asks for: one the song leaves out plays the nearest it has (engine/theory.js moodFor)
+  const shared = MOOD_LADDER.filter((m) => isObj(s.moods?.[m]));
+  if (shared.length && shared.length < MOOD_LADDER.length) warn(`the song has no ${list(MOOD_LADDER.filter((m) => !shared.includes(m)))}: a game asking for one hears the nearest of ${list(shared)}`);
 
   // game sounds
   for (const x of byId(s.sounds, 'sound').values()) {

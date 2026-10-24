@@ -176,7 +176,7 @@ export interface Effect {
   /** a filter's: low, high, band; a body's: violin, cello, strings, horn, brass, acoustic, nylon, archtop, ah, oh, oo, ee */
   type?: string;
   bands?: [string, number, number?, number?][];
-  amp?: 'guitar' | 'clean' | 'crunch' | 'lead' | 'bass';
+  amp?: 'guitar' | 'clean' | 'crunch' | 'lead' | 'bass' | 'warm' | 'fuzz' | 'organ';
   /** a wah that follows the notes ('note'); a chorus as a flanger ('flanger') or a string machine's ensemble ('ensemble') */
   mode?: 'note' | 'flanger' | 'ensemble';
   /** a tremolo that chops */

@@ -123,6 +123,19 @@ export function chordLabel(keyRoot, scale, chord) {
   }
 }
 
+// The shared moods, calm to intense. A game asks for them by these names; a song without one plays the nearest it has.
+export const MOOD_LADDER = ['relaxed', 'wonder', 'exploring', 'tension', 'danger', 'action'];
+// the mood a song plays when asked for `name`: its own (with a flow, or sections it leads to), else the nearest on the
+// ladder it has (the calmer one when two are as near); null when it has none of them
+export function moodFor(song, name) {
+  const has = (m) => !!(song.flows?.[m] || Object.values(song.moods?.[m]?.sections || {}).some((w) => w > 0));
+  if (has(name)) return name;
+  const i = MOOD_LADDER.indexOf(name);
+  if (i < 0) return null;
+  for (let d = 1; d < MOOD_LADDER.length; d++) for (const j of [i - d, i + d]) if (MOOD_LADDER[j] && has(MOOD_LADDER[j])) return MOOD_LADDER[j];
+  return null;
+}
+
 // Normalises a raw song JSON into the runtime structure the engine uses.
 // The raw JSON is never mutated, so the editor can keep editing it.
 export function prepareSong(raw) {
@@ -208,7 +221,8 @@ export function prepareSong(raw) {
 
   // An arranged section (the grid): `blocks` places blocks on its bars, track by track ({ trackId: [{ at, block }] }),
   // `chords` its progressions ([{ at, prog }]). A block plays from its bar until the next one on its track or the
-  // section's end, looping; a track with nothing placed rests. Its length is one number of bars.
+  // section's end, looping; a track with nothing placed rests. Its length is one number of bars. A placement can be a
+  // stack of blocks (block: [ids]): one of them plays, picked each time it starts (stack).
   for (const x of s.sections) {
     if (!x.blocks || typeof x.blocks !== 'object') continue;
     const n = x.bars[0] || 8, at = (p) => Math.max(0, Math.min(n - 1, p.at | 0));
@@ -217,14 +231,18 @@ export function prepareSong(raw) {
     x.place = {};
     for (const [tid, list] of Object.entries(x.blocks)) {
       if (!(s.trackMap[tid] || s.fxMap[tid]) || !Array.isArray(list)) continue;
-      const ps = list.map((p) => p && s.blockMap[p.block] && { at: at(p), block: s.blockMap[p.block] }).filter(Boolean).sort((a, b) => a.at - b.at);
+      const ps = list.map((p) => {
+        const stack = p ? (Array.isArray(p.block) ? p.block : [p.block]).map((id) => s.blockMap[id]).filter(Boolean) : [];
+        return stack.length ? { at: at(p), block: stack[0], ...(stack.length > 1 && { stack }) } : null;
+      }).filter(Boolean).sort((a, b) => a.at - b.at);
       if (ps.length) x.place[tid] = ps;
     }
     x.chordPlace = (Array.isArray(x.chords) ? x.chords : []).map((p) => p && s.progMap[p.prog] && { at: at(p), prog: s.progMap[p.prog] }).filter(Boolean).sort((a, b) => a.at - b.at);
   }
 
   // A mood with a flow plays its sections in order ([id, times] or id), then loops from loopFrom (default: the first),
-  // drifts among them, or stops. switch: how soon a change to it happens: at the next bar (default), phrase or section.
+  // drifts among them (from loopFrom on), or stops. switch: how soon a change to it happens: at the next bar (default),
+  // phrase or section.
   s.flows = {};
   for (const [name, m] of Object.entries(s.moods)) {
     if (!m || !Array.isArray(m.flow)) continue;

@@ -140,6 +140,12 @@ const AMPS = {
   lead: { bias: 0.3, gain: 0.57, pre: [['hp', 140], ['peak', 900, 0.7, 10]], post: [['hp', 80], ['peak', 100, 1.2, 4], ['peak', 700, 0.8, -2], ['peak', 2200, 1.5, 3], ['lp', 4500], ['lp', 5200, 1.2]] },
   // a bass amp keeps the lows and rounds off the top
   bass: { bias: 0.1, gain: 0.83, pre: [['hp', 35], ['peak', 700, 0.7, 3]], post: [['lp', 2800], ['lp', 3600, 0.9]] },
+  // warm: tape or a valve desk, for synths and keys: no EQ into it, a soft top after it, even harmonics
+  warm: { bias: 0.15, gain: 0.85, pre: [['hp', 30]], post: [['lp', 6500, 0.7]] },
+  // fuzz: a transistor fuzz box, very lopsided (its gate spits on soft notes), a mid hump in, fizz rolled off after
+  fuzz: { bias: 0.6, gain: 0.59, pre: [['hp', 160], ['peak', 1000, 0.7, 6]], post: [['peak', 800, 0.7, -3], ['lp', 3800], ['lp', 4600, 1.1]] },
+  // organ: a tonewheel organ's valve preamp into its rotating speaker: a little mid push, the top rounded off
+  organ: { bias: 0.2, gain: 0.79, pre: [['hp', 50], ['peak', 1200, 0.7, 3]], post: [['lp', 5500, 0.8]] },
 };
 
 // Bodies: the fixed resonances of an instrument's box, bell or mouth, the same for every note it plays. They are much
@@ -1304,6 +1310,19 @@ function chordLabel(keyRoot, scale, chord) {
   }
 }
 
+// The shared moods, calm to intense. A game asks for them by these names; a song without one plays the nearest it has.
+const MOOD_LADDER = ['relaxed', 'wonder', 'exploring', 'tension', 'danger', 'action'];
+// the mood a song plays when asked for `name`: its own (with a flow, or sections it leads to), else the nearest on the
+// ladder it has (the calmer one when two are as near); null when it has none of them
+function moodFor(song, name) {
+  const has = (m) => !!(song.flows?.[m] || Object.values(song.moods?.[m]?.sections || {}).some((w) => w > 0));
+  if (has(name)) return name;
+  const i = MOOD_LADDER.indexOf(name);
+  if (i < 0) return null;
+  for (let d = 1; d < MOOD_LADDER.length; d++) for (const j of [i - d, i + d]) if (MOOD_LADDER[j] && has(MOOD_LADDER[j])) return MOOD_LADDER[j];
+  return null;
+}
+
 // Normalises a raw song JSON into the runtime structure the engine uses.
 // The raw JSON is never mutated, so the editor can keep editing it.
 function prepareSong(raw) {
@@ -1389,7 +1408,8 @@ function prepareSong(raw) {
 
   // An arranged section (the grid): `blocks` places blocks on its bars, track by track ({ trackId: [{ at, block }] }),
   // `chords` its progressions ([{ at, prog }]). A block plays from its bar until the next one on its track or the
-  // section's end, looping; a track with nothing placed rests. Its length is one number of bars.
+  // section's end, looping; a track with nothing placed rests. Its length is one number of bars. A placement can be a
+  // stack of blocks (block: [ids]): one of them plays, picked each time it starts (stack).
   for (const x of s.sections) {
     if (!x.blocks || typeof x.blocks !== 'object') continue;
     const n = x.bars[0] || 8, at = (p) => Math.max(0, Math.min(n - 1, p.at | 0));
@@ -1398,14 +1418,18 @@ function prepareSong(raw) {
     x.place = {};
     for (const [tid, list] of Object.entries(x.blocks)) {
       if (!(s.trackMap[tid] || s.fxMap[tid]) || !Array.isArray(list)) continue;
-      const ps = list.map((p) => p && s.blockMap[p.block] && { at: at(p), block: s.blockMap[p.block] }).filter(Boolean).sort((a, b) => a.at - b.at);
+      const ps = list.map((p) => {
+        const stack = p ? (Array.isArray(p.block) ? p.block : [p.block]).map((id) => s.blockMap[id]).filter(Boolean) : [];
+        return stack.length ? { at: at(p), block: stack[0], ...(stack.length > 1 && { stack }) } : null;
+      }).filter(Boolean).sort((a, b) => a.at - b.at);
       if (ps.length) x.place[tid] = ps;
     }
     x.chordPlace = (Array.isArray(x.chords) ? x.chords : []).map((p) => p && s.progMap[p.prog] && { at: at(p), prog: s.progMap[p.prog] }).filter(Boolean).sort((a, b) => a.at - b.at);
   }
 
   // A mood with a flow plays its sections in order ([id, times] or id), then loops from loopFrom (default: the first),
-  // drifts among them, or stops. switch: how soon a change to it happens: at the next bar (default), phrase or section.
+  // drifts among them (from loopFrom on), or stops. switch: how soon a change to it happens: at the next bar (default),
+  // phrase or section.
   s.flows = {};
   for (const [name, m] of Object.entries(s.moods)) {
     if (!m || !Array.isArray(m.flow)) continue;
@@ -1428,7 +1452,7 @@ function prepareSong(raw) {
   return s;
 }
 
-return { NOTE_NAMES, SCALES, SHAPES, chordLabel, chordQuality, clamp, clamp01, degSemis, foldDegree, formatChords, mod, noteName, parseChord, parseChords, parseKey, prepareSong, romanNumeral, scaleOf, songSteps };
+return { MOOD_LADDER, NOTE_NAMES, SCALES, SHAPES, chordLabel, chordQuality, clamp, clamp01, degSemis, foldDegree, formatChords, mod, moodFor, noteName, parseChord, parseChords, parseKey, prepareSong, romanNumeral, scaleOf, songSteps };
 })();
 
 const $engine_drums = (() => {
@@ -3302,7 +3326,7 @@ return { GUITAR_ATOMS, SHAPES, TUNING, chordFrets, chordNotes, fretText, guitarS
 
 const $engine_engine = (() => {
 const { Rng } = $engine_rng;
-const { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod } = $engine_theory;
+const { prepareSong, chordLabel, chordQuality, degSemis, foldDegree, SHAPES, mod, moodFor } = $engine_theory;
 const { expandTokens, parseTokens, mutateTokens, nearestTone, fitLength, formTokens, formsOf, variesForm, notesOf, REST, HOLD, NOTE } = $engine_pattern;
 const { Synth } = $engine_synth;
 const { FX_KINDS, fxAt, fxJoin, onMix } = $engine_moves;
@@ -3417,7 +3441,7 @@ class Engine {
   // "Now make it relaxed" / "now there is tension": a name from song.moods, or 'auto'. The change is always musical:
   // the current section finishes within `within` bars (at a bar line, with a fill), then the music follows the
   // sections' links the shortest way to one of the mood's sections (mood.sections, by weight) and stays among them
-  // while the mood holds. A mood without sections leads nowhere: the music walks on.
+  // while the mood holds. A shared mood the song doesn't have (MOOD_LADDER) plays the nearest one it has.
   setMood(mood, { within = 2 } = {}) {
     if (mood === 'auto' || mood == null) {
       this.moodName = 'auto';
@@ -3426,7 +3450,10 @@ class Engine {
       this.emitState();
       return;
     }
-    if (!this.song.moods[mood]) return;
+    const asked = mood;
+    mood = moodFor(this.song, mood) || (this.song.moods[mood] ? mood : null); // one of its own that leads nowhere: the music walks on
+    if (!mood) return;
+    if (mood !== asked) this.log(`mood ${asked} → ${mood} (the song has no ${asked})`);
     const flow = this.song.flows[mood];
     if (flow) {
       if (mood === this.moodName && this.flowPos?.mood === mood) return;
@@ -3479,8 +3506,8 @@ class Engine {
     if (i < flow.list.length && !pos.drift) return { mood: pos.mood, i, rep: 0, sec: flow.list[i].sec };
     if (flow.then === 'stop') return { mood: pos.mood, stop: true, sec: this.restSection() };
     if (flow.then === 'loop') return { mood: pos.mood, i: flow.loopFrom, rep: 0, sec: flow.list[flow.loopFrom].sec };
-    const others = flow.list.map((x, j) => j).filter((j) => flow.list[j].sec !== pos.sec);
-    const j = others.length ? this.rng.pick(others) : 0;
+    const others = flow.list.map((x, j) => j).filter((j) => j >= flow.loopFrom && flow.list[j].sec !== pos.sec); // never the intro again
+    const j = others.length ? this.rng.pick(others) : flow.loopFrom;
     return { mood: pos.mood, i: j, rep: 0, sec: flow.list[j].sec, drift: true };
   }
 
@@ -4037,7 +4064,7 @@ class Engine {
     for (const tr of s.tracks) if (sec.arranged) this.arrangeTrack(tr, true); else this.setupTrack(tr);
     if (at) for (const tr of s.tracks) {
       const ts = this.tracks[tr.id], p = this.placeAt(sec, tr.id, at);
-      if (ts?.active && p && ts.block === p.block && !this.locks[tr.id]) ts.start = this.step - (at - p.at) * spbar;
+      if (ts?.active && p && (ts.block === p.block || p.stack?.includes(ts.block)) && !this.locks[tr.id]) ts.start = this.step - (at - p.at) * spbar;
     }
     this.instant = false;
 
@@ -4072,16 +4099,25 @@ class Engine {
   }
 
   // A track in an arranged section, at its start (start) or at a bar: the block placed there starts (at the start, one
-  // that already plays goes on, unless the section starts afresh); no block placed yet: the track rests.
+  // that already plays goes on, unless the section starts afresh); no block placed yet: the track rests. A track that
+  // plays there sometimes (section.tracks, 0.5) draws at the start whether it plays; a stack picks one of its blocks.
   arrangeTrack(tr, start) {
     const ts = this.trackState(tr), was = ts.active;
     const lock = this.locks[tr.id] && this.song.blockMap[this.locks[tr.id]];
     if (lock) { if (start) { ts.fill = null; if (ts.block !== lock || !was) this.startBlock(tr, ts, lock); ts.active = true; } return; }
+    if (start) { const c = chanceIn(this.section, tr.id); ts.plays = c >= 1 || (c > 0 && this.rng.chance(c)); }
     const p = this.placeAt(this.section, tr.id, this.sectionBar);
     if (!start && (!p || p.at !== this.sectionBar)) return; // nothing new on this bar
     if (start && !this.switching) ts.fill = null;
-    let active = !!p;
-    if (p && !(start && was && ts.block === p.block && ts.steps && !this.instant)) this.startBlock(tr, ts, p.block);
+    this.placeTrack(tr, ts, p, start, was);
+  }
+  // the track plays the placement p from now (or rests: none, or it sits this section out)
+  placeTrack(tr, ts, p, start, was) {
+    const active = !!p && ts.plays !== false;
+    if (active) {
+      const b = this.pickStacked(tr, ts, p);
+      if (!(start && was && ts.block === b && ts.steps && !this.instant)) this.startBlock(tr, ts, b);
+    }
     const fade = this.fadeSec(tr);
     if (active && !was) this.synth.fade(tr.id, 1, fade);
     if (!active && ts.sounding && !this.curSting?.parts[tr.id]) {
@@ -4089,6 +4125,13 @@ class Engine {
       ts.sounding = null;
     }
     ts.active = active;
+  }
+
+  // one block of a placement: its own, or one of its stack's, the one playing now less likely (other: not that one)
+  pickStacked(tr, ts, p, other = false) {
+    if (!p.stack) return p.block;
+    const cands = p.stack.filter((b) => !(other && b === ts.block));
+    return cands.length ? this.rng.weighted(cands, cands.map((b) => (b === ts.block ? 0.5 : 1))) : p.block;
   }
 
   // the block placed on a track that plays at a bar of an arranged section (the last one placed at or before it)
@@ -4150,6 +4193,11 @@ class Engine {
   }
 
   onBlockLoop(tr, ts) {
+    const sec = this.section, p = sec?.arranged && !this.locks[tr.id] && this.placeAt(sec, tr.id, this.sectionBar);
+    if (p?.stack && this.rng.chance(sec.change ?? this.song.blockChange)) { // a stack: now and then another of its blocks
+      const nb = this.pickStacked(tr, ts, p, true);
+      if (nb !== ts.block) { this.startBlock(tr, ts, nb); this.emit({ type: 'tokens', track: tr.id, tokens: ts.tokens }); return; }
+    }
     ts.loop++;
     const b = ts.block;
     if (variesForm(b) && this.rng.chance(0.5)) ts.base = this.notesFor(tr, b, ts.base.length);
@@ -4174,8 +4222,24 @@ class Engine {
 
   midSectionBar() {
     const s = this.song, rng = this.rng;
-    if (this.section.arranged) { // the grid: what is placed on this bar starts
-      for (const tr of s.tracks) this.arrangeTrack(tr, false);
+    if (this.section.arranged) { // the grid: what is placed on this bar starts; every 4 bars a track that plays
+      // sometimes may draw again, joining (at its placement, in time) or leaving
+      const churn = this.sectionBar % 4 === 0;
+      for (const tr of s.tracks) {
+        const c = chanceIn(this.section, tr.id), ts = this.trackState(tr);
+        if (churn && c > 0 && c < 1 && !this.locks[tr.id] && rng.chance(s.layerChurn)) {
+          const plays = rng.chance(c);
+          if (plays !== ts.plays) {
+            ts.plays = plays;
+            const p = this.placeAt(this.section, tr.id, this.sectionBar);
+            this.placeTrack(tr, ts, p, false, ts.active);
+            if (p && plays) ts.start = this.step - (this.sectionBar - p.at) * s.stepsPerBar;
+            this.log(`${plays ? '+' : '−'} ${tr.id}`);
+            continue;
+          }
+        }
+        this.arrangeTrack(tr, false);
+      }
       const cp = this.section.chordPlace.find((p) => p.at === this.sectionBar);
       if (cp && !this.progLock) { this.prog = cp.prog; this.progStart = this.step; }
       this.emitState();
@@ -4328,7 +4392,7 @@ class Engine {
 
   notesIn(sec) {
     const s = this.song;
-    if (sec.arranged) return s.tracks.reduce((a, tr) => { const b = sec.place[tr.id]?.[0]?.block; return a + (b ? density(b, s.spb, s.blockMap) * (tr.inst.type === 'drums' ? 1.5 : 1) : 0); }, 0);
+    if (sec.arranged) return s.tracks.reduce((a, tr) => { const b = sec.place[tr.id]?.[0]?.block; return a + (b ? chanceIn(sec, tr.id) * density(b, s.spb, s.blockMap) * (tr.inst.type === 'drums' ? 1.5 : 1) : 0); }, 0);
     return s.tracks.reduce((a, tr) => {
       const loops = (s.blocksByTrack[tr.id] || []).filter((b) => !b.fill && weightIn(b, sec) > 0);
       const w = loops.reduce((q, b) => q + weightIn(b, sec), 0);
@@ -4502,12 +4566,12 @@ class Engine {
     for (const tr of s.tracks) {
       if (this.locks[tr.id]) continue;
       const ts = this.trackState(tr), p = this.placeAt(sec, tr.id, bar);
-      if (!p) {
+      if (!p || ts.plays === false) {
         if (ts.active) { ts.active = false; if (ts.sounding) { this.synth.release(tr.id); ts.sounding = null; } }
         continue;
       }
-      if (ts.active && ts.block === p.block) continue;
-      this.startBlock(tr, ts, p.block);
+      if (ts.active && (ts.block === p.block || p.stack?.includes(ts.block))) continue;
+      this.startBlock(tr, ts, this.pickStacked(tr, ts, p));
       ts.start = (this.step % spbar === 0 ? this.step : lineStep) - (bar - p.at) * spbar;
       if (!ts.active) this.synth.fade(tr.id, 1, 0);
       ts.active = true;
